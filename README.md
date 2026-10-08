@@ -15,7 +15,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
 | `src/triage/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/triage/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
-| `tests/` | 54 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
+| `tests/` | 56 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
 | `launchd/`, `install.sh`, `install-launchd.sh`, `laptop-install.sh` | Install and schedule on a Mac | yes |
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates: copy to `config.yaml`, `.env`, `profile/` | yes |
 | `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
@@ -42,7 +42,7 @@ folders in `config.yaml`; nothing in the code is tied to one account.
 | `triage halt` | Stop everything: pause all four launchd jobs, interrupt the run in progress, end every other triage process including the control room. `triage schedule resume` brings the jobs back. |
 | `triage schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume; `--job run` for one), resume, or kick a run now. |
 | `triage enforce on\|off` | Flip the automatic floor in config.yaml: on cuts from the next run, off is shadow mode. |
-| `triage want "x"`, `triage meh "x"` | Nudge the learner model now instead of waiting for Sunday. |
+| `triage want "x"`, `triage meh "x"` | Nudge the learner model now instead of waiting for Sunday (the `more` and `less` tags do the same from BazQux). |
 | `triage weekly` | Sunday: rewrite the learner model from the week's reading (kept only if the eval gate passes), write the weekly note, run the drift check. |
 | `triage report` | Monthly feed report with proposals (unsubscribe, move to Firehose, protect). |
 | `triage replay --archive … --golden …` | Judge a sample of FeedBrain's archive offline; check the gate before anything goes live. |
@@ -195,11 +195,18 @@ its diff), health (runs, spend, heartbeat). The same progress numbers in the ter
 | --- | --- | --- |
 | `score-90`, `score-70`, `score-50`, `score-30`, `score-0` | triage | The article's score band. Open a tag with the unread filter on and you have a ranked view. |
 | `cut` | triage | Marked read by triage (floor, prune or bankruptcy). Mark it unread anywhere to rescue it. |
-| `wrong` | you | On a cut article you wanted: it is marked unread again and counts as a rescue. |
-| `meh` | you | On a kept article that was not worth it. |
-| `prune` | you | On any article: the next run prunes one step to the target. |
+| `wrong` | you | A command, on a cut article you wanted: it is marked unread again, counts as a rescue and as the strongest positive. The run removes the tag when done. |
+| `prune` | you | A command, on any article: the next enforcing run prunes to the target. Removed when done. |
+| `great`, `good`, `meh`, `bad` | you | Your grade, one per article: the best kind (more like this; the Sunday rewrite may not lose it), worth the time, not worth it, junk the teacher should not have kept. |
+| `basic`, `heavy` | you | The level missed: too elementary for you, too dense or specialist for you now. |
+| `more`, `less` | you | A steer: more or less of this article's concept, written into the learner model as a dated nudge that the teacher reads from the next run. |
 
-Stars are yours: a starred article is never cut and teaches the learner model what mattered.
+Stars are yours: a starred article is never cut and counts like `great`. Verdict tags stay on the
+article as your own record (open the `great` tag in BazQux and you have your best-of list) and are
+recorded once; add a different grade to change your mind (when two are on, the harsher wins), and
+removing a tag alone retracts nothing. `triage why ID` shows what is recorded for an article; the
+dashboard's "Your verdicts" panel sets your grades against the teacher's bands and lists where you
+disagree most. How all of this changes the judging is in RUNBOOK.md, "How it learns".
 
 ## Updating
 
@@ -231,6 +238,6 @@ record). Learner model history: `git log` in `profile/`.
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # 54 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
+.venv/bin/pytest -q        # 56 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
 .venv/bin/ruff check src tests
 ```

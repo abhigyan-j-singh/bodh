@@ -89,6 +89,35 @@ def calibration(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
+def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
+    """The student's grades against the teacher's bands: for each band, how many articles the
+    student marked great, good, meh or bad in the window. Calibration from the student's own hand."""
+    since = store.days_ago_iso(days)
+    marks = ",".join("?" * len(store.GRADES))
+    rows = conn.execute(
+        f"""SELECT f.kind, s.score FROM feedback f JOIN scores s ON s.article_id = f.article_id
+            WHERE f.kind IN ({marks}) AND f.at >= ?""",
+        (*store.GRADES, since),
+    ).fetchall()
+    agg: dict[str, dict[str, int]] = {name: {k: 0 for k in store.GRADES} for _, name in BANDS}
+    for r in rows:
+        agg[band_of(float(r["score"]))][r["kind"]] += 1
+    return [{"band": name, **agg[name], "n": sum(agg[name].values())} for _, name in BANDS]
+
+
+def disagreements(conn: sqlite3.Connection, days: int = 30, limit: int = 15) -> list[sqlite3.Row]:
+    """Where the student and the teacher disagree most: great, good or wrong under 50; bad or meh at 70 or more."""
+    since = store.days_ago_iso(days)
+    return conn.execute(
+        """SELECT a.id, a.title, a.url, a.feed_title, s.score, s.concept, s.lesson, f.kind, f.at
+           FROM feedback f JOIN scores s ON s.article_id = f.article_id JOIN articles a ON a.id = f.article_id
+           WHERE f.at >= ? AND ((f.kind IN ('great', 'good', 'wrong') AND s.score < 50)
+                                OR (f.kind IN ('bad', 'meh') AND s.score >= 70))
+           ORDER BY ABS(s.score - 50) DESC, f.at DESC LIMIT ?""",
+        (since, limit),
+    ).fetchall()
+
+
 def near_misses(conn: sqlite3.Connection, days: int = 7, limit: int = 20) -> list[sqlite3.Row]:
     since = store.days_ago_iso(days)
     return conn.execute(
@@ -115,7 +144,7 @@ def feeds(conn: sqlite3.Connection, days: int = 30, limit: int = 40) -> list[sql
 
 
 def learnings(conn: sqlite3.Connection, days: int = 7) -> dict[str, list[sqlite3.Row]]:
-    rows = store.feedback_since(conn, ["read", "star"], store.days_ago_iso(days))
+    rows = store.feedback_since(conn, ["read", "star", "great", "good"], store.days_ago_iso(days))
     seen: set[str] = set()
     grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for r in rows:
@@ -220,6 +249,8 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     now = datetime.now(tz)
     fl = flow(conn, tz)
     cal = calibration(conn)
+    verd = verdicts(conn)
+    disagree = disagreements(conn)
     misses = near_misses(conn)
     fd = feeds(conn)
     lessons = learnings(conn)
@@ -267,6 +298,29 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
                      f"<td class='num'>{_pct(c['star_share'])}</td></tr>")
     parts.append("</table><p class='muted'>Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
                  "the mix of sub-scores in config.yaml is wrong.</p>")
+
+    parts.append("<h2>Your verdicts, last 30 days</h2>")
+    if any(r["n"] for r in verd):
+        parts.append("<table><tr><th>Teacher's band</th><th class='num'>great</th><th class='num'>good</th>"
+                     "<th class='num'>meh</th><th class='num'>bad</th></tr>")
+        for r in verd:
+            parts.append(f"<tr><td>{_e(r['band'])}</td><td class='num'>{r['great']}</td><td class='num'>{r['good']}</td>"
+                         f"<td class='num'>{r['meh']}</td><td class='num'>{r['bad']}</td></tr>")
+        parts.append("</table>")
+        if disagree:
+            parts.append("<p>Where you and the teacher disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
+                         "<th>Article</th><th>Concept</th></tr>")
+            for r in disagree:
+                parts.append(f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
+                             f"<td><a href='{_e(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
+                             f"<td>{_e(r['concept'] or '')}</td></tr>")
+            parts.append("</table>")
+        parts.append("<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
+                     "missed; more or less to steer the teacher by this article's concept. The Sunday rewrite reads them all; "
+                     "disagreements are what it learns from most.</p>")
+    else:
+        parts.append("<p class='muted'>No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
+                     "when the level missed; more or less to steer the teacher by its concept.</p>")
 
     parts.append("<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
                  "<th>Lesson</th><th>Concept</th></tr>")
@@ -321,7 +375,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "index.html"
     path.write_text("\n".join(parts), encoding="utf-8")
-    (out_dir / "data.json").write_text(json.dumps({"flow": fl, "calibration": cal, "unread": hl["unread"],
+    (out_dir / "data.json").write_text(json.dumps({"flow": fl, "calibration": cal, "verdicts": verd, "unread": hl["unread"],
                                                    "spend_today": hl["spend_today"]}, indent=1), encoding="utf-8")
     progress.write_live(cfg, conn)
     return path

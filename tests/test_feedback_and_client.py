@@ -21,7 +21,9 @@ def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
     client = FakeClient(labels={cfg.tags.wrong: [], cfg.tags.meh: [ids[3]], cfg.tags.prune: [ids[4]]})
     stats = feedback.collect(client, conn, cfg, unread_now, starred_now={ids[2]})
     assert stats["reads"] == 2 and stats["dismissed"] == 0
-    assert stats["rescues"] == 1 and stats["meh"] == 1 and stats["prune_requested"] is True
+    assert stats["rescues"] == 1 and stats["verdicts"] == 1 and stats["prune_requested"] is True
+    assert store.feedback_ids(conn, "meh") == {ids[3]}
+    assert not any(name == cfg.tags.meh for name, _ in client.untagged)  # a verdict stays on the article
     assert stats["stars"] == 1
     assert store.feedback_ids(conn, "read") == set(ids[:2])
     assert store.feedback_ids(conn, "rescue") == {ids[5]}
@@ -141,3 +143,46 @@ def test_duplicate_index(conn, cfg):
     assert index.find(same_title)["id"] == short_to_long(1)
     same_feed = {"id": short_to_long(4), "url": "https://b.test/z", "title": "A long enough title to be matched exactly", "feed_title": "Feed A"}
     assert index.find(same_feed) is None
+
+
+def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
+    cfg.root = tmp_path
+    (tmp_path / "profile").mkdir(exist_ok=True)
+    (tmp_path / "profile" / "learner.md").write_text("## What the student has been learning\nnothing yet\n", encoding="utf-8")
+    monkeypatch.setattr("triage.learner.git_commit", lambda *a, **k: True)
+    ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 7)])
+    labels = {cfg.tags.great: [ids[0]], cfg.tags.good: [ids[1], ids[2]], cfg.tags.bad: [ids[2]],
+              cfg.tags.basic: [ids[3]], cfg.tags.more: [ids[4]], cfg.tags.less: [ids[5]], cfg.tags.meh: []}
+    client = FakeClient(labels=labels)
+    stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
+    # one grade per article, the harsher present tag wins; levels and steers each recorded once
+    assert store.verdicts(conn, store.GRADES) == {ids[0]: "great", ids[1]: "good", ids[2]: "bad"}
+    assert store.verdicts(conn, store.LEVELS) == {ids[3]: "basic"}
+    assert store.verdicts(conn, store.STEERS) == {ids[4]: "more", ids[5]: "less"}
+    assert stats["verdicts"] == 6 and stats["steers"] == 2
+    # the tags stay on the articles: nothing untagged but the commands
+    assert all(name in (cfg.tags.cut, cfg.tags.wrong, cfg.tags.prune) for name, _ in client.untagged)
+    # the steers reached the learner model, with the article's concept, in one version
+    text = (tmp_path / "profile" / "learner.md").read_text(encoding="utf-8")
+    assert "wants more on concept 5" in text and "wants less of concept 6" in text and "## Nudges" in text
+    assert len(store.learner_versions(conn, 10)) == 2  # initial + one nudge version
+    # a second run with the same tags changes nothing and nudges nothing
+    stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
+    assert stats["verdicts"] == 0 and stats["steers"] == 0
+    assert len(store.learner_versions(conn, 10)) == 2
+    # changing your mind: the good tag removed, bad added
+    client.labels[cfg.tags.good] = [ids[2]]
+    client.labels[cfg.tags.bad] = [ids[1], ids[2]]
+    feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
+    assert store.verdicts(conn, store.GRADES)[ids[1]] == "bad"
+    # removing a tag alone retracts nothing
+    client.labels[cfg.tags.great] = []
+    feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
+    assert store.verdicts(conn, store.GRADES)[ids[0]] == "great"
+    # the teacher's lists and the article's record
+    from triage.teacher import concept_context
+
+    ctx = concept_context(conn, cfg)
+    assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
+    assert "Marked bad or meh" in ctx and "concept 3: 1" in ctx
+    assert [k for k, _ in store.feedback_for(conn, ids[4])] == ["more"]

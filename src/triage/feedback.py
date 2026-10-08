@@ -1,6 +1,9 @@
-"""Feedback, collected from BazQux state with no labelling chores: stars, inferred
-reads, rescues (a cut article marked unread again, or tagged `wrong`), `meh` on a
-kept article, and a `prune` tag asking for one more step."""
+"""Feedback, collected from BazQux state and from the student's tags. With no labelling
+chores: stars, inferred reads, rescues (a cut article marked unread again, or tagged
+`wrong`), and a `prune` tag asking for one more step. With a tag, the student's verdict:
+a grade (`great`, `good`, `meh`, `bad`), the level missed (`basic`, `heavy`), or a steer
+(`more`, `less`) that the teacher sees from the next run. Verdict tags stay on the article
+as the student's own record; each is recorded once."""
 
 from __future__ import annotations
 
@@ -20,7 +23,8 @@ READ_INFERENCE_MAX_AGE_DAYS = 7  # older unread articles that vanish may have be
 
 def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_now: set[str],
             starred_now: set[str]) -> dict:
-    stats = {"stars": 0, "reads": 0, "dismissed": 0, "expired": 0, "rescues": 0, "meh": 0, "prune_requested": False}
+    stats = {"stars": 0, "reads": 0, "dismissed": 0, "expired": 0, "rescues": 0, "verdicts": 0, "steers": 0,
+             "prune_requested": False}
     known = store.known_ids(conn)
 
     # stars: explicit, the strongest signal, and a protection
@@ -68,13 +72,9 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
         client.untag(wrong_ids, cfg.tags.wrong)
     stats["rescues"] = len(rescued)
 
-    # meh: a kept article that was not worth it
-    meh_ids = [aid for aid in client.label_ids(cfg.tags.meh) if aid in known]
-    for aid in meh_ids:
-        store.add_feedback(conn, aid, "meh")
-    if meh_ids:
-        client.untag(meh_ids, cfg.tags.meh)
-    stats["meh"] = len(meh_ids)
+    # verdicts: grades, levels and steers, from the tags left on the articles
+    v = collect_verdicts(client, conn, cfg, known)
+    stats.update(v)
 
     # prune: any article tagged `prune` asks for one more step
     prune_ids = client.label_ids(cfg.tags.prune)
@@ -85,6 +85,56 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
     # everything still unread was seen unread now
     store.set_flags(conn, list(ours_unread & unread_now), last_seen_unread_at=store.utcnow_iso())
     return stats
+
+
+def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, known: set[str]) -> dict:
+    """The student's tags, read as verdicts. A tag stays on the article (the student's record)
+    and is recorded once. Within a group one verdict holds per article: a different tag added
+    later replaces it (when both are present, the later one in the group's order wins, so
+    `bad` beats `good`); removing a tag alone retracts nothing. `more` and `less` also write a
+    dated nudge, with the article's concept, into the learner model, which the teacher reads
+    from the next run."""
+    stats = {"verdicts": 0, "steers": 0}
+    tags = cfg.tags.verdict_tags()
+    present: dict[str, set[str]] = {}
+    for kind, name in tags.items():
+        for aid in client.label_ids(name):
+            if aid in known:
+                present.setdefault(aid, set()).add(kind)
+    if not present:
+        return stats
+    nudges: list[tuple[str, str]] = []
+    for group in (store.GRADES, store.LEVELS, store.STEERS):
+        recorded = store.verdicts(conn, group)
+        for aid, kinds in present.items():
+            here = [k for k in group if k in kinds]
+            if not here or recorded.get(aid) == here[-1]:
+                continue
+            kind = here[-1]
+            if store.set_verdict(conn, aid, kind, group):
+                stats["verdicts"] += 1
+                if group is store.STEERS:
+                    nudges.append((kind, _steer_phrase(conn, aid)))
+    if nudges:
+        from . import learner  # here, not at the top: learner imports the teacher
+
+        learner.nudges(cfg, conn, [("want" if kind == "more" else "meh", phrase) for kind, phrase in nudges])
+        stats["steers"] = len(nudges)
+    return stats
+
+
+def _steer_phrase(conn: sqlite3.Connection, article_id: str) -> str:
+    row = conn.execute(
+        "SELECT a.title, s.concept FROM articles a LEFT JOIN scores s ON s.article_id = a.id WHERE a.id = ?",
+        (article_id,),
+    ).fetchone()
+    if row is None:
+        return article_id
+    concept = (row["concept"] or "").strip()
+    title = (row["title"] or "").strip()[:70]
+    if concept and title:
+        return f'{concept} (e.g. "{title}")'
+    return concept or title or article_id
 
 
 def rescue_rate_week(conn: sqlite3.Connection) -> float:

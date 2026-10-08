@@ -946,16 +946,27 @@ class Teacher:
 
 
 def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
-    """Two lists for the teacher: what the student has been reading, and what they skip."""
-    since = store.days_ago_iso(cfg.feedback.concept_window_days)
-    pos = store.concept_counts(conn, ["star", "read", "rescue"], since)
-    neg = store.concept_counts(conn, ["prune", "dismiss", "meh"], since)
+    """The lists for the teacher: what the student loved, read, skipped, and where the level
+    missed, by concept, from stars, reads and the student's verdict tags."""
+    days = cfg.feedback.concept_window_days
+    since = store.days_ago_iso(days)
+    loved = store.concept_counts(conn, store.LOVED_KINDS, since)
+    read = store.concept_counts(conn, ["good", "read", "rescue"], since)
+    neg = store.concept_counts(conn, store.NEGATIVE_KINDS, since)
+    basic = store.concept_counts(conn, ["basic"], since, limit=20)
+    heavy = store.concept_counts(conn, ["heavy"], since, limit=20)
+    fmt = lambda pairs: ", ".join(f"{c}: {n}" for c, n in pairs)  # noqa: E731
     lines = []
-    if pos:
-        lines.append("Read, starred or rescued in the last 90 days (concept: count): "
-                     + ", ".join(f"{c}: {n}" for c, n in pos))
-    else:
-        lines.append("Read in the last 90 days: nothing recorded yet.")
+    if loved:
+        lines.append(f"Loved (starred or marked great) in the last {days} days (concept: count): {fmt(loved)}")
+    if read:
+        lines.append(f"Read, marked good or rescued in the last {days} days: {fmt(read)}")
+    if not loved and not read:
+        lines.append(f"Read in the last {days} days: nothing recorded yet.")
     if neg:
-        lines.append("Pruned, dismissed or marked meh: " + ", ".join(f"{c}: {n}" for c, n in neg))
+        lines.append(f"Marked bad or meh, or dismissed: {fmt(neg)}")
+    if basic:
+        lines.append(f"Too basic for the student (score fit low for introductions to these): {fmt(basic)}")
+    if heavy:
+        lines.append(f"Too dense for the student (prefer gentler entries to these): {fmt(heavy)}")
     return "\n".join(lines)

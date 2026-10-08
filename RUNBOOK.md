@@ -49,8 +49,8 @@ Three or four times a day, in this order; two minutes each time.
    `triage prune --keep 60`, `--fraction 0.3` (cut the worst 30%), `--below 65` (cut everything
    under 65) are the other shapes. Starred articles, the `Must read` stream and protected folders
    never move.
-4. Teach, in passing (section 5): star good articles; tag a cut article you wanted `wrong`; tag a
-   kept article that was not worth it `meh`; `triage want "topic"` / `triage meh "topic"`.
+4. Teach, in passing (section 5): star or tag `great` what was best, `good`, `meh` or `bad` the
+   rest; `wrong` on a cut article you wanted; `more` or `less` to steer by an article's concept.
 
 Judgments arrive within an hour or two of an article (the next run submits it, the Batches API
 finishes most batches within the hour, the run after that collects them; half price). When you
@@ -65,7 +65,7 @@ want the pile judged right now:
 In order, with the phase shown on the control room and in `triage progress`:
 
 1. talking to BazQux: reads what is unread and starred now; collects your feedback (stars,
-   articles you read, rescues via the `wrong` tag, `meh`, the `prune` tag).
+   articles you read, the `wrong` and `prune` commands, your verdict tags: grades, levels, steers).
 2. fetching new articles: everything unread the database has not seen, with its text.
 3. collecting finished batches: the judgments submitted last time come back and are stored.
 4. submitting a batch: up to 1,200 new articles go to the teacher (Sonnet 5.5), 20 per call.
@@ -100,23 +100,83 @@ own (`World News & Politics`, `Sports`, `Fashion & Lifestyle` cut below 70, `Agg
 `triage run --shadow` is one run without cutting even while enforcing.
 
 
-## 5. Teaching the teacher
+## 5. Teaching the teacher: the tags
 
-| You do | It means |
+Your opinion of an article is a tag on it in BazQux (web or phone; NetNewsWire syncs stars only).
+Three small sets: a grade, the level, a steer. Use one word or all three; a word you do not use
+costs nothing. The run reads them every 30 minutes.
+
+| Tag | Put it on | It says |
+| --- | --- | --- |
+| `great` | the best article you read | the best kind; more like this. Counts like a star: the Sunday rewrite is rejected if it would push any `great` article under the floor |
+| `good` | an article worth the time | a positive example |
+| `meh` | one that was not worth it | a negative example |
+| `bad` | junk the teacher kept | the strongest negative; a `bad` on a high score is what the Sunday rewrite learns from most |
+| `basic` | an article too elementary for you | introductions to this concept no longer fit; the teacher scores their `fit` low from the next run |
+| `heavy` | one too dense or specialist for you now | gentler entries to this concept fit better |
+| `more` | any article | more of its concept: a dated nudge goes into the learner model and the teacher reads it from the next run |
+| `less` | any article | less of its concept, the same way |
+
+Rules: one grade per article (add another to change your mind; when two are on, the harsher one
+wins; removing a tag alone retracts nothing). The tags stay on the article as your own record, so
+the `great` tag in BazQux is your best-of list. Each is recorded once.
+
+Two tags are commands rather than opinions, and the run removes them when done:
+
+| Tag | It does |
 | --- | --- |
-| star an article | a positive example for the eval gate and the Sunday rewrite |
-| read an article (it goes read in BazQux without a cut) | a mild positive, inferred within 7 days of its arrival |
-| tag a cut article `wrong` (or mark it unread again) | a rescue: it comes back unread; many rescues in a week lower the floor to 25 |
-| tag a kept article `meh` | a negative example |
-| tag any article `prune` | the next enforcing run prunes to the target |
-| `triage want "liquid cooling economics"` | more of this, from the next run |
-| `triage meh "celebrity"` | less of this |
-| `triage label ID star` or `triage label ID junk` | teach the eval gate directly |
-| `triage why ID` | the article's score, five sub-scores, lesson, concept, which model judged it, its state |
-| edit `profile/seed.md` | who the student is: fifteen lines, the strongest lever there is |
-| `triage profile show` / `triage profile revert` | the learner model Opus rewrites on Sundays; go back one version |
+| `wrong` | on a cut article you wanted: it comes back unread, counts as a rescue and as the strongest positive; many rescues in a week lower the floor to 25 |
+| `prune` | on any article: the next enforcing run prunes to the target |
 
-`ID` is the BazQux item id, long form (`tag:google.com,2005:reader/item/…`) or the number.
+Without a tag: a star counts like `great` and protects the article from every cut; an article you
+read (it goes read in BazQux without a cut) is a mild positive, inferred within 7 days of arrival.
+From the terminal: `triage want "liquid cooling economics"` and `triage meh "celebrity"` are
+`more` and `less` by phrase; `triage label ID star|junk` is `great`/`bad` by id; `triage why ID`
+shows an article's score, sub-scores, lesson, concept, which model judged it, and what you
+recorded on it. `ID` is the BazQux item id, long form (`tag:google.com,2005:reader/item/…`) or the
+number. The two biggest levers are not tags: `profile/seed.md`, fifteen lines on who the student
+is, and `profile/learner.md`, which Opus rewrites on Sundays (`triage profile show`, `triage
+profile revert`).
+
+
+## 5a. How it learns, for you specifically
+
+The teacher never trains; what changes is what it is told about you, in three layers, each on
+its own clock.
+
+1. **Every call, the concept lists.** The message with each batch of articles opens with lists
+   drawn from your record of the last 90 days: concepts you loved (stars, `great`), concepts you
+   read or marked `good` or rescued, concepts you marked `bad` or `meh` or dismissed, and the
+   concepts where the level missed (`basic`, `heavy`), each with a count. The teacher uses them
+   for three of the five sub-scores: `fit` (your level, from what you finish and what you call
+   basic or heavy), `breadth` (new ground is rewarded against what you already read), and
+   `relevance`. This layer moves the moment a run has collected the tag.
+2. **From the next run, the nudges.** `more`, `less`, `triage want`, `triage meh` write a dated
+   line into the learner model ("the student wants more on liquid cooling economics"), which sits
+   in the teacher's prompt from the next run on.
+3. **Every Sunday, the learner model.** Opus reads the seed, the current learner model and the
+   week's evidence: every positive, negative, level and steer, each with the score the teacher
+   gave, the lesson and the concept. It rewrites the model's five sections: what you have been
+   learning, what you are moving past, the concepts covered, two or three expansion topics for
+   the coming week (articles on them get +10), and notes to the teacher on how to judge for you
+   now. The disagreements are the richest lines: a `bad` on an 85 or a `great` on a 40 says what
+   the teacher has been getting wrong for you, and the notes carry the correction.
+
+Guardrails, so a week of odd reading cannot wreck it: the rewrite may move no topic more than one
+band a week; it may not contradict the seed; it is rejected if it is over 400 words; and it is
+rejected by the eval gate if, with the new model in place, any article you starred, marked `great`
+or rescued would score under the floor. Fewer than five positives in a week and the model is kept
+as it is. Every version is kept (`triage profile revert`); the dashboard shows the week's diff.
+
+Two more loops run beside the model. Rescues (`wrong`, or marking a cut article unread) above 5%
+of a week's cuts lower the floor to 25 until they fall. And 20% of what the floor would leave is
+reserved for new ground: articles of decent quality on a concept not in your record, so the
+teacher keeps showing you fields you have not read yet.
+
+What to expect: the concept lists act on the next run; the nudges within the hour; the learner
+model after the first Sunday with five or more positives. The dashboard's "Your verdicts" panel
+sets your grades against the teacher's bands and lists where you disagree most; when the
+disagreements shrink week by week, it is learning you.
 
 
 ## 6. Big piles
@@ -214,8 +274,8 @@ control room picks it up on its next refresh). Current values in brackets.
 | `must_read_stream` [Must read] | the BazQux smart stream whose members are never cut |
 | `folders` | per folder: `auto_cut_below: N` (its own floor), `protected: true` (never cut), `score: false` (never judged). Folder names must match BazQux exactly; `triage doctor --live` warns about ones that do not |
 
-**tags** [score-90 … score-0, cut, wrong, meh, prune]: the tag names written to and read from
-BazQux; change them only before the first run.
+**tags** [score-90 … score-0, cut, wrong, prune, great, good, meh, bad, basic, heavy, more, less]:
+the tag names written to and read from BazQux; change them only before the first run.
 
 **breakers**
 

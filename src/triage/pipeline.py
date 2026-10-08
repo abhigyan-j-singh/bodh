@@ -58,6 +58,7 @@ class RunResult:
             f"second looks {self.second_looks} (saved {self.saved}" + (f", held {self.held})" if self.batch_mode else ")"),
             f"cut floor {self.cut_floor}", f"cut prune {self.cut_prune}",
             f"reads {fb.get('reads', 0)}", f"stars {fb.get('stars', 0)}", f"rescues {fb.get('rescues', 0)}",
+            *( [f"verdicts {fb['verdicts']}"] if fb.get("verdicts") else [] ),
             f"spend ${self.spend_usd:.2f}",
         ]
         if self.boundary is not None:

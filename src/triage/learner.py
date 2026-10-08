@@ -50,15 +50,21 @@ def _section(text: str, heading_prefix: str) -> str:
 
 def nudge(cfg: Config, conn: sqlite3.Connection, kind: str, phrase: str) -> str:
     """`triage want X` / `triage meh X`: a dated line the teacher sees immediately."""
+    return nudges(cfg, conn, [(kind, phrase)])[0]
+
+
+def nudges(cfg: Config, conn: sqlite3.Connection, items: list[tuple[str, str]]) -> list[str]:
+    """Several nudges (the `more` and `less` tags of one run, say) in one version."""
     text = cfg.read_learner()
     stamp = store.utcnow().strftime("%Y-%m-%d")
-    line = f"- {stamp}: the student {'wants more on' if kind == 'want' else 'wants less of'} {phrase.strip()}"
-    if "## Nudges" in text:
-        text = text.rstrip() + "\n" + line + "\n"
-    else:
-        text = text.rstrip() + "\n\n## Nudges\n" + line + "\n"
-    _write_version(cfg, conn, text, f"nudge: {kind} {phrase.strip()}")
-    return line
+    lines = [f"- {stamp}: the student {'wants more on' if kind == 'want' else 'wants less of'} {phrase.strip()}"
+             for kind, phrase in items]
+    if "## Nudges" not in text:
+        text = text.rstrip() + "\n\n## Nudges\n"
+    text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
+    reason = "; ".join(f"{kind} {phrase.strip()[:40]}" for kind, phrase in items)
+    _write_version(cfg, conn, text, f"nudge: {reason}")
+    return lines
 
 
 def _write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str) -> int:
@@ -109,18 +115,26 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     """Rewrite learner.md from the week's evidence; keep it only if the eval gate passes."""
     result = {"applied": False, "reason": "", "diff": "", "words": 0}
     since = store.days_ago_iso(7)
-    positives = store.feedback_since(conn, ["star", "read", "rescue"], since)
-    negatives = store.feedback_since(conn, ["prune", "dismiss", "meh"], since)
+    positives = store.feedback_since(conn, store.POSITIVE_KINDS, since)
+    negatives = store.feedback_since(conn, store.NEGATIVE_KINDS, since)
+    levels = store.feedback_since(conn, store.LEVELS, since)
+    steers = store.feedback_since(conn, store.STEERS, since)
     if len(positives) < 5:
         result["reason"] = f"only {len(positives)} positives this week; learner model kept as is"
         return result
 
     current = cfg.read_learner()
     seed = cfg.read_seed()
-    evidence = ["# Positives (read, starred, rescued)"]
+    evidence = ["# Positives (starred, great, good, read, rescued)"]
     evidence += [_evidence_line(r) for r in positives[:120]]
-    evidence += ["", "# Negatives (pruned, dismissed, meh)"]
+    evidence += ["", "# Negatives (bad, meh, dismissed)"]
     evidence += [_evidence_line(r) for r in negatives[:120]]
+    if levels:
+        evidence += ["", "# Level missed (basic: too elementary; heavy: too dense)"]
+        evidence += [_evidence_line(r) for r in levels[:40]]
+    if steers:
+        evidence += ["", "# Steers (more: the student asked for more of this; less: for less)"]
+        evidence += [_evidence_line(r) for r in steers[:40]]
     user_text = (
         f"# Seed\n{seed}\n\n# Current learner model\n{current}\n\n# This week's evidence\n" + "\n".join(evidence)
     )
@@ -168,13 +182,14 @@ def _strip_fences(text: str) -> str:
 
 
 def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, new_learner: str) -> dict:
-    """With the proposed learner model in place, no recently starred article may score
-    below its folder's automatic floor. Up to 30 starred articles, one or two calls."""
+    """With the proposed learner model in place, no recently loved article (starred, `great`,
+    rescued with `wrong`) may score below its folder's automatic floor. Up to 30 articles,
+    one or two calls."""
     rows = conn.execute(
-        """SELECT a.* FROM feedback f JOIN articles a ON a.id = f.article_id
-           WHERE f.kind = 'star' AND a.text IS NOT NULL AND a.text != ''
-           ORDER BY f.at DESC LIMIT ?""",
-        (GATE_SAMPLE,),
+        f"""SELECT a.* FROM feedback f JOIN articles a ON a.id = f.article_id
+            WHERE f.kind IN ({",".join("?" * len(store.LOVED_KINDS))}) AND a.text IS NOT NULL AND a.text != ''
+            GROUP BY a.id ORDER BY MAX(f.at) DESC LIMIT ?""",
+        (*store.LOVED_KINDS, GATE_SAMPLE),
     ).fetchall()
     if not rows:
         return {"passed": True, "detail": "no starred articles to check against", "checked": 0, "below": []}

@@ -405,11 +405,46 @@ def local_midnight_iso(tz_name: str) -> str:
 
 # -- feedback and concepts ----------------------------------------------------
 
+# The kinds of feedback, and what they mean to the teacher and the weekly rewrite.
+# Stars and reads come from BazQux state; the rest are the student's tags.
+GRADES = ("great", "good", "meh", "bad")      # one per article; the harsher wins when two are present
+LEVELS = ("basic", "heavy")                   # the level missed: too elementary, too dense
+STEERS = ("more", "less")                     # steer the teacher by this article's concept, now
+LOVED_KINDS = ("star", "great", "wrong")      # the strongest positives: the eval gate checks against these
+POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong")
+NEGATIVE_KINDS = ("bad", "meh", "dismiss", "prune")
+
+
 def add_feedback(conn: sqlite3.Connection, article_id: str, kind: str) -> bool:
     cur = conn.execute(
         "INSERT OR IGNORE INTO feedback (article_id, kind, at) VALUES (?, ?, ?)", (article_id, kind, utcnow_iso())
     )
     return cur.rowcount > 0
+
+
+def set_verdict(conn: sqlite3.Connection, article_id: str, kind: str, group: Iterable[str]) -> bool:
+    """Record one kind out of an exclusive group (a grade, a level, a steer), replacing any other
+    member recorded for the article. True when something changed."""
+    others = [k for k in group if k != kind]
+    if others:
+        conn.execute(
+            f"DELETE FROM feedback WHERE article_id = ? AND kind IN ({','.join('?' * len(others))})",
+            (article_id, *others),
+        )
+    return add_feedback(conn, article_id, kind)
+
+
+def verdicts(conn: sqlite3.Connection, kinds: Iterable[str]) -> dict[str, str]:
+    """article id -> the recorded kind, for one exclusive group."""
+    kinds = list(kinds)
+    marks = ",".join("?" * len(kinds))
+    return {r[0]: r[1] for r in conn.execute(f"SELECT article_id, kind FROM feedback WHERE kind IN ({marks})", kinds)}
+
+
+def feedback_for(conn: sqlite3.Connection, article_id: str) -> list[tuple[str, str]]:
+    """(kind, at) for one article, oldest first."""
+    return [(r[0], r[1]) for r in conn.execute(
+        "SELECT kind, at FROM feedback WHERE article_id = ? ORDER BY at, id", (article_id,))]
 
 
 def feedback_ids(conn: sqlite3.Connection, kind: str) -> set[str]:

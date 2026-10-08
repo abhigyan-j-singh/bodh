@@ -441,11 +441,14 @@ def why(article_id: str) -> None:
     typer.echo(f"state: {row['status']}" + (f" ({row['cut_mode']} at {row['cut_at']})" if row["cut_mode"] else "")
                + (" · starred" if row["starred"] else "") + (" · protected" if row["protected"] else "")
                + (" · exploration" if row["exploration"] else ""))
+    marks = store.feedback_for(ctx.conn, aid)
+    if marks:
+        typer.echo("your record: " + ", ".join(f"{kind} ({at[:10]})" for kind, at in marks))
 
 
 @app.command()
 def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk")) -> None:
-    """Teach the eval gate: record an article as one you would star, or as junk."""
+    """From the terminal, the same as tagging it great (star) or bad (junk) in BazQux."""
     if judgment not in ("star", "junk"):
         _fail("judgment must be star or junk")
     ctx = _ctx()
@@ -454,7 +457,7 @@ def label(article_id: str, judgment: str = typer.Argument(..., help="star or jun
     if row is None:
         _fail("unknown article; it must have been ingested first")
         return
-    store.add_feedback(ctx.conn, aid, "star" if judgment == "star" else "meh")
+    store.set_verdict(ctx.conn, aid, "great" if judgment == "star" else "bad", store.GRADES)
     golden = ctx.cfg.root / ctx.cfg.data_dir / "golden.jsonl"
     with golden.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": store.utcnow_iso(), "article_id": aid, "title": row["title"], "judgment": judgment}) + "\n")

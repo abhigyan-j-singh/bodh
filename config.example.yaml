@@ -52,9 +52,18 @@ cut:
 tags:
   buckets: { 90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0" }
   cut: "cut"
-  wrong: "wrong"                   # you add it to a cut article you wanted: a rescue
-  meh: "meh"                       # you add it to a kept article that was not worth it
-  prune: "prune"                   # you add it to any article: the next run prunes one step
+  # commands: the run acts on them and removes them
+  wrong: "wrong"                   # on a cut article you wanted: back to unread, and the strongest positive
+  prune: "prune"                   # on any article: the next enforcing run prunes to the target
+  # your verdicts: they stay on the article as your record and are recorded once
+  great: "great"                   # the best kind; more like this; the Sunday rewrite may not lose it
+  good: "good"                     # worth the time
+  meh: "meh"                       # not worth it
+  bad: "bad"                       # junk; the teacher was wrong to keep it
+  basic: "basic"                   # too elementary for you
+  heavy: "heavy"                   # too dense or too specialist for you now
+  more: "more"                     # more of this article's concept, from the next run
+  less: "less"                     # less of it
 
 breakers:
   max_cut_share: 0.95              # a run that would cut more than this share of >= min_new articles stops

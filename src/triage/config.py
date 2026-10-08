@@ -118,9 +118,22 @@ class Tags(BaseModel):
         default_factory=lambda: {90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0"}
     )
     cut: str = "cut"
-    wrong: str = "wrong"
-    meh: str = "meh"
-    prune: str = "prune"
+    # commands: the run acts on them and removes them
+    wrong: str = "wrong"             # a cut article you wanted: back to unread, and a strong positive
+    prune: str = "prune"             # on any article: the next enforcing run prunes to the target
+    # verdicts: your opinion of an article, left on it as your record, recorded once
+    great: str = "great"             # the best kind: more like this, and the eval gate protects it
+    good: str = "good"               # worth the time
+    meh: str = "meh"                 # not worth it
+    bad: str = "bad"                 # junk; the teacher was wrong to keep it
+    basic: str = "basic"             # too elementary for you
+    heavy: str = "heavy"             # too dense or too specialist for you now
+    more: str = "more"               # more of this article's concept, from the next run
+    less: str = "less"               # less of it
+
+    def verdict_tags(self) -> dict[str, str]:
+        """feedback kind -> tag name, for the tags that carry an opinion."""
+        return {k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")}
 
     def bucket_for(self, score: float) -> str:
         for threshold in sorted(self.buckets, reverse=True):
