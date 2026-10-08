@@ -1,0 +1,20 @@
+# secrets and personal state: never committed
+.env
+profile/
+data/
+dashboard/
+
+# build and tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# scratch
+*.log
+*.bak*
+.DS_Store

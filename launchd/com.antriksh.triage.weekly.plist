@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- triage weekly: Sunday 07:00 local time. Rewrites the learner model (gated), writes the
+         weekly note, runs the drift check. install-launchd.sh fills in the placeholders. -->
+    <key>Label</key>
+    <string>com.antriksh.triage.weekly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__TRIAGE_DIR__/.venv/bin/triage</string>
+        <string>weekly</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__TRIAGE_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TRIAGE_HOME</key>
+        <string>__TRIAGE_DIR__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+__USERNAME__
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/triage/launchd.weekly.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/triage/launchd.weekly.log</string>
+</dict>
+</plist>
