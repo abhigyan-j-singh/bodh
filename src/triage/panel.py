@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import control, ops, progress
-from .config import Config
+from .config import Config, load_config
 
 log = logging.getLogger(__name__)
 
@@ -112,10 +112,27 @@ class Panel:
     # -- data -----------------------------------------------------------------
 
     def status(self) -> dict:
+        self._reload_config()
         with self.db_lock:
             st = control.status(self.cfg, self.conn)
         st["child"] = self.child.state()
         return st
+
+    def _reload_config(self) -> None:
+        """config.yaml edited by hand (or by `triage enforce` in a terminal) shows on the next
+        refresh; a file that does not parse leaves the last good configuration in place."""
+        path = self.cfg.root / "config.yaml"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        if mtime == getattr(self, "_config_mtime", None):
+            return
+        try:
+            self.cfg = load_config(self.cfg.root)
+            self._config_mtime = mtime
+        except Exception as exc:  # noqa: BLE001
+            log.warning("panel: config.yaml not reloaded: %s", exc)
 
     def run_action(self, action: str, params: dict) -> dict:
         if action == "stop":

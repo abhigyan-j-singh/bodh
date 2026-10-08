@@ -163,7 +163,14 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     code, res = _post(base + "/api/action", {"action": "nope"})
     assert not res["ok"]
     code, res = _post(base + "/api/action", {"action": "enforce_on"})
-    assert res["ok"] and cfg.cut.enforce is True and "enforce: true" in (cfg.root / "config.yaml").read_text()
+    assert res["ok"] and "enforce: true" in (cfg.root / "config.yaml").read_text()
+    assert _get(base + "/api/status")["mode"] == "enforce"
+    # config.yaml edited by hand shows on the next refresh (mtime resolution: make it clearly later)
+    os.utime(cfg.root / "config.yaml", (time.time() + 5, time.time() + 5))
+    (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 25\n", encoding="utf-8")
+    os.utime(cfg.root / "config.yaml", (time.time() + 10, time.time() + 10))
+    st = _get(base + "/api/status")
+    assert st["mode"] == "shadow" and st["config"]["target"] == 25
     assert os.environ.get("TRIAGE_HOME") != str(cfg.root)  # the child env carries it, the test process does not
 
 
