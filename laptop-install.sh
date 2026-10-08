@@ -17,7 +17,7 @@ echo "== 3/4 first run in shadow mode (scores and tags up to 400 articles, cuts 
 .venv/bin/triage status
 
 echo
-echo "== 4/4 launchd agents (every 30 min while logged in; Sunday weekly; monthly report)"
+echo "== 4/4 launchd agents (every 30 min while logged in; Sunday weekly; monthly report; control room on http://127.0.0.1:8766)"
 ./install-launchd.sh
 
 cat <<EOF
@@ -28,5 +28,5 @@ Next, when you are ready:
   .venv/bin/triage prune --dry-run                     see what a prune to 40 would cut
   .venv/bin/triage replay --archive ../feedfilter/data/feedfilter.db --golden ../evals/golden.jsonl
   edit config.yaml: cut.enforce: true, cut.default_floor: 25   after two or three shadow days
-dashboard: open dashboard/index.html, or publish it with: tailscale serve --bg --set-path / "\$(pwd)/dashboard"
+control room: http://127.0.0.1:8766 (status, run, stop, prune, undo, blast, the dashboard underneath); whole picture in the terminal: .venv/bin/triage status
 EOF

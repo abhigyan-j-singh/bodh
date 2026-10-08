@@ -14,7 +14,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | --- | --- | --- |
 | `src/triage/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/triage/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
-| `tests/` | 53 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
+| `tests/` | 54 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
 | `launchd/`, `install.sh`, `install-launchd.sh`, `laptop-install.sh` | Install and schedule on a Mac | yes |
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates: copy to `config.yaml`, `.env`, `profile/` | yes |
 | `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
@@ -153,9 +153,10 @@ Stop interrupts whatever holds the run lock, started from the page or not. The s
 127.0.0.1 only and accepts actions only from its own page; Tailscale adds the identity check on the
 tailnet. From the terminal the same levers are `triage status`, `stop`, `halt`, `schedule`, `enforce`.
 
-If the page does not answer, `triage status` says so and shows the last line of `data/panel.log`,
-where the server writes why it could not start (a port in use, say); `triage panel` in a terminal
-runs it in the foreground with the error on screen.
+The installer waits up to 15 s for the page to answer and, if it does not, prints the job's state and
+the last lines of `~/Library/Logs/triage/panel.err.log` and `data/panel.log`, where the server writes
+why it could not start (a port in use, say). Later, `triage status` says the same; `triage panel` in a
+terminal runs it in the foreground with the error on screen.
 
 ## Heartbeat and alerts
 
@@ -229,6 +230,6 @@ record). Learner model history: `git log` in `profile/`.
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # 53 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
+.venv/bin/pytest -q        # 54 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
 .venv/bin/ruff check src tests
 ```

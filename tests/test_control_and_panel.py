@@ -197,3 +197,16 @@ def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
     assert any("not installed" in n for n in notes) and any("nothing is running" in n for n in notes)
     assert notes[-1].startswith("everything is stopped")
     assert not (cfg.root / cfg.data_dir / "panel.json").exists()
+
+
+def test_installer_covers_every_job():
+    """install-launchd.sh must install every job `triage status` reports on, each with a template;
+    the control room once went missing from the loop and the page could never answer."""
+    root = Path(__file__).resolve().parents[1]
+    installer = (root / "install-launchd.sh").read_text(encoding="utf-8")
+    loop = next(line for line in installer.splitlines() if line.startswith("for job in "))
+    labels = [word.strip(";") for word in loop.split()]
+    for label in control.JOBS.values():
+        assert label in labels, f"{label} is not installed by install-launchd.sh"
+        assert (root / "launchd" / f"{label}.plist").exists()
+    assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")]).returncode == 0
