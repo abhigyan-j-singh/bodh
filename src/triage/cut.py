@@ -304,7 +304,8 @@ def bankruptcy(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, olde
     if dry_run or not ids:
         return len(ids), 0
     now = store.utcnow_iso()
-    unknown = [aid for aid in ids if aid not in store.known_ids(conn)]
+    known = store.known_ids(conn)
+    unknown = [aid for aid in ids if aid not in known]
     with store.transaction(conn):
         conn.executemany("INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)",
                          [(aid, "(bankruptcy: not fetched)", now) for aid in unknown])

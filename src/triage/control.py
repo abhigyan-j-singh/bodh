@@ -177,9 +177,12 @@ def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
 def stray_pattern(root: Path | None) -> str:
     """The pgrep pattern for this checkout's own commands, anchored at the start of the
     command line so a path merely mentioned in another program's arguments does not match."""
+    # a console script runs as `<venv>/bin/python <venv>/bin/triage …` (its shebang), so the
+    # interpreter may come first
     if root is not None:
-        return rf"^{re.escape(str(root))}/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
-    return r"^\S*/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
+        return (rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/triage( |$)"
+                r"|^\S*python\S* -m triage\.cli( |$)")
+    return r"^(\S+/python\S* )?\S*/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
 
 
 def halt(cfg: Config) -> list[str]:

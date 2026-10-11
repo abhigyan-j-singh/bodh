@@ -32,7 +32,7 @@ ACTIONS = {
     "run_shadow": (["run", "--shadow"], True),
     "run_sync": (["run", "--sync"], True),
     "prune_dry": (["prune", "--dry-run"], False),
-    "prune": (["prune"], True),
+    "prune": (["prune", "--yes"], True),
     "undo": (["undo"], False),
     "bankruptcy_dry": (["bankruptcy", "--dry-run"], False),
     "bankruptcy": (["bankruptcy", "--yes"], True),

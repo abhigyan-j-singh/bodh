@@ -765,3 +765,126 @@ def test_refresh_protection_is_linear(cfg, conn):
     pipeline.refresh_protection(ctx, set(ids[:25_000]), set(ids[:10]))
     assert _t.monotonic() - t0 < 2.0
     assert conn.execute("SELECT COUNT(*) FROM state WHERE protected = 1").fetchone()[0] == 25_000
+
+
+# -- the review's findings ---------------------------------------------------------
+
+def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
+    """adapt_to_error writes through the LLM's own connection; called inside the absorb's
+    transaction it waited on that transaction's lock until it timed out, and every run after
+    failed on the same batch."""
+    from triage import store as storemod
+    from triage.teacher import LLM
+
+    cfg.scoring.batch_size = 1
+    ctx, client, items = build(cfg, conn, ["junk a"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    first = next(iter(ctx.llm.batches.values()))
+    ctx.llm.fail_ids.add(first[0]["custom_id"])
+    ctx.llm.finish_all()
+    # a real LLM-style adapt_to_error: a write on a second connection to the same database
+    other = storemod.connect(cfg.db_path)
+
+    def adapt(model, message):
+        other.execute("PRAGMA busy_timeout=500")
+        storemod.kv_set(other, "plain_json", "1")
+        return True
+
+    ctx.llm.adapt_to_error = adapt
+    res = pipeline.run(ctx, enforce=False)
+    assert res.ok and storemod.kv_get(conn, "plain_json") == "1"
+    assert store.recent_batches(conn)[-1]["status"] == "partial" and LLM is not None
+
+
+def test_read_then_unread_again_is_not_cut_by_the_floor(cfg, conn):
+    """The common reader gesture: read it, mark it unread to finish later. Its old score sits
+    under the floor; the floor must leave it (a prune may still take it)."""
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"])
+    pipeline.run(ctx, enforce=False)
+    junk = items[1].id
+    client.mark_read([junk])                        # the student reads it
+    res = pipeline.run(ctx, enforce=False)
+    assert res.feedback["reads"] == 1 and store.article(conn, junk)["status"] == "read"
+    client.mark_unread([junk])                      # and keeps it for later
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["returned"] == 1 and res.cut_floor == 0
+    assert store.article(conn, junk)["status"] == "unread" and len(client.read) == 1   # only the student's own read
+    cfg.cut.target_unread = 1
+    n, sel = pipeline.prune(ctx)
+    assert n == 1 and sel.cut_ids == [junk]        # the student's own prune still may
+
+
+def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
+    from triage import cut
+
+    cfg.breakers.min_new_for_breaker = 3
+    cfg.cut.target_unread = 1
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b", "junk c", "junk d"])
+    client.labels[cfg.tags.prune] = [items[0].id]
+    import pytest
+
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.run(ctx, enforce=True)
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_prune == 0 and client.read == [] and "waits for `triage safety reset`" in " ".join(res.notes)
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.prune(ctx)                         # the student's own prune is refused too
+    assert cut.reset_breaker(conn)
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 4 and res.cut_prune == 0 and store.kv_get(conn, "prune_requested") is None
+
+
+def test_wrong_on_a_pending_cut_rescues_it(cfg, conn):
+    """A cut whose read mark failed is still unread in BazQux, carrying the cut tag; `wrong` on it
+    used to record the positive only, and finish_pending_cuts then marked it read."""
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b"])
+    real = client.mark_read
+
+    def failing(ids):
+        raise RuntimeError("edit-tag 500")
+
+    client.mark_read = failing
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)              # tagged cut, not marked read
+    client.mark_read = real
+    assert store.cut_pending(conn)[1] and client.read == []
+    client.labels[cfg.tags.wrong] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["rescues"] == 1
+    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["rescued_at"]
+    assert client.read == [[items[1].id]]            # the other pending cut is finished
+    assert store.feedback_ids(conn, "rescue") == {items[0].id}
+
+
+def test_pending_cut_moved_into_must_read_is_restored(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b"])
+
+    def failing(ids):
+        raise RuntimeError("edit-tag 500")
+
+    real = client.mark_read
+    client.mark_read = failing
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)
+    client.mark_read = real
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]   # the student moved it into Must read meanwhile
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and client.read == [[items[1].id]]
+    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["protected"] == 1
+
+
+def test_prune_cuts_only_what_was_confirmed(cfg, conn):
+    cfg.cut.target_unread = 1
+    ctx, client, items = build(cfg, conn, ["gold a", "plain b", "plain c"])
+    pipeline.run(ctx, enforce=False)
+    _, shown = pipeline.prune(ctx, dry_run=True)
+    assert len(shown.cut) == 2
+    n, sel = pipeline.prune(ctx, confirmed={items[1].id})      # a run in between would have widened it
+    assert n == 1 and sel.cut_ids == [items[1].id]

@@ -40,12 +40,14 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
     stats["stars"] = len(new_stars)
 
     # back to unread: what we recorded as read, dismissed or expired that the student marked
-    # unread again belongs to the pool once more (no feedback: nothing is known about why)
+    # unread again belongs to the pool once more (no feedback: nothing is known about why), and
+    # the automatic floor leaves it alone (an article kept to finish later must not be cut for
+    # its old score); a prune may still take it
     returned: set[str] = set()
     for status in ("read", "dismissed", "expired"):
         returned |= store.status_ids(conn, status) & unread_now
     if returned:
-        store.restore_unread(conn, returned, rescued=False)
+        store.restore_unread(conn, returned, rescued=False, exempt=True)
         stats["returned"] = len(returned)
 
     # reads and dismissals: what we left unread and is now read, by the student's hand
@@ -71,15 +73,17 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
         stats["expired"] = len(expired)
 
     # rescues: a cut article that is unread again was marked unread by the student; a `wrong`
-    # tag on a cut article asks for the same. `wrong` on anything else is a strong positive
-    # with no rescue in it (there was no cut to reverse).
-    ours_cut = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = 'cut' AND read_marked = 1")}
+    # tag on a cut article asks for the same, whether or not the cut has reached BazQux yet (a
+    # cut whose read mark failed is still unread there, carrying the tag). `wrong` on anything
+    # else is a strong positive with no rescue in it (there was no cut to reverse).
+    ours_cut_marked = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = 'cut' AND read_marked = 1")}
+    ours_cut = store.status_ids(conn, "cut")
     wrong_ids = [aid for aid in client.label_ids(cfg.tags.wrong) if aid in known]
     wrong_cut = [aid for aid in wrong_ids if aid in ours_cut]
     to_unread = [aid for aid in wrong_cut if aid not in unread_now]
     if to_unread:
         client.mark_unread(to_unread)
-    rescued = sorted((ours_cut & unread_now) | set(wrong_cut))
+    rescued = sorted((ours_cut_marked & unread_now) | set(wrong_cut))
     if rescued:
         client.untag(rescued, cfg.tags.cut)
         store.restore_unread(conn, rescued, rescued=True)

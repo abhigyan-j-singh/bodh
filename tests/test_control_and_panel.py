@@ -305,8 +305,10 @@ def test_stray_processes_only_this_checkout(tmp_path):
         103: f"vim {tmp_path}/.venv/bin/triage",
         104: "/usr/bin/python3 -m triage.cli run",
         105: f"{tmp_path}/.venv/bin/triage",
+        106: f"{tmp_path}/.venv/bin/python {tmp_path}/.venv/bin/triage progress --watch",   # as the shebang runs it
+        107: "/Users/other/triage/.venv/bin/python /Users/other/triage/.venv/bin/triage panel",
     }
-    assert {pid for pid, cmd in lines.items() if pattern.search(cmd)} == {101, 104, 105}
+    assert {pid for pid, cmd in lines.items() if pattern.search(cmd)} == {101, 104, 105, 106}
 
 
 def test_next_run_uses_last_timer_run(conn, cfg, monkeypatch):

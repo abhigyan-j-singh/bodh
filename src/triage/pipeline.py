@@ -148,7 +148,8 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
     and clear the rest. With no answer from BazQux (``protected`` is None) a protection is
     never withdrawn: the flags from the last good answer stand."""
     rows = ctx.conn.execute("SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
-                            "WHERE st.status = 'unread'").fetchall()
+                            "WHERE st.status = 'unread' "
+                            "OR (st.status = 'cut' AND (st.cut_tagged = 0 OR st.read_marked = 0))").fetchall()
     prot = {r["id"] for r in rows
             if (protected is not None and r["id"] in protected) or ctx.cfg.cut.is_protected(r["folder"])}
     store.set_flags(ctx.conn, prot, protected=1)
@@ -259,7 +260,9 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             res.boundary = sel.boundary
             if sel.held:
                 res.held = teacher.submit_second_looks(run_id, sel.held)
-            if res.feedback.get("prune_requested"):
+            if res.feedback.get("prune_requested") and sel.blocked:
+                res.notes.append("prune requested by tag; it waits for `triage safety reset`")
+            elif res.feedback.get("prune_requested"):
                 psel = cutmod.select_prune(conn, cfg)
                 res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, run_id, "prune")
                 res.boundary = psel.boundary
@@ -408,9 +411,19 @@ def blast(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = False,
 
 
 def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
-          below: float | None = None, dry_run: bool = False) -> tuple[int, cutmod.Selection]:
+          below: float | None = None, dry_run: bool = False,
+          confirmed: set[str] | None = None) -> tuple[int, cutmod.Selection]:
+    """The student's cut. Refused while the breaker is tripped: the scores it would rank by are
+    the ones the breaker declared suspect. ``confirmed`` (the ids shown and agreed to) bounds a
+    real prune to them, so a run between the question and the answer cannot widen the cut."""
     cfg, conn = ctx.cfg, ctx.conn
+    tripped = cutmod.breaker_tripped(conn)
+    if tripped:
+        raise cutmod.BreakerTripped(f"the breaker tripped in run {tripped}: the latest scores may be wrong; "
+                                    "check a few with `triage why ID`, then `triage safety reset`")
     sel = cutmod.select_prune(conn, cfg, keep=keep, fraction=fraction, below=below)
+    if confirmed is not None:
+        sel.cut = [r for r in sel.cut if r["id"] in confirmed]
     if dry_run or not sel.cut:
         return 0, sel
     run_id = store.begin_run(conn, "prune")

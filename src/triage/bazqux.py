@@ -248,11 +248,11 @@ class BazQuxClient:
             if not continuation or not refs or (limit and len(out) >= limit):
                 return out
             if continuation in seen:
-                log.warning("bazqux: %s repeated continuation %r; stopping after %d items", stream, continuation, len(out))
-                return out
+                # a shorter list than the truth would read as "everything else was read" (or
+                # "nothing else is protected"): a stream that loops is an error, not an answer
+                raise BazQuxError(f"{stream}: the continuation {continuation!r} repeated after {len(out)} items")
             seen.add(continuation)
-        log.warning("bazqux: %s did not end after %d pages; stopping at %d items", stream, MAX_PAGES, len(out))
-        return out
+        raise BazQuxError(f"{stream}: no end after {MAX_PAGES} pages ({len(out)} items)")
 
     def unread_ids(self) -> list[ItemRef]:
         return self.item_refs(READING_LIST, exclude=READ)

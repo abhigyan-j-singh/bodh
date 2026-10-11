@@ -77,7 +77,10 @@ class Redactor(logging.Filter):
         if clean != message or record.args:
             record.msg = clean
             record.args = ()
-        if record.exc_text:
+        if record.exc_info and not record.exc_text:
+            # a handler's filter runs before its formatter caches the traceback: cache it clean
+            record.exc_text = self.redact(logging.Formatter().formatException(record.exc_info))
+        elif record.exc_text:
             record.exc_text = self.redact(record.exc_text)
         return True
 

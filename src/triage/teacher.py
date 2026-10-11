@@ -869,9 +869,15 @@ class Teacher:
         one transaction, so an interrupt leaves it open and untouched for the next run to
         absorb again rather than half-recorded with its costs counted twice."""
         with store.transaction(self.conn):
-            self._absorb_results(b, results, run_id, client, stats)
+            model, first_error = self._absorb_results(b, results, run_id, client, stats)
+        if first_error:
+            # after the commit: the LLM remembers a rejected request shape on its own connection,
+            # and that write would wait on this one's open transaction until it timed out
+            self.llm.adapt_to_error(model, first_error)
 
-    def _absorb_results(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict) -> None:
+    def _absorb_results(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any,
+                        stats: dict) -> tuple[str, str]:
+        """Returns (model, first error message) for the caller to act on once the transaction is over."""
         members = store.batch_members(self.conn, b["id"])
         purpose, model = b["purpose"], b["model"]
         errored, empty, first_error, answered = 0, 0, "", set()
@@ -917,8 +923,7 @@ class Teacher:
         if note:
             log.warning("teacher: batch %s: %s", b["id"], note)
             stats["notes"].append(f"batch {b['id'][:12]}: {note}")
-        if errored:
-            self.llm.adapt_to_error(model, first_error)
+        return model, first_error if errored else ""
 
     def _absorb_teacher(self, ids: list[str], verdicts: list[Verdict]) -> int:
         by_id = {r["id"]: r for r in self.conn.execute(

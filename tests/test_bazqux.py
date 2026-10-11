@@ -58,7 +58,10 @@ def test_login_401_and_403_raise_auth_error():
 
 
 def test_pagination_bounded_on_repeating_continuation(monkeypatch):
+    """A continuation that repeats, or never ends, is an error: a shorter list than the truth
+    would read as "everything else was read" or "nothing else is protected"."""
     import triage.bazqux as bq
+    from triage.bazqux import BazQuxError
 
     monkeypatch.setattr(bq, "MAX_PAGES", 10)
     calls = {"n": 0}
@@ -70,9 +73,12 @@ def test_pagination_bounded_on_repeating_continuation(monkeypatch):
         return httpx.Response(200, json={"itemRefs": [{"id": str(calls["n"])}], "continuation": "same"})
 
     client = BazQuxClient("e@x", "pw", transport=httpx.MockTransport(handler))
-    refs = client.unread_ids()
-    assert calls["n"] == 2 and len(refs) == 2          # the second page repeats the continuation: stop
-
+    with pytest.raises(BazQuxError):
+        client.unread_ids()
+    assert calls["n"] == 2
+    assert client.label_ids("Must read") == []                      # a label: empty, as before
+    with pytest.raises(BazQuxError):
+        client.label_ids("Must read", strict=True)                  # unless the caller must know
     calls["n"] = 0
 
     def fresh(request: httpx.Request) -> httpx.Response:
@@ -82,7 +88,9 @@ def test_pagination_bounded_on_repeating_continuation(monkeypatch):
         return httpx.Response(200, json={"itemRefs": [{"id": str(calls["n"])}], "continuation": f"c{calls['n']}"})
 
     client = BazQuxClient("e@x", "pw", transport=httpx.MockTransport(fresh))
-    assert len(client.unread_ids()) == 10 and calls["n"] == 10   # never-ending continuations: the page cap
+    with pytest.raises(BazQuxError):
+        client.unread_ids()
+    assert calls["n"] == 10
 
 
 def test_parse_item_tolerates_bad_timestamps():

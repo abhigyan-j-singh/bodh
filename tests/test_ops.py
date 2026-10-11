@@ -166,3 +166,24 @@ def test_time_limit_without_sigalrm_is_a_noop(monkeypatch):
     monkeypatch.delattr(signal, "SIGALRM", raising=False)
     with ops.time_limit(1):
         pass
+
+
+def test_redactor_cleans_tracebacks_with_a_single_handler(cfg, tmp_path, monkeypatch):
+    """With the file handler alone (launchd: no terminal), the filter runs before the formatter
+    caches the traceback; the exception line used to reach the file unredacted."""
+    log_path = tmp_path / "logs" / "triage.log"
+    monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
+    monkeypatch.setattr(ops, "_stderr_is_a_terminal", lambda: False)
+    ops.setup_logging(cfg.root / cfg.data_dir, secrets=["https://hc-ping.com/uuid-secret"])
+    try:
+        assert len(logging.getLogger().handlers) == 1
+        try:
+            raise RuntimeError("ping https://hc-ping.com/uuid-secret failed, header GoogleLogin auth=tok123")
+        except RuntimeError:
+            logging.getLogger("triage.test").exception("boom")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        text = log_path.read_text(encoding="utf-8")
+        assert "RuntimeError" in text and "uuid-secret" not in text and "tok123" not in text
+    finally:
+        _reset_logging()

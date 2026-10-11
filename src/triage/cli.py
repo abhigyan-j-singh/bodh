@@ -347,12 +347,15 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         if not yes and _interactive() and not typer.confirm(f"Cut these {len(sel.cut)} (undo reverses it)?"):
             raise typer.Exit(0)
         with run_lock(lock, "prune"), graceful_sigterm():
-            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below)
+            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
         return
     except KeyboardInterrupt:
         _fail("stopped; the next run finishes the tags and read marks, `triage undo` reverses the prune", 130)
+        return
+    except pipeline.cutmod.BreakerTripped as exc:
+        _fail(str(exc))
         return
     if n:
         typer.echo(f"cut {n}; `triage undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
