@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fakes import FakeLLM
+
 from bodh.ids import resolve_ordinal, short_to_long
 from bodh.judge import Judge, _fmt_date
 from bodh.judgment import JudgmentIn, Verdict, parse_judgments
@@ -87,18 +89,12 @@ def test_adapt_to_error_word_boundaries():
 def test_prompt_home_flag_follows_the_config(cfg, conn):
     from bodh.judge import Judge, fill_prompt, load_prompt
 
-    class StubLLM:
-        plain_json = False
-
-        def request_params(self, *a, **k):
-            return {}
-
     raw = load_prompt("teacher.v2", cfg.root)
     assert "<<home_flag>>" in raw and "india" not in raw.lower() and "AI infrastructure" not in raw
     cfg.judge.home_angle = ""
     assert "home (" not in fill_prompt(raw, cfg) and "<<" not in fill_prompt(raw, cfg)
     cfg.judge.home_angle = "India"
-    text = Judge(cfg, StubLLM(), conn).system_text  # type: ignore[arg-type]
+    text = Judge(cfg, FakeLLM(cfg, conn), conn).system_text
     assert "home (an angle on the student's home ground, India)" in text and "<<" not in text
     assert "outside the student's own field" in text
     cfg.judge.home_angle = "  "  # whitespace is off, like "": no flag in the prompt, no bonus in compose

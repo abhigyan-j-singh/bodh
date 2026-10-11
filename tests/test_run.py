@@ -4,234 +4,10 @@ then the same through the batch path, where judgments arrive one run later."""
 
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import dataclass, field
-
-from conftest import FakeClient, make_item
+from fakes import FakeLLM, FakeReader, make_item
 
 from bodh import profiler, run, store
 from bodh.config import Secrets
-from bodh.judgment import Verdict
-from bodh.readers.bazqux import Subscription
-
-
-class FakeBazQux(FakeClient):
-    def __init__(self, items, folders=None, **kw):
-        super().__init__(**kw)
-        self.items = {i.id: i for i in items}
-        self.folders = folders or {}
-
-    def subscriptions(self):
-        return [
-            Subscription(
-                stream_id=i.feed_stream_id,
-                title=i.feed_title,
-                html_url="",
-                folders=[self.folders[i.feed_title]] if i.feed_title in self.folders else [],
-            )
-            for i in self.items.values()
-        ]
-
-    def contents(self, ids):
-        found = [self.items[i] for i in ids if i in self.items]
-        return found, [i for i in ids if i not in self.items]
-
-    def user_info(self):
-        return {"userEmail": "test@example.com"}
-
-
-# the shapes the Batches API hands back, reduced to what the teacher reads
-@dataclass
-class FakeText:
-    text: str
-    type: str = "text"
-
-
-@dataclass
-class FakeUsage:
-    input_tokens: int = 1000
-    output_tokens: int = 100
-    cache_read_input_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-
-
-@dataclass
-class FakeMessage:
-    content: list
-    usage: FakeUsage = field(default_factory=FakeUsage)
-
-
-@dataclass
-class FakeSucceeded:
-    message: FakeMessage
-    type: str = "succeeded"
-
-
-@dataclass
-class FakeErrorBody:
-    message: str
-
-
-@dataclass
-class FakeError:
-    error: FakeErrorBody
-
-
-@dataclass
-class FakeErrored:
-    error: FakeError
-    type: str = "errored"
-
-
-@dataclass
-class FakeResponse:
-    custom_id: str
-    result: object
-
-
-def score_for(title: str, purpose: str) -> int:
-    """'gold' is excellent, 'junk' is junk, 'edge' sits just under the floor on the first
-    pass and is rescued by the second look, 'edge2' is confirmed junk by the second look."""
-    title = title.lower()
-    if "gold" in title:
-        return 90
-    if "junk" in title:
-        return 10
-    if "edge2" in title:
-        return 34 if purpose == "second_look" else 33
-    if "edge" in title:
-        return 60 if purpose == "second_look" else 33
-    return 55
-
-
-class FakeLLM:
-    """Scores by title, synchronously or through a pretend Batches API."""
-
-    def __init__(self):
-        self.calls = []
-        self.batches: dict[str, list[dict]] = {}
-        self.status: dict[str, str] = {}
-        self.fail_ids: set[str] = set()  # custom_ids whose result is an error
-        self.recorded = []
-
-    # budget
-    def budget_left(self):
-        return 100.0
-
-    def ensure_budget(self):
-        return None
-
-    def spent_today(self):
-        return 0.0
-
-    # synchronous
-    def judge(self, model, system_text, user_text, run_id, purpose):
-        self.calls.append((model, purpose))
-        return self._verdicts(user_text, purpose)
-
-    def _verdicts(self, user_text, purpose):
-        out = []
-        for m in re.finditer(r"\[(\d+)\]\n.*?\ntitle: (.*?)\n", user_text, re.S):
-            n, title = int(m.group(1)), m.group(2)
-            s = score_for(title, purpose)
-            out.append(
-                Verdict(
-                    n=n,
-                    quality=s,
-                    learning=s,
-                    fit=s,
-                    breadth=s,
-                    relevance=s,
-                    lesson=f"lesson {n}",
-                    concept="gold things" if "gold" in title.lower() else f"topic {n % 3}",
-                    kind="reporting",
-                    flags=[],
-                    dupe_of=None,
-                    confidence="high",
-                )
-            )
-        return out
-
-    def complete(self, model, system_text, user_text, run_id, purpose, max_tokens=2000):
-        self.calls.append((model, purpose))
-        return (
-            "## What the student has been learning\nGold things.\n\n## Moving past\nnothing\n\n"
-            "## Concepts covered, last 90 days\ngold things\n\n## Expansion topics for next week\n- silver things: adjacent\n\n"
-            "## Notes to the teacher\nbe kind"
-        )
-
-    # batches
-    def request_params(self, model, system_text, user_text, ttl=None):
-        return {
-            "model": model,
-            "max_tokens": 8000,
-            "system": [{"type": "text", "text": system_text}],
-            "messages": [{"role": "user", "content": user_text}],
-        }
-
-    def submit_batch(self, requests):
-        bid = f"msgbatch_{len(self.batches) + 1}"
-        self.batches[bid] = list(requests)
-        self.status[bid] = "in_progress"
-        return bid
-
-    def finish_all(self):
-        for bid in self.status:
-            self.status[bid] = "ended"
-
-    def batch_status(self, bid):
-        return self.status[bid]
-
-    def batch_results(self, bid):
-        out = []
-        for req in self.batches[bid]:
-            cid = req["custom_id"]
-            if cid in self.fail_ids:
-                out.append(FakeResponse(cid, FakeErrored(FakeError(FakeErrorBody("overloaded")))))
-                continue
-            purpose = "second_look" if cid.startswith("s") else "teacher"
-            verdicts = self._verdicts(req["params"]["messages"][0]["content"], purpose)
-            compact = [
-                {
-                    "n": v.n,
-                    "s": [v.quality, v.learning, v.fit, v.breadth, v.relevance],
-                    "lesson": v.lesson,
-                    "concept": v.concept,
-                    "kind": "news",
-                    "flags": [],
-                    "dupe": None,
-                    "conf": "high",
-                }
-                for v in verdicts
-            ]
-            out.append(
-                FakeResponse(cid, FakeSucceeded(FakeMessage([FakeText(json.dumps({"judgments": compact}))])))
-            )
-        return out
-
-    def record(self, run_id, model, purpose, usage, discount=1.0):
-        self.recorded.append((model, purpose, discount))
-        return 0.0
-
-    def cost(self, model, usage, discount=1.0):
-        self.recorded.append((model, "batch", discount))
-        return {
-            "input_tokens": 1000,
-            "output_tokens": 100,
-            "cache_write": 0,
-            "cache_read": 0,
-        }, 0.001 * discount
-
-    def adapt_to_error(self, model, message):
-        return False
-
-    def retries(self, n):
-        self.max_retries = n
-
-    @staticmethod
-    def message_text(message):
-        return "".join(b.text for b in message.content)
 
 
 def build(cfg, conn, titles, folders=None, starred=None, must_read=None, batch=False):
@@ -244,7 +20,7 @@ def build(cfg, conn, titles, folders=None, starred=None, must_read=None, batch=F
         items.append(
             make_item(n, feed=f"Feed {n % 2}", title=t, html=body, crawled_msec=1_800_000_000_000 + n)
         )
-    client = FakeBazQux(
+    client = FakeReader(
         items,
         folders=folders,
         unread=[i.id for i in items],
@@ -253,7 +29,7 @@ def build(cfg, conn, titles, folders=None, starred=None, must_read=None, batch=F
     )
     ctx = run.Context(cfg, Secrets(), conn)
     ctx._client = client
-    ctx._llm = FakeLLM()
+    ctx._llm = FakeLLM(cfg, conn)
     return ctx, client, items
 
 
@@ -446,9 +222,9 @@ def test_batch_errors_go_back_to_pending_and_failed_second_looks_stay_unread(cfg
     assert "requests failed" in " ".join(res.notes)
     assert [b["status"] for b in store.recent_batches(conn)][-1] == "partial"
     ctx.llm.fail_ids.clear()
-    ctx.llm.fail_ids |= {
+    ctx.llm.fail_ids.update(
         r["custom_id"] for b in ctx.llm.batches.values() for r in b if r["custom_id"].startswith("s")
-    }
+    )
     ctx.llm.finish_all()
     res = run.run(ctx, enforce=True)
     # junk a lands and goes; the second look failed, so edge counts as examined and stays unread
@@ -696,17 +472,12 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
 def test_vanished_batch_is_closed_as_lost(cfg, conn):
     """A batch deleted in the console (or submitted under a rotated key) used to fail every
     run forever as a ModelConfigError; it is closed as lost and its articles are pending again."""
-    from bodh.llm import BatchNotFound
-
     cfg.judge.articles_per_call = 2
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
     res = run.run(ctx, enforce=False)
     assert res.submitted == 2
 
-    def gone(bid):
-        raise BatchNotFound("batch not found: 404")
-
-    ctx.llm.batch_status = gone
+    ctx.llm.api.missing_batches.add(next(iter(ctx.llm.batches)))  # the API answers 404
     res = run.run(ctx, enforce=False)
     assert res.ok and "given up on" in " ".join(res.notes)
     assert [b["status"] for b in store.recent_batches(conn)][-1] == "lost"
@@ -719,10 +490,7 @@ def test_ended_batch_with_unfetchable_results_is_given_up(cfg, conn):
     run.run(ctx, enforce=False)
     ctx.llm.finish_all()
 
-    def broken(bid):
-        raise RuntimeError("results stream reset")
-
-    ctx.llm.batch_results = broken
+    ctx.llm.api.broken_results.add(next(iter(ctx.llm.batches)))  # the results stream resets
     res = run.run(ctx, enforce=False)
     assert res.scored == 0 and store.recent_batches(conn)[0]["status"] == "submitted"  # young: kept open
     conn.execute("UPDATE batches SET created_at = '2020-01-01T00:00:00+00:00'")
@@ -748,8 +516,7 @@ def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
     once: a broken prompt cost half price every thirty minutes with no signal."""
     cfg.judge.articles_per_call = 2
     ctx, client, items = build(cfg, conn, ["plain a", "plain b"], batch=True)
-    real = ctx.llm._verdicts
-    ctx.llm._verdicts = lambda user_text, purpose: []
+    ctx.llm.api.prose = True  # the model answers in prose: nothing a judgment can be read from
     res = run.run(ctx, enforce=False)
     assert res.submitted == 2
     for attempt in range(1, 4):
@@ -765,7 +532,7 @@ def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
     from bodh import progress
 
     assert "given up on" in progress.render_text(progress.snapshot(conn, cfg))
-    ctx.llm._verdicts = real
+    ctx.llm.api.prose = False
     assert store.reset_judge_failures(conn) == 2  # `bodh safety reset`
     res = run.run(ctx, enforce=False)
     assert res.submitted == 2
@@ -778,8 +545,7 @@ def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interr
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
     run.run(ctx, enforce=False)
     ctx.llm.finish_all()
-    real_results = ctx.llm.batch_results
-    ctx.llm.batch_results = lambda bid: real_results(bid) * 2  # the same result listed twice
+    ctx.llm.api.duplicate_results = True  # the same result listed twice
     # the first absorb is interrupted half way: nothing of it may stick
     from bodh import judge as judgemod
 
@@ -872,27 +638,18 @@ def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
     """adapt_to_error writes through the LLM's own connection; called inside the absorb's
     transaction it waited on that transaction's lock until it timed out, and every run after
     failed on the same batch."""
-    from bodh import store as storemod
-    from bodh.llm import LLM
-
     cfg.judge.articles_per_call = 1
     ctx, client, items = build(cfg, conn, ["junk a"], batch=True)
     run.run(ctx, enforce=False)
     first = next(iter(ctx.llm.batches.values()))
     ctx.llm.fail_ids.add(first[0]["custom_id"])
+    ctx.llm.api.fail_message = "output_config.format: structured outputs are not supported"
     ctx.llm.finish_all()
-    # a real LLM-style adapt_to_error: a write on a second connection to the same database
-    other = storemod.connect(cfg.db_path)
-
-    def adapt(model, message):
-        other.execute("PRAGMA busy_timeout=500")
-        storemod.kv_set(other, storemod.PLAIN_JSON_KEY, "1")
-        return True
-
-    ctx.llm.adapt_to_error = adapt
+    assert ctx.llm.conn is not conn  # the LLM writes through a connection of its own
     res = run.run(ctx, enforce=False)
-    assert res.ok and storemod.kv_get(conn, storemod.PLAIN_JSON_KEY) == "1"
-    assert store.recent_batches(conn)[-1]["status"] == "partial" and LLM is not None
+    assert res.ok and cfg.models.judge in (store.kv_get(conn, store.PLAIN_JSON_KEY) or "")
+    assert store.recent_batches(conn)[-1]["status"] == "partial"
+    assert ctx.llm.plain_json(cfg.models.judge)  # and the next request to that model asks for plain JSON
 
 
 def test_read_then_unread_again_is_not_cut_by_the_floor(cfg, conn):
@@ -1002,3 +759,53 @@ def test_prune_cuts_only_what_was_confirmed(cfg, conn):
     assert len(shown.cut) == 2
     n, sel = run.prune(ctx, confirmed={items[1].id})  # a run in between would have widened it
     assert n == 1 and sel.cut_ids == [items[1].id]
+
+
+# -- the whole run through the real client and the fake server ----------------------
+
+
+def test_end_to_end_run_through_fake_server_and_fake_model(cfg, conn, monkeypatch):
+    """Every HTTP call the pipeline makes, against BazQux as the fake server plays it: login,
+    the token, the ids by page, the contents, the tags and the read marks; the judgments from
+    the fake model through the real client wrapper."""
+    from fakes import FakeBazQuxServer
+
+    import bodh.readers.bazqux as bq
+
+    monkeypatch.setattr(bq, "MIN_REQUEST_INTERVAL", 0.0)
+    cfg.autocut.new_ground_share = 0.0
+    cfg.models.batch = False
+    titles = ["gold essay", "junk listicle", "plain news", "edge case"]
+    items = [
+        make_item(n, feed="Feed A" if n % 2 else "Feed B", title=t, crawled_msec=1_800_000_000_000 + n)
+        for n, t in enumerate(titles, start=1)
+    ]
+    items[3].html = "<p>" + "edge case body text. " * 150 + "</p>"  # long: the review has more to read
+    server = FakeBazQuxServer(
+        items, folders={"Feed A": "Essays"}, labels={cfg.protect.must_read_stream: []}, page_size=3
+    )
+    ctx = run.Context(cfg, Secrets(), conn)
+    ctx._client = server.client()
+    ctx._llm = FakeLLM(cfg, conn)
+    res = run.run(ctx, enforce=True)
+    assert res.ok and res.unread_upstream == 4 and res.new == 4 and res.scored == 4
+    assert res.cut_autocut == 1 and res.reviews == 1 and res.saved == 1
+    assert (
+        store.article(conn, items[0].id)["folder"] == "Essays"
+        and store.article(conn, items[1].id)["folder"] is None
+    )
+    # what BazQux shows afterwards
+    assert server.unread == {items[0].id, items[2].id, items[3].id}
+    assert server.labels["score-90"] == {items[0].id} and server.labels["cut"] == {items[1].id}
+    assert server.labels["score-50"] == {items[2].id, items[3].id}  # the review's 60 lands in the same run
+    assert server.labels["score-30"] == set()  # the first pass's 33 was untagged
+    assert server.logins == 1 and server.write_tokens == 1
+    paths = [p for _, p, _ in server.requests]
+    assert (
+        paths.count("/reader/api/0/stream/items/ids") >= 3
+    )  # the reading list over two pages, the stars, the stream
+    assert "/reader/api/0/stream/items/contents" in paths and "/reader/api/0/edit-tag" in paths
+    # the next run finds nothing new and cuts nothing more
+    res = run.run(ctx, enforce=True)
+    assert res.new == 0 and res.scored == 0 and res.cut_autocut == 0 and server.logins == 1
+    assert "judged 0" in res.summary()

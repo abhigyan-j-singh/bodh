@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
-from conftest import FakeClient, make_item, seed_scored
+from conftest import seed_scored
+from fakes import FakeCacheCreation, FakeClient, FakeLLM, FakeUsage, make_item
 
 from bodh import locks, progress, store
 from bodh.config import FolderPolicy, Secrets
@@ -51,44 +51,31 @@ def test_judgment_schema_has_no_unsupported_constraints():
     assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], dupe="x", conf="sure").to_verdict().confidence == "medium"
 
 
-@dataclass
-class U:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_input_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-    cache_creation: object = None
-
-
-@dataclass
-class CC:
-    ephemeral_1h_input_tokens: int = 0
-    ephemeral_5m_input_tokens: int = 0
-
-
 def test_cost_accounting_with_cache_tiers_and_batch_discount(cfg, conn):
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
     usage, usd = llm.cost(
         "claude-sonnet-5-5",
-        U(
+        FakeUsage(
             input_tokens=1_000_000,
             output_tokens=100_000,
             cache_read_input_tokens=1_000_000,
-            cache_creation=CC(ephemeral_1h_input_tokens=100_000, ephemeral_5m_input_tokens=100_000),
+            cache_creation=FakeCacheCreation(
+                ephemeral_1h_input_tokens=100_000, ephemeral_5m_input_tokens=100_000
+            ),
         ),
     )
     # 2.00 input + 1.00 output + 0.10 cache read + 0.40 (1h write at 2x) + 0.25 (5m write at 1.25x)
     assert abs(usd - 3.75) < 1e-6 and usage["cache_write"] == 200_000 and usage["cache_read"] == 1_000_000
-    _, half = llm.cost("claude-sonnet-5-5", U(input_tokens=1_000_000), discount=0.5)
+    _, half = llm.cost("claude-sonnet-5-5", FakeUsage(input_tokens=1_000_000), discount=0.5)
     assert abs(half - 1.0) < 1e-6
     # an older SDK without the breakdown: the total write is priced by the configured ttl
-    _, usd1h = llm.cost("claude-sonnet-5-5", U(cache_creation_input_tokens=1_000_000))
+    _, usd1h = llm.cost("claude-sonnet-5-5", FakeUsage(cache_creation_input_tokens=1_000_000))
     assert abs(usd1h - 4.0) < 1e-6
     assert cfg.models.price("claude-opus-5-5") == (4.0, 20.0)
     # an unknown model is never free: it is charged as the dearest known one until a price is added
     assert not cfg.models.has_price("nope") and cfg.models.price("nope") == (4.0, 20.0)
     assert cfg.models.cache_read_price("nope") == 0.2
-    _, unknown = llm.cost("nope", U(input_tokens=1_000_000))
+    _, unknown = llm.cost("nope", FakeUsage(input_tokens=1_000_000))
     assert abs(unknown - 4.0) < 1e-6
     assert cfg.models.cache_read_price("claude-haiku-5-5") == 0.01
     cfg.models.prices_per_mtok["old-style"] = [2.0, 10.0]
@@ -131,13 +118,7 @@ def test_has_more_to_read(cfg):
 
 
 def test_teacher_prefix_is_stable_and_concepts_travel_with_the_articles(cfg, conn):
-    class StubLLM:
-        plain_json = False
-
-        def request_params(self, model, system_text, user_text, ttl=None):
-            return {"system": system_text, "user": user_text}
-
-    t = Judge(cfg, StubLLM(), conn, context="Read: gpus: 3")  # type: ignore[arg-type]
+    t = Judge(cfg, FakeLLM(cfg, conn), conn, context="Read: gpus: 3")
     assert (
         "gpus: 3" not in t.system_text
         and "# About the student" in t.system_text
@@ -269,76 +250,18 @@ def test_live_file_and_activity(conn, cfg):
 def test_many_workers_share_the_database_safely(conn, cfg):
     """Sixteen threads judging through the real LLM wrapper (stub API) while the main thread
     records scores and writes the live file: no empty cursors, every cost recorded."""
-    import threading as _th
-    from dataclasses import dataclass, field
-
-    from conftest import make_item
-
-    @dataclass
-    class StubUsage:
-        input_tokens: int = 500
-        output_tokens: int = 60
-        cache_read_input_tokens: int = 2000
-        cache_creation_input_tokens: int = 0
-        cache_creation: object = None
-
-    @dataclass
-    class StubBlock:
-        text: str
-        type: str = "text"
-
-    @dataclass
-    class StubResponse:
-        content: list
-        usage: StubUsage = field(default_factory=StubUsage)
-
-    class StubMessages:
-        def __init__(self):
-            self.calls = 0
-            self.lock = _th.Lock()
-
-        def create(self, **params):
-            import re as _re
-            import time as _t
-
-            with self.lock:
-                self.calls += 1
-            _t.sleep(0.002)
-            text = params["messages"][0]["content"]
-            ns = [int(m) for m in _re.findall(r"^\[(\d+)\]$", text, _re.M)]
-            js = [
-                {
-                    "n": n,
-                    "s": [60, 60, 60, 60, 60],
-                    "lesson": "l",
-                    "concept": "c",
-                    "kind": "news",
-                    "flags": [],
-                    "dupe": None,
-                    "conf": "high",
-                }
-                for n in ns
-            ]
-            return StubResponse([StubBlock(json.dumps({"judgments": js}))])
-
-    class StubClient:
-        def __init__(self):
-            self.messages = StubMessages()
-
-        def with_options(self, **kw):
-            return self
-
     for n in range(1, 241):
         store.upsert_article(
             conn, make_item(n, title=f"article number {n}", crawled_msec=1_800_000_000_000 + n), None
         )
     cfg.judge.articles_per_call = 5
-    llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
-    llm._client = StubClient()
+    llm = FakeLLM(cfg, conn)
+    llm.api.delay = 0.002
+    llm.api.usage = FakeUsage(input_tokens=500, output_tokens=60, cache_read_input_tokens=2000)
     judge = Judge(cfg, llm, conn)
     judge.batch_mode = False
     stats = judge.score_pending(1, workers=16, on_progress=progress.live_writer(cfg, conn, min_interval=0.0))
     assert stats["scored"] == 240 and stats["failed_batches"] == 0
-    assert llm._client.messages.calls == 48
+    assert len(llm.api.calls) == 48
     assert conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 48
     assert llm.spent_today() > 0 and llm.budget_left() < cfg.models.daily_budget_usd

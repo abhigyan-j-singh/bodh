@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import subprocess
 
+import anthropic
+from fakes import FakeLLM, api_error
+
 from bodh import profiler
 
 
@@ -68,15 +71,8 @@ def test_gate_check_never_writes_the_learner_file(cfg, conn):
     old one back; a kill in between made the ungated text the live model."""
     from bodh.llm import JudgeError
 
-    class ExplodingLLM:
-        plain_json = False
-
-        def judge(self, *a, **k):
-            raise JudgeError("model down")
-
-        def request_params(self, *a, **k):
-            return {}
-
+    llm = FakeLLM(cfg, conn)
+    llm.api.fail_with = api_error(anthropic.AuthenticationError, "model down", 401)
     from conftest import seed_scored
 
     ids = seed_scored(conn, cfg, [dict(n=1, score=90)])
@@ -88,26 +84,14 @@ def test_gate_check_never_writes_the_learner_file(cfg, conn):
     import pytest
 
     with pytest.raises(JudgeError):
-        profiler.gate_check(
-            cfg, ExplodingLLM(), conn, None, "## What the student has been learning\nproposed\n"
-        )  # type: ignore[arg-type]
+        profiler.gate_check(cfg, llm, conn, None, "## What the student has been learning\nproposed\n")
     assert path.read_text(encoding="utf-8") == before and path.stat().st_mtime_ns == mtime
 
 
 def test_gate_judges_with_the_proposed_model(cfg, conn):
     """The teacher in the gate sees the proposed text, not the file."""
-    seen = {}
-
-    class RecordingLLM:
-        plain_json = False
-
-        def judge(self, model, system_text, user_text, run_id, purpose):
-            seen["system"] = system_text
-            return []
-
-        def request_params(self, *a, **k):
-            return {}
-
+    llm = FakeLLM(cfg, conn)
+    llm.api.prose_ns = {1}  # the answer carries no judgment for the one article
     from conftest import seed_scored
 
     from bodh import store
@@ -115,10 +99,11 @@ def test_gate_judges_with_the_proposed_model(cfg, conn):
     ids = seed_scored(conn, cfg, [dict(n=1, score=90)])
     store.add_feedback(conn, ids[0], "star")
     result = profiler.gate_check(
-        cfg, RecordingLLM(), conn, None, "## What the student has been learning\nPROPOSED TEXT\n"
-    )  # type: ignore[arg-type]
-    assert result["passed"] and "PROPOSED TEXT" in seen["system"]
-    assert "# Learner model\n## What the student has been learning\nnothing" not in seen["system"]
+        cfg, llm, conn, None, "## What the student has been learning\nPROPOSED TEXT\n"
+    )
+    seen = llm.api.calls[-1]["system"][0]["text"]
+    assert result["passed"] and "PROPOSED TEXT" in seen
+    assert "# Learner model\n## What the student has been learning\nnothing" not in seen
 
 
 def test_repeats_about():
@@ -148,12 +133,10 @@ def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
     for i in ids:
         store.add_feedback(conn, i, "star")
 
-    class CopyingLLM:
-        def complete(self, *a, **k):
-            return (
-                "## What the student has been learning\nStudent: a marine biologist who reads to decide where the "
-                "lab's next decade goes.\n\n## Expansion topics for next week\n- x\n"
-            )
-
-    result = profiler.weekly_rewrite(cfg, CopyingLLM(), conn, None)  # type: ignore[arg-type]
+    llm = FakeLLM(cfg, conn)
+    llm.api.completion = (
+        "## What the student has been learning\nStudent: a marine biologist who reads to decide where the "
+        "lab's next decade goes.\n\n## Expansion topics for next week\n- x\n"
+    )
+    result = profiler.weekly_rewrite(cfg, llm, conn, None)
     assert not result["applied"] and "repeated the student's own description" in result["reason"]

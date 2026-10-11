@@ -40,24 +40,31 @@ class NoJudgments(JudgeError):
     """The model answered, but with nothing a judgment could be read from."""
 
 
-def _batch_classify(exc: Exception) -> Exception:
+def _batch_classify(exc: Exception, secret: str = "") -> Exception:
     import anthropic
 
     if isinstance(exc, anthropic.NotFoundError):
-        return BatchNotFound(f"batch not found: {exc}")
-    return _classify(exc)
+        return BatchNotFound(f"batch not found: {_without(str(exc), secret)}")
+    return _classify(exc, secret)
 
 
-def _classify(exc: Exception) -> Exception:
+def _classify(exc: Exception, secret: str = "") -> Exception:
+    """A rejected key, permission or model id becomes a ModelConfigError (exit 4); anything else
+    is passed through. The message never carries the key, whatever the API echoed."""
     import anthropic
 
     if isinstance(
         exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError)
     ):
         return ModelConfigError(
-            f"model call rejected: {exc}. Check ANTHROPIC_API_KEY and the model ids in config.yaml"
+            f"model call rejected: {_without(str(exc), secret)}. "
+            "Check ANTHROPIC_API_KEY and the model ids in config.yaml"
         )
     return exc
+
+
+def _without(text: str, secret: str) -> str:
+    return text.replace(secret, "[the API key]") if secret else text
 
 
 _STRUCTURED_WORDS = re.compile(r"\b(output_config|output_format|structured|json_schema)\b", re.I)
@@ -109,6 +116,7 @@ class LLM:
         import anthropic
 
         self.cfg = cfg
+        self._secret = secrets.value("anthropic_api_key")  # only so an error message can be scrubbed of it
         # worker threads account for their calls here, under the lock, on a connection of their
         # own: sqlite3 shares prepared statements per connection, so two threads running the
         # same query on one connection can hand each other empty results
@@ -264,13 +272,13 @@ class LLM:
             response = self._client.messages.create(**self.request_params(model, system_text, user_text))
         except anthropic.BadRequestError as exc:
             if not self.adapt_to_error(model, str(exc)):
-                raise _classify(exc) from exc
+                raise _classify(exc, self._secret) from exc
             try:
                 response = self._client.messages.create(**self.request_params(model, system_text, user_text))
             except Exception as exc2:
-                raise _classify(exc2) from exc2
+                raise _classify(exc2, self._secret) from exc2
         except Exception as exc:
-            raise _classify(exc) from exc
+            raise _classify(exc, self._secret) from exc
         self.record(run_id, model, purpose, response.usage)
         verdicts = parse_judgments(self.message_text(response))
         if verdicts is None:
@@ -296,7 +304,7 @@ class LLM:
                 messages=[{"role": "user", "content": user_text}],
             )
         except Exception as exc:
-            raise _classify(exc) from exc
+            raise _classify(exc, self._secret) from exc
         self.record(run_id, model, purpose, response.usage)
         return self.message_text(response).strip()
 
@@ -311,7 +319,7 @@ class LLM:
             no_retry = self._client.with_options(max_retries=0)
             batch = no_retry.messages.batches.create(requests=requests)  # type: ignore[arg-type]  # the SDK's TypedDict; the dicts have its shape
         except Exception as exc:
-            raise _classify(exc) from exc
+            raise _classify(exc, self._secret) from exc
         return batch.id
 
     def batch_status(self, batch_id: str) -> str:
@@ -319,7 +327,7 @@ class LLM:
         try:
             return self._client.messages.batches.retrieve(batch_id).processing_status
         except Exception as exc:
-            raise _batch_classify(exc) from exc
+            raise _batch_classify(exc, self._secret) from exc
 
     def retries(self, n: int) -> None:
         """More patience with 429s and 5xx, for a deliberate catch-up through a backlog."""
@@ -329,4 +337,4 @@ class LLM:
         try:
             return list(self._client.messages.batches.results(batch_id))
         except Exception as exc:
-            raise _batch_classify(exc) from exc
+            raise _batch_classify(exc, self._secret) from exc

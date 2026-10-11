@@ -3,50 +3,13 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from fakes import FakeClient, FakeItem, FakeLLM, FakeReader, make_item  # noqa: F401  (re-exported for the tests)
 
 from bodh import store
 from bodh.config import Config
-from bodh.ids import short_to_long
-
-
-@dataclass
-class FakeItem:
-    id: str
-    short_id: int
-    feed_stream_id: str
-    feed_title: str
-    feed_html_url: str = ""
-    url: str = ""
-    title: str = ""
-    author: str = ""
-    published: int | None = None
-    crawled_msec: int | None = None
-    html: str = ""
-    categories: list[str] = field(default_factory=list)
-
-
-def make_item(
-    n: int,
-    feed: str = "Feed A",
-    title: str | None = None,
-    url: str | None = None,
-    html: str = "<p>Some text about things.</p>",
-    crawled_msec: int | None = None,
-) -> FakeItem:
-    return FakeItem(
-        id=short_to_long(n),
-        short_id=n,
-        feed_stream_id=f"feed/{feed}",
-        feed_title=feed,
-        url=url or f"https://example.com/{feed.replace(' ', '')}/{n}",
-        title=title or f"Article {n}",
-        html=html,
-        crawled_msec=crawled_msec,
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -141,57 +104,3 @@ def seed_scored(conn: sqlite3.Connection, cfg: Config, specs: Iterable[dict]) ->
             store.set_flags(conn, [item.id], **flags)
         ids.append(item.id)
     return ids
-
-
-class FakeClient:
-    """Records every write; serves configured reads."""
-
-    def __init__(
-        self,
-        unread: list[str] | None = None,
-        starred: list[str] | None = None,
-        labels: dict[str, list[str]] | None = None,
-    ) -> None:
-        self.unread = list(unread or [])
-        self.starred = list(starred or [])
-        self.labels = {k: list(v) for k, v in (labels or {}).items()}
-        self.tagged: list[tuple[str, list[str]]] = []
-        self.untagged: list[tuple[str, list[str]]] = []
-        self.read: list[list[str]] = []
-        self.unread_marked: list[list[str]] = []
-
-    def unread_ids(self):
-        from bodh.readers.bazqux import ItemRef
-
-        return [ItemRef(id=i, timestamp_usec=None) for i in self.unread]
-
-    def starred_ids(self):
-        return list(self.starred)
-
-    def label_ids(self, name: str, unread_only: bool = False, strict: bool = False):
-        value = self.labels.get(name, [])
-        if isinstance(value, Exception):  # a label BazQux cannot serve right now
-            if strict:
-                raise value
-            return []
-        return list(value)
-
-    def tag(self, ids, name):
-        self.tagged.append((name, list(ids)))
-        return len(list(ids))
-
-    def untag(self, ids, name):
-        self.untagged.append((name, list(ids)))
-        return len(list(ids))
-
-    def mark_read(self, ids):
-        ids = list(ids)
-        self.read.append(ids)
-        self.unread = [i for i in self.unread if i not in set(ids)]
-        return len(ids)
-
-    def mark_unread(self, ids):
-        ids = list(ids)
-        self.unread_marked.append(ids)
-        self.unread += [i for i in ids if i not in self.unread]
-        return len(ids)
