@@ -93,23 +93,26 @@ class JudgmentIn(BaseModel):
 
     n: int
     s: list[int]
-    lesson: str = ""
-    concept: str = ""
-    kind: str = "other"
-    flags: list[str] = Field(default_factory=list)
+    lesson: str | None = ""          # None in any of these is read as "not given", never as a dropped judgment
+    concept: str | None = ""
+    kind: str | None = "other"
+    flags: list[str | None] | None = None
     dupe: int | str | None = None
-    conf: str = "medium"
+    conf: str | None = "medium"
 
     def to_verdict(self) -> Verdict:
         if len(self.s) != len(SUBSCORES):
             raise ValueError(f"expected {len(SUBSCORES)} sub-scores, got {len(self.s)}")
         scores = {name: max(0, min(100, int(val))) for name, val in zip(SUBSCORES, self.s, strict=True)}
-        flags = [FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags) if f in FLAG_CODES]
+        flags = [FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags or []) if f in FLAG_CODES]
         dupe: int | None = None
         if isinstance(self.dupe, int):
             dupe = self.dupe
-        elif isinstance(self.dupe, str) and self.dupe.strip().isdigit():
-            dupe = int(self.dupe.strip())
+        elif isinstance(self.dupe, str) and self.dupe.strip().isdecimal():
+            try:
+                dupe = int(self.dupe.strip())
+            except ValueError:
+                dupe = None
         conf = (self.conf or "").strip().lower()
         return Verdict(
             n=self.n, **scores, lesson=(self.lesson or "").strip(), concept=(self.concept or "").strip().lower(),
@@ -146,14 +149,17 @@ def _classify(exc: Exception) -> Exception:
     return exc
 
 
+_STRUCTURED_WORDS = re.compile(r"\b(output_config|output_format|structured|json_schema)\b", re.I)
+_TTL_WORDS = re.compile(r"\b(ttl|cache_control)\b", re.I)
+
+
 def _mentions_structured_outputs(text: str) -> bool:
-    text = text.lower()
-    return "output_config" in text or "output_format" in text or "structured" in text or "json_schema" in text
+    return bool(_STRUCTURED_WORDS.search(text or ""))
 
 
 def _mentions_cache_ttl(text: str) -> bool:
-    text = text.lower()
-    return "ttl" in text or "cache_control" in text
+    # whole words only: "throttled" contains "ttl" and used to disable the 1-hour cache for good
+    return bool(_TTL_WORDS.search(text or ""))
 
 
 def load_prompt(name: str, root: Path | None = None) -> str:
@@ -510,7 +516,10 @@ class LLM:
 def _fmt_date(published: int | None) -> str:
     if not published:
         return "unknown date"
-    return datetime.fromtimestamp(int(published), tz=timezone.utc).strftime("%Y-%m-%d")
+    try:
+        return datetime.fromtimestamp(int(published), tz=timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError, TypeError):
+        return "unknown date"  # a feed's bad timestamp must not fail its batch every run for two weeks
 
 
 def article_block(n: int, row: sqlite3.Row | dict, chars: int) -> str:
@@ -604,14 +613,24 @@ class Teacher:
 
     @staticmethod
     def _by_article(verdicts: list[Verdict], ordered: list[str]) -> dict[str, Verdict]:
+        """Verdicts keyed by article id, in batch order. A duplicate may point only at an
+        earlier article of the batch that is not itself a duplicate: a forward pointer or a
+        mutual pair would cap both copies of a good story at 20, and the later copy then has
+        no original to be a duplicate of. Otherwise the pointer and the flag are dropped."""
         out: dict[str, Verdict] = {}
-        for v in verdicts:
+        dupes: set[str] = set()
+        for v in sorted(verdicts, key=lambda v: v.n):
             aid = resolve_ordinal(v.n, ordered)
             if aid is None or aid in out:
                 continue
-            if v.dupe_of is not None:
-                target = resolve_ordinal(v.dupe_of, ordered)
-                v = v.model_copy(update={"dupe_of": None if target in (None, aid) else target})
+            if v.dupe_of is not None or "duplicate" in v.flags:
+                target = resolve_ordinal(v.dupe_of, ordered) if v.dupe_of is not None else None
+                earlier = target is not None and target != aid and ordered.index(target) < ordered.index(aid)
+                if earlier and target not in dupes:
+                    v = v.model_copy(update={"dupe_of": target})
+                    dupes.add(aid)
+                else:
+                    v = v.model_copy(update={"dupe_of": None, "flags": [f for f in v.flags if f != "duplicate"]})
             out[aid] = v
         return out
 
