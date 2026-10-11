@@ -13,6 +13,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | Path | What | Committed? |
 | --- | --- | --- |
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
+| `PLAN.md` | The complete prompt: the three plans combined in the order they run, with the gates between them | yes, until the release |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
 | `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
 | `DASHBOARD_PLAN.md` | The specification of the dashboard: the five questions, the design system, every panel, the chart rules, the data contract, the quality bar; replaces Phase 7 of the open-source plan | yes, until the release |
