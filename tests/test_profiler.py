@@ -140,3 +140,10 @@ def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
     )
     result = profiler.weekly_rewrite(cfg, llm, conn, None)
     assert not result["applied"] and "repeated the student's own description" in result["reason"]
+
+
+def test_expansion_topics_parsing():
+    text = "## Expansion topics for next week\n- small modular reactors: adjacent to the power thread\n- medieval trade, because it is far away\n\n## Notes to the teacher\nx"
+    assert profiler.expansion_topics(text) == ["small modular reactors", "medieval trade"]
+    assert profiler.expansion_topics("## Expansion topics for next week\n(none yet)") == []
+    assert profiler.expansion_topics("") == []
