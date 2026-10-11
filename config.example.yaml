@@ -1,15 +1,15 @@
-# viveka configuration. `./install.sh` copies this file to config.yaml; edit that one. Every value
+# bodh configuration. `./install.sh` copies this file to config.yaml; edit that one. Every value
 # here is the default, so a key you leave out behaves as shown. Secrets live in .env, never here.
 # A misspelt key, a value out of range or an unknown timezone is refused with the key named.
 
 # timezone: "Europe/Lisbon"        # IANA name; the day boundary for the budget and the daily counts.
                                    # Default: the machine's own zone ($TZ, else /etc/localtime, else UTC).
                                    # Windows has no /etc/localtime: set it here.
-data_dir: "./data"                 # the database (viveka.db), run logs, progress.json, the lock
+data_dir: "./data"                 # the database (bodh.db), run logs, progress.json, the lock
 profile_dir: "./profile"           # seed.md (yours), learner.md (rewritten weekly); its own git repo
 dashboard_dir: "./dashboard"       # index.html, the weekly note and the feed report; publish with
                                    # tailscale serve --bg --set-path / $(pwd)/dashboard
-obsidian_note: ""                  # also write the weekly note here, e.g. "~/Obsidian/Main/Viveka/Weekly.md";
+obsidian_note: ""                  # also write the weekly note here, e.g. "~/Obsidian/Main/Bodh/Weekly.md";
                                    # empty writes it to dashboard_dir only
 
 models:
@@ -17,7 +17,7 @@ models:
   second_look: "claude-opus-5-5"   # re-reads close calls with the full text; can only save an article
   learner: "claude-opus-5-5"       # rewrites learner.md on Sundays
   batch: true                      # Message Batches API: half price; judgments arrive on the next run (30 min).
-                                   # false: every call at once, full price (`viveka run --sync` does it once)
+                                   # false: every call at once, full price (`bodh run --sync` does it once)
   batch_discount: 0.5              # what the API charges for a batch, for the spend figures
   cache_ttl: "1h"                  # the teacher's cached prompt prefix stays warm between runs ("5m" or "1h")
   daily_budget_usd: 8.0            # scoring pauses (nothing is cut) when a day's spend passes this
@@ -26,11 +26,11 @@ models:
                                    # A model id not listed is charged as the dearest one here, with a warning
     claude-sonnet-5-5: [2.0, 10.0, 0.10]
     claude-opus-5-5: [4.0, 20.0, 0.20]
-    claude-haiku-5-5: [0.10, 0.50, 0.01]   # the stand-in for `viveka blast --model claude-haiku-5-5`
+    claude-haiku-5-5: [0.10, 0.50, 0.01]   # the stand-in for `bodh blast --model claude-haiku-5-5`
     claude-haiku-4-5: [1.0, 5.0, 0.10]
 
 scoring:
-  prompt_version: "teacher.v2"     # the teacher prompt in src/viveka/prompts/ (a ./prompts/ folder next to this
+  prompt_version: "teacher.v2"     # the teacher prompt in src/bodh/prompts/ (a ./prompts/ folder next to this
                                    # file overrides it); changing it re-judges everything unread
   weights: { quality: 0.30, learning: 0.30, fit: 0.15, breadth: 0.15, relevance: 0.10 }   # the five sub-scores → the score
   expansion_bonus: 10              # points for an article on one of this week's expansion topics (learner.md)
@@ -41,7 +41,7 @@ scoring:
   workers: 4                       # synchronous runs: teacher calls and second looks in flight at once
   max_per_run: 400                 # synchronous runs: articles scored per run
   batch_max_per_run: 1200          # batch runs: articles submitted per run
-  max_age_days: 14                 # unread articles older than this are never scored; `viveka bankruptcy` is for them
+  max_age_days: 14                 # unread articles older than this are never scored; `bodh bankruptcy` is for them
   rejudge_min_score: 50            # what a stand-in model (a blast) rated at least this, the teacher judges again; null: never
   opening_chars: 1200              # text the teacher sees on the first pass
   second_look_window: 10           # a floor candidate within this many points of the floor gets a second look...
@@ -49,14 +49,14 @@ scoring:
   second_look_max_per_run: 50      # synchronous runs: at most this many second looks per run
 
 cut:
-  enforce: false                   # start in shadow mode: score and tag, cut nothing; `viveka enforce on` after the shadow days
-  target_unread: 40                # `viveka prune` with no arguments keeps this many
+  enforce: false                   # start in shadow mode: score and tag, cut nothing; `bodh enforce on` after the shadow days
+  target_unread: 40                # `bodh prune` with no arguments keeps this many
   default_floor: 35                # automatic floor for folders without their own
   max_cuts_per_run: 500            # a broken prompt costs one undo, not a library
   concept_cap: 0.25                # in a prune, no concept may hold more than this share of survivors
   exploration_share: 0.20          # share of what the floor leaves reserved for new-ground articles
   must_read_stream: "Must read"    # BazQux smart stream whose members are never cut (README: how to create it)
-  folders:                         # per BazQux folder, names matched exactly (`viveka doctor --live` checks them)
+  folders:                         # per BazQux folder, names matched exactly (`bodh doctor --live` checks them)
     "Always read": { protected: true }                # never cut
     "Comics": { protected: true, score: false }       # never sent to the teacher, never cut
     "News": { auto_cut_below: 70 }                    # its own, stricter floor
@@ -64,7 +64,7 @@ cut:
 
 tags:                              # the tag names written to and read from BazQux; change them only before the first run
   buckets: { 90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0" }   # score band → tag
-  cut: "cut"                       # on every article viveka marked read; mark it unread anywhere to rescue it
+  cut: "cut"                       # on every article bodh marked read; mark it unread anywhere to rescue it
   # commands: the run acts on them and removes them
   wrong: "wrong"                   # on a cut article you wanted: back to unread, and the strongest positive
   prune: "prune"                   # on any article: the next enforcing run prunes to the target
@@ -80,7 +80,7 @@ tags:                              # the tag names written to and read from BazQ
 
 breakers:
   max_cut_share: 0.95              # a run that would cut more than this share of >= min_new_for_breaker newly judged
-  min_new_for_breaker: 50          # articles stops before writing, and the floor stays off until `viveka safety reset`
+  min_new_for_breaker: 50          # articles stops before writing, and the floor stays off until `bodh safety reset`
   rescue_rate_week: 0.05           # rescues above this share of a week's cuts (20 cuts at least) lower the floor...
   lowered_floor: 25                # ...to this, until they fall
   bulk_dismiss_threshold: 30       # this many non-cut articles going read in one run = mark-all-as-read, not reads

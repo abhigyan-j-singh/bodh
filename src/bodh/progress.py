@@ -1,6 +1,6 @@
 """Where the work stands: how many articles the teacher has judged, what waits, what
 is in flight, how fast it is moving, what it costs. One set of queries, rendered for
-the terminal (`viveka progress`, with --watch) and for the dashboard, whose progress
+the terminal (`bodh progress`, with --watch) and for the dashboard, whose progress
 panel polls `progress.json` every few seconds while a run writes it."""
 
 from __future__ import annotations
@@ -273,7 +273,7 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     lines: list[str] = []
     mode = "batch mode: judgments arrive on the next run" if snap["batch_mode"] else "synchronous mode"
     now = snap["now"] if isinstance(snap["now"], datetime) else datetime.fromisoformat(snap["now"])
-    lines.append(f"viveka progress · {now.strftime('%a %d %b %H:%M:%S')} · {mode}")
+    lines.append(f"bodh progress · {now.strftime('%a %d %b %H:%M:%S')} · {mode}")
     if "running" in snap:
         if snap["running"]:
             since = f" for {_age(snap['run_started'])}" if snap.get("run_started") else ""
@@ -285,7 +285,7 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     unread = snap["unread"] or 1
     judged, pending, inflight = snap["judged_unread"], snap["pending"], snap["inflight"]
     in_window = judged + pending + inflight
-    lines.append(f"Unread known to viveka {_n(snap['unread']):>10}")
+    lines.append(f"Unread known to bodh {_n(snap['unread']):>10}")
     lines.append(f"  judged               {_n(judged):>10}  {_bar(judged / unread)} {judged / unread:4.0%}")
     if inflight:
         lines.append(f"  in flight            {_n(inflight):>10}  {_bar(inflight / unread)} waiting for the batch to finish")
@@ -293,7 +293,7 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     lines.append(f"  pending {window:<13}{_n(pending):>10}  {_bar(pending / unread)}")
     if snap["too_old"]:
         lines.append(f"  older than {snap['max_age_days']} days  {_n(snap['too_old']):>10}  never judged; "
-                     f"`viveka bankruptcy --older-than {snap['max_age_days']}` clears them")
+                     f"`bodh bankruptcy --older-than {snap['max_age_days']}` clears them")
     if snap["skipped"]:
         lines.append(f"  not scored (folders) {_n(snap['skipped']):>10}  {', '.join(snap['skip_folders'])}")
     if in_window:
@@ -308,7 +308,7 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     if snap["held"]:
         notes.append(f"{_n(snap['held'])} kept after a failed second look")
     if snap.get("given_up"):
-        notes.append(f"{_n(snap['given_up'])} given up on after answers with no judgment (`viveka safety`)")
+        notes.append(f"{_n(snap['given_up'])} given up on after answers with no judgment (`bodh safety`)")
     if notes:
         lines.append("  " + " · ".join(notes))
     lines.append("")

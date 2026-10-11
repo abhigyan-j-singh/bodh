@@ -11,11 +11,11 @@ from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
-# the sentence in profile.example/seed.md's opening comment; `viveka doctor` and the teacher
+# the sentence in profile.example/seed.md's opening comment; `bodh doctor` and the teacher
 # look for it, so the example is never mistaken for a student
 EXAMPLE_SEED_MARKER = "worked example for an invented student"
 
@@ -284,20 +284,30 @@ class Config(Strict):
 
     # populated by load_config
     root: Path = Path(".")
+    _timezone_from_file: bool = PrivateAttr(default=False)
 
     @field_validator("timezone")
     @classmethod
     def _zone(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            return system_timezone()   # "" in the file means this computer's zone, like no line at all
         if not _zone_name_ok(v):
-            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Europe/Lisbon' say)")
+            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Europe/Lisbon' say; empty for "
+                             "this computer's zone)")
         return v
 
     @property
+    def timezone_source(self) -> str:
+        """Where the zone came from, for `bodh doctor`: config.yaml or this computer."""
+        return "config.yaml" if self._timezone_from_file else "this computer"
+
+    @property
     def db_path(self) -> Path:
-        """data/viveka.db; an install from before the rename keeps its data/triage.db as it is."""
+        """data/bodh.db; an install from before the rename keeps its data/triage.db as it is."""
         data = (self.root / self.data_dir).resolve()
         old = data / "triage.db"
-        new = data / "viveka.db"
+        new = data / "bodh.db"
         return old if old.exists() and not new.exists() else new
 
     @property
@@ -319,7 +329,7 @@ class Config(Strict):
         """Before any work for the student: a seed that is still the worked example is refused."""
         if self.seed_is_example():
             raise ConfigError("profile/seed.md is still the worked example: the teacher will not judge for an "
-                              "invented student. Replace it with your own seed (`viveka doctor` explains)")
+                              "invented student. Replace it with your own seed (`bodh doctor` explains)")
 
     def seed_is_example(self) -> bool:
         """profile.example/seed.md describes an invented student and says so in a comment at the
@@ -356,24 +366,31 @@ class ConfigError(Exception):
     """No usable config.yaml: nothing runs, nothing is created."""
 
 
+DEFAULT_HOME = "~/bodh"   # tried last, when nothing above the working directory holds a config.yaml
+
+
 def find_root(start: Path | None = None) -> Path:
-    """The project root: VIVEKA_HOME, else the first ancestor of the working directory that
-    holds config.yaml. Never a guess: a run in a folder with no config.yaml must not invent
-    one with default folders and floors and start cutting."""
-    env_root = os.environ.get("VIVEKA_HOME")
+    """The project root: BODH_HOME, else the first ancestor of the working directory that
+    holds config.yaml, else ~/bodh when it holds one. Never a guess: a run in a folder with no
+    config.yaml must not invent one with default folders and floors and start cutting."""
+    env_root = os.environ.get("BODH_HOME")
     if not env_root and os.environ.get("TRIAGE_HOME"):
         env_root = os.environ["TRIAGE_HOME"]
-        log.warning("TRIAGE_HOME is the old name; set VIVEKA_HOME instead (TRIAGE_HOME stops working in the next release)")
+        log.warning("TRIAGE_HOME is the old name; set BODH_HOME instead (TRIAGE_HOME stops working in the next release)")
     if env_root:
         root = Path(env_root).expanduser().resolve()
         if not (root / "config.yaml").exists():
-            raise ConfigError(f"VIVEKA_HOME is {root} but it holds no config.yaml")
+            raise ConfigError(f"BODH_HOME is {root} but it holds no config.yaml")
         return root
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
         if (candidate / "config.yaml").exists():
             return candidate
-    raise ConfigError(f"no config.yaml in {here} or above it; run from the viveka folder, or set VIVEKA_HOME")
+    default = Path(DEFAULT_HOME).expanduser()
+    if (default / "config.yaml").exists():
+        return default.resolve()
+    raise ConfigError(f"no config.yaml in {here} or above it, and none in {DEFAULT_HOME}; "
+                      "run from the bodh folder, or set BODH_HOME")
 
 
 def load_config(root: Path | None = None) -> Config:
@@ -386,6 +403,7 @@ def load_config(root: Path | None = None) -> Config:
         raise ConfigError(f"{path} must hold a mapping of sections, not {type(raw).__name__}")
     cfg = Config(**raw)
     cfg.root = root
+    cfg._timezone_from_file = bool(str(raw.get("timezone") or "").strip())
     (cfg.root / cfg.data_dir).mkdir(parents=True, exist_ok=True)
     return cfg
 

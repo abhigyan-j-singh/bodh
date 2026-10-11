@@ -1,7 +1,7 @@
 """The whole system in one view, and the levers: what is running, what launchd will do
 next, what the last runs did, the pile, the spend; start a run, stop it, pause or resume
-the schedule, flip enforce, prune, undo. Used by `viveka status`-style commands and by
-the control room (`viveka panel`)."""
+the schedule, flip enforce, prune, undo. Used by `bodh status`-style commands and by
+the control room (`bodh panel`)."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 JOBS = {
-    "run": "viveka.run",
-    "weekly": "viveka.weekly",
-    "report": "viveka.report",
-    "panel": "viveka.console",
+    "run": "bodh.run",
+    "weekly": "bodh.weekly",
+    "report": "bodh.report",
+    "panel": "bodh.console",
 }
 # the labels an install from before the rename used; the installer boots them out
 OLD_JOBS = ["com.antriksh.triage", "com.antriksh.triage.weekly", "com.antriksh.triage.report", "com.antriksh.triage.panel"]
@@ -103,12 +103,12 @@ def schedule(action: str, which: str = "all", data_dir: Path | None = None) -> s
         if data_dir is not None and which == "run":
             proc = ops.running_process(data_dir)
             if proc is not None:
-                return (f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `viveka stop` "
+                return (f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `bodh stop` "
                         "it first")
     names = list(JOBS) if which == "all" else [which]
     lines = [_schedule_one(action, name) for name in names]
     if action == "pause" and which == "all":
-        lines.append("the control room is paused too; `viveka schedule resume` brings everything back")
+        lines.append("the control room is paused too; `bodh schedule resume` brings everything back")
     return "\n".join(lines)
 
 
@@ -137,7 +137,7 @@ def _schedule_one(action: str, which: str) -> str:
 # -- the control room's own state ------------------------------------------------
 
 def panel_state(cfg: Config) -> dict:
-    """Is the control room answering? From data/panel.json (written by `viveka panel`) and a
+    """Is the control room answering? From data/panel.json (written by `bodh panel`) and a
     one-second connection attempt; the last line of data/panel.log explains a failure."""
     data_dir = cfg.root / cfg.data_dir
     info: dict = {}
@@ -161,7 +161,7 @@ def panel_state(cfg: Config) -> dict:
 
 
 def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
-    """viveka commands of this checkout still alive on this machine (run, prune, blast,
+    """bodh commands of this checkout still alive on this machine (run, prune, blast,
     panel …), except this one. Anchored to the checkout's path: a halt from one checkout must
     not end another's control room, or an editor whose arguments mention the path."""
     try:
@@ -179,17 +179,17 @@ def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
 def stray_pattern(root: Path | None) -> str:
     """The pgrep pattern for this checkout's own commands, anchored at the start of the
     command line so a path merely mentioned in another program's arguments does not match."""
-    # a console script runs as `<venv>/bin/python <venv>/bin/viveka …` (its shebang), so the
+    # a console script runs as `<venv>/bin/python <venv>/bin/bodh …` (its shebang), so the
     # interpreter may come first
     if root is not None:
-        return (rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/(viveka|triage)( |$)"
-                r"|^\S*python\S* -m viveka\.cli( |$)")
-    return r"^(\S+/python\S* )?\S*/\.venv/bin/(viveka|triage)( |$)|^\S*python\S* -m viveka\.cli( |$)"
+        return (rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/(bodh|triage)( |$)"
+                r"|^\S*python\S* -m bodh\.cli( |$)")
+    return r"^(\S+/python\S* )?\S*/\.venv/bin/(bodh|triage)( |$)|^\S*python\S* -m bodh\.cli( |$)"
 
 
 def halt(cfg: Config) -> list[str]:
     """Stop everything: interrupt the run that holds the lock (so it finishes its run row and
-    pings the heartbeat), then pause every launchd job, then end any other viveka process of
+    pings the heartbeat), then pause every launchd job, then end any other bodh process of
     this checkout (the control room included). Nothing is lost: judged articles stay judged,
     half-written cuts are finished by the next run."""
     notes = [ops.stop_process(cfg.root / cfg.data_dir)]
@@ -211,7 +211,7 @@ def halt(cfg: Config) -> list[str]:
         (cfg.root / cfg.data_dir / "panel.json").unlink()
     except OSError:
         pass
-    notes.append("everything is stopped; `viveka schedule resume` starts the jobs again")
+    notes.append("everything is stopped; `bodh schedule resume` starts the jobs again")
     return notes
 
 
@@ -371,7 +371,7 @@ def _parse_ts(iso: str | None) -> float | None:
 
 
 def render_status_text(st: dict) -> str:
-    """The whole picture for the terminal (`viveka status`)."""
+    """The whole picture for the terminal (`bodh status`)."""
     lines = []
     r = st["running"]
     if r:
@@ -383,7 +383,7 @@ def render_status_text(st: dict) -> str:
     lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'shadow' else ' (the floor cuts)'} · "
                  f"{'batch' if st['batch_mode'] else 'synchronous'} judging · teacher {st['config']['teacher']}")
     if st.get("breaker_tripped"):
-        lines.append(f"BREAKER TRIPPED in run {st['breaker_tripped']}: the floor cuts nothing until `viveka safety reset`")
+        lines.append(f"BREAKER TRIPPED in run {st['breaker_tripped']}: the floor cuts nothing until `bodh safety reset`")
     j = st["jobs"]
     def jstate(name: str) -> str:
         s = j[name]
@@ -398,7 +398,7 @@ def render_status_text(st: dict) -> str:
     else:
         why = f" · last: {pn['note']}" if pn.get("note") else ""
         lines.append(f"control room: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
-                     "start it with `viveka panel` (foreground) or ./install-launchd.sh")
+                     "start it with `bodh panel` (foreground) or ./install-launchd.sh")
     p = st["pile"]
     lines.append(f"pile: unread {p['unread']:,} · judged {p['judged']:,} · in flight {p['inflight']:,} · pending {p['pending']:,}"
                  + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")

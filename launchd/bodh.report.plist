@@ -2,24 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- viveka weekly: Sunday 07:00 local time. Rewrites the learner model (gated), writes the
-         weekly note, runs the drift check. install-launchd.sh fills in the placeholders. -->
+    <!-- bodh report: the 1st of every month, 07:30 local time. The feed report with proposals.
+         install-launchd.sh fills in the placeholders. -->
     <key>Label</key>
-    <string>viveka.weekly</string>
+    <string>bodh.report</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>__VIVEKA_DIR__/.venv/bin/viveka</string>
-        <string>weekly</string>
+        <string>__BODH_DIR__/.venv/bin/bodh</string>
+        <string>report</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>__VIVEKA_DIR__</string>
+    <string>__BODH_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>VIVEKA_HOME</key>
-        <string>__VIVEKA_DIR__</string>
+        <key>BODH_HOME</key>
+        <string>__BODH_DIR__</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
@@ -28,17 +28,17 @@
 __USERNAME__
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Weekday</key>
-        <integer>0</integer>
+        <key>Day</key>
+        <integer>1</integer>
         <key>Hour</key>
         <integer>7</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>30</integer>
     </dict>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/viveka/launchd.weekly.log</string>
+    <string>__HOME__/Library/Logs/bodh/launchd.report.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/viveka/launchd.weekly.log</string>
+    <string>__HOME__/Library/Logs/bodh/launchd.report.log</string>
 </dict>
 </plist>

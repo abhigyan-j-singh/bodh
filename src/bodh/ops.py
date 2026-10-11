@@ -45,11 +45,11 @@ class AlreadyRunning(Exception):
 
 
 def log_file(data_dir: Path) -> Path:
-    """Where the run log lives: ~/Library/Logs/viveka on a Mac, data/logs elsewhere."""
+    """Where the run log lives: ~/Library/Logs/bodh on a Mac, data/logs elsewhere."""
     logs = Path(os.path.expanduser("~/Library/Logs"))
     if not logs.exists():
-        return data_dir / "logs" / "viveka.log"
-    return logs / "viveka" / "viveka.log"
+        return data_dir / "logs" / "bodh.log"
+    return logs / "bodh" / "bodh.log"
 
 
 class Redactor(logging.Filter):
@@ -149,7 +149,7 @@ def _pid_alive_windows(pid: int) -> bool:
 
 def _pid_record(data_dir: Path) -> tuple[int, str, float] | None:
     try:
-        pid_s, kind, started = (data_dir / "viveka.pid").read_text(encoding="utf-8").split()
+        pid_s, kind, started = (data_dir / "bodh.pid").read_text(encoding="utf-8").split()
         return int(pid_s), kind, float(started)
     except (OSError, ValueError):
         return None
@@ -180,17 +180,17 @@ def run_in_progress(data_dir: Path) -> bool:
     rec = _pid_record(data_dir)
     if rec is None or not pid_alive(rec[0]):
         return False
-    return _lock_held_by_someone(data_dir / "viveka.lock")
+    return _lock_held_by_someone(data_dir / "bodh.lock")
 
 
 @contextmanager
 def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
     """One run at a time. launchd fires every 30 minutes regardless; a slow run must not overlap.
-    While held, data/viveka.pid names the process, so `viveka stop` and the panel can end it,
-    and `viveka progress` can say how long it has been running."""
-    path = data_dir / "viveka.lock"
+    While held, data/bodh.pid names the process, so `bodh stop` and the panel can end it,
+    and `bodh progress` can say how long it has been running."""
+    path = data_dir / "bodh.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
-    pid_path = data_dir / "viveka.pid"
+    pid_path = data_dir / "bodh.pid"
     if fcntl is None:
         with _exclusive_file_lock(path):
             with _pid_file(pid_path, kind):
@@ -204,7 +204,7 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
                 break
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise AlreadyRunning("another viveka run holds the lock") from None
+                    raise AlreadyRunning("another bodh run holds the lock") from None
                 time.sleep(0.01)
         try:
             with _pid_file(pid_path, kind):
@@ -249,7 +249,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
                     pass
                 continue
             if time.monotonic() >= deadline:
-                raise AlreadyRunning("another viveka run holds the lock") from None
+                raise AlreadyRunning("another bodh run holds the lock") from None
             time.sleep(0.01)
     try:
         os.write(fd, f"{os.getpid()}\n".encode())
@@ -274,7 +274,7 @@ def running_process(data_dir: Path) -> dict | None:
 
 
 def stop_process(data_dir: Path, wait: float = 20.0) -> str:
-    """Interrupt the running viveka process (Ctrl-C), then insist. The run fails open:
+    """Interrupt the running bodh process (Ctrl-C), then insist. The run fails open:
     what was judged stays, nothing half-cut is left behind the next run cannot finish."""
     proc = running_process(data_dir)
     if proc is None:

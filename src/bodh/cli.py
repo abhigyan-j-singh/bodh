@@ -1,19 +1,19 @@
-"""viveka: keeps your BazQux unread list worth reading.
+"""bodh: keeps your BazQux unread list worth reading.
 
-    viveka doctor [--live]      check config, secrets, prompts; --live also logs in and calls the models
-    viveka run [--shadow]       the timer's job: feedback, ingest, score, tag, floor, dashboard, heartbeat
-    viveka blast                one pass over everything pending, as fast as the API allows; cuts nothing
-    viveka progress [--watch]   judged, in flight, pending, rate, ETA, by folder; batches; the log
-    viveka prune                cut to the target (default --keep 40); or --fraction 0.3; or --below 65
-    viveka undo                 reverse the last cut
-    viveka bankruptcy           mark everything older than N days read, stars and protections exempt
-    viveka status | why ID      the whole system at a glance; why one article got its score
-    viveka panel                the control room in the browser: status, run, stop, prune, undo, log
-    viveka stop | halt          stop what is running; halt stops everything incl. the schedule and the control room
-    viveka schedule             show, pause, resume or kick the launchd jobs
-    viveka enforce on|off       flip the automatic floor
-    viveka want "x" | meh "x"   nudge the learner model now
-    viveka weekly | report      Sunday's learner rewrite and note; the monthly feed report
+    bodh doctor [--live]      check config, secrets, prompts; --live also logs in and calls the models
+    bodh run [--shadow]       the timer's job: feedback, ingest, score, tag, floor, dashboard, heartbeat
+    bodh blast                one pass over everything pending, as fast as the API allows; cuts nothing
+    bodh progress [--watch]   judged, in flight, pending, rate, ETA, by folder; batches; the log
+    bodh prune                cut to the target (default --keep 40); or --fraction 0.3; or --below 65
+    bodh undo                 reverse the last cut
+    bodh bankruptcy           mark everything older than N days read, stars and protections exempt
+    bodh status | why ID      the whole system at a glance; why one article got its score
+    bodh panel                the control room in the browser: status, run, stop, prune, undo, log
+    bodh stop | halt          stop what is running; halt stops everything incl. the schedule and the control room
+    bodh schedule             show, pause, resume or kick the launchd jobs
+    bodh enforce on|off       flip the automatic floor
+    bodh want "x" | meh "x"   nudge the learner model now
+    bodh weekly | report      Sunday's learner rewrite and note; the monthly feed report
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def _fail(msg: str, code: int = 1) -> None:
 
 @app.command()
 def version() -> None:
-    typer.echo(f"viveka {__version__}")
+    typer.echo(f"bodh {__version__}")
 
 
 @app.command()
@@ -81,6 +81,7 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
         typer.echo(text)
 
     typer.echo(f"root: {cfg.root}")
+    typer.echo(f"timezone: {cfg.timezone} (from {cfg.timezone_source})")
     typer.echo(f"models: teacher={cfg.models.teacher} second_look={cfg.models.second_look} learner={cfg.models.learner}"
                f" budget=${cfg.models.daily_budget_usd}/day")
     mode = ("batch (half price; judgments arrive on the next run)" if cfg.models.batch
@@ -89,6 +90,8 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
                f" · articles older than {cfg.scoring.max_age_days} days are never scored")
     typer.echo(f"cut: {'enforcing' if cfg.cut.enforce else 'shadow mode'}, target {cfg.cut.target_unread}, "
                f"floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run, folders {list(cfg.cut.folders) or 'none'}")
+    typer.echo(f"home angle: {cfg.scoring.home_angle!r} (+{cfg.scoring.home_bonus})" if cfg.scoring.home_angle
+               else "home angle: none (scoring.home_angle)")
     if cfg.seed_is_example():
         problem("seed: STILL THE EXAMPLE (profile/seed.md describes an invented student): replace every paragraph "
                 "with your own and delete the comment at the top")
@@ -255,7 +258,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
           verbose: bool = VERBOSE) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, full price. Scores and tags; cuts nothing. Stop it with Ctrl-C and run
-    it again to continue. Watch it on the dashboard or with `viveka progress --watch`."""
+    it again to continue. Watch it on the dashboard or with `bodh progress --watch`."""
     import time
 
     from .teacher import Teacher
@@ -319,7 +322,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
                f"{total['rounds']} rounds; {total['failed']} failed batches; pending {total['pending']:,}; "
                f"spend today ${total['spend']:.2f}")
     if total["interrupted"]:
-        typer.echo("stopped; what was judged stays. Run `viveka blast` again to continue.")
+        typer.echo("stopped; what was judged stays. Run `bodh blast` again to continue.")
     if total["timed_out"]:
         typer.echo("time limit reached; run again to continue")
     if total["budget_stop"]:
@@ -357,16 +360,16 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         with run_lock(lock, "prune"), graceful_sigterm():
             n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
     except AlreadyRunning:
-        _fail("another run is in progress; `viveka stop` it or wait")
+        _fail("another run is in progress; `bodh stop` it or wait")
         return
     except KeyboardInterrupt:
-        _fail("stopped; the next run finishes the tags and read marks, `viveka undo` reverses the prune", 130)
+        _fail("stopped; the next run finishes the tags and read marks, `bodh undo` reverses the prune", 130)
         return
     except pipeline.cutmod.BreakerTripped as exc:
         _fail(str(exc))
         return
     if n:
-        typer.echo(f"cut {n}; `viveka undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
+        typer.echo(f"cut {n}; `bodh undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
 
 
 def _interactive() -> bool:
@@ -397,7 +400,7 @@ def undo(verbose: bool = VERBOSE) -> None:
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"), graceful_sigterm():
             run_id, n = pipeline.undo_last(ctx)
     except AlreadyRunning:
-        _fail("another run is in progress; `viveka stop` it or wait")
+        _fail("another run is in progress; `bodh stop` it or wait")
         return
     if run_id is None:
         typer.echo("nothing to undo")
@@ -410,7 +413,7 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
                yes: bool = typer.Option(False, "--yes"), dry_run: bool = typer.Option(False, "--dry-run"),
                verbose: bool = VERBOSE) -> None:
     """Clear the debt: every unread article older than the cutoff is marked read and tagged `cut`.
-    Stars and protected articles are exempt. Reversible with `viveka undo`."""
+    Stars and protected articles are exempt. Reversible with `bodh undo`."""
     ctx = _ctx(verbose)
     candidates, _ = pipeline.bankruptcy(ctx, older_than, dry_run=True)
     typer.echo(f"{candidates} unread articles older than {older_than} days (stars and protections exempt)")
@@ -422,9 +425,9 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "bankruptcy"), graceful_sigterm():
             _, done = pipeline.bankruptcy(ctx, older_than, dry_run=False)
     except AlreadyRunning:
-        _fail("another run is in progress; `viveka stop` it or wait")
+        _fail("another run is in progress; `bodh stop` it or wait")
         return
-    typer.echo(f"marked {done} read; `viveka undo` reverses it")
+    typer.echo(f"marked {done} read; `bodh undo` reverses it")
 
 
 @app.command()
@@ -434,7 +437,7 @@ def status(verbose: bool = VERBOSE) -> None:
 
     ctx = _ctx(verbose)
     typer.echo(control.render_status_text(control.status(ctx.cfg, ctx.conn)))
-    typer.echo("\n(`viveka progress` for the pile by folder, `viveka panel` for the control room)")
+    typer.echo("\n(`bodh progress` for the pile by folder, `bodh panel` for the control room)")
 
 
 @app.command()
@@ -470,7 +473,7 @@ def schedule(action: str = typer.Argument("status", help="status, pause, resume 
 @app.command()
 def halt(verbose: bool = VERBOSE) -> None:
     """Stop everything: pause every launchd job, interrupt the run in progress, end any other
-    viveka process including the control room. `viveka schedule resume` brings the jobs back."""
+    bodh process including the control room. `bodh schedule resume` brings the jobs back."""
     from . import control
 
     cfg = _config()
@@ -481,7 +484,7 @@ def halt(verbose: bool = VERBOSE) -> None:
 @app.command()
 def safety(action: str = typer.Argument("status", help="status, or reset"), verbose: bool = VERBOSE) -> None:
     """The breaker: a floor that would cut nearly everything newly judged trips it, and the
-    floor then cuts nothing until `viveka safety reset` says someone has looked."""
+    floor then cuts nothing until `bodh safety reset` says someone has looked."""
     from . import cut as cutmod
 
     if action not in ("status", "reset"):
@@ -500,12 +503,12 @@ def safety(action: str = typer.Argument("status", help="status, or reset"), verb
         return
     if tripped:
         typer.echo(f"breaker TRIPPED in run {tripped}: the floor cuts nothing. Check the prompt and the model "
-                   "(`viveka why ID` on a few newly judged articles), then `viveka safety reset`")
+                   "(`bodh why ID` on a few newly judged articles), then `bodh safety reset`")
     else:
         typer.echo("breaker clear: the floor cuts as configured")
     if given_up:
         typer.echo(f"{given_up} unread articles given up on after {store.MAX_JUDGE_FAILURES} answers with no judgment; "
-                   "they stay unread and unjudged until `viveka safety reset`")
+                   "they stay unread and unjudged until `bodh safety reset`")
     else:
         typer.echo("no article has been given up on")
 
@@ -539,7 +542,7 @@ def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("12
         Panel(ctx.cfg, ctx.conn, host=host, port=port).serve()
     except KeyboardInterrupt:
         raise typer.Exit(0) from None
-    except Exception as exc:  # noqa: BLE001 — leave the reason where `viveka status` can show it
+    except Exception as exc:  # noqa: BLE001 — leave the reason where `bodh status` can show it
         panel_log(ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
         _fail(f"control room failed: {exc}")
 
@@ -723,7 +726,7 @@ def dashboard_cmd(verbose: bool = VERBOSE) -> None:
 
 def triage_alias() -> None:
     """The old command name, kept for one release: a note on stderr, then the same program."""
-    typer.echo("note: `triage` is now `viveka`; the old name goes away in the next release", err=True)
+    typer.echo("note: `triage` is now `bodh`; the old name goes away in the next release", err=True)
     app()
 
 

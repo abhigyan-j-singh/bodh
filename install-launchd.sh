@@ -6,24 +6,24 @@
 # Run again after moving the folder, updating the code or changing the plists; it replaces what is there.
 set -euo pipefail
 cd "$(dirname "$0")"
-VIVEKA_DIR="$(pwd)"
+BODH_DIR="$(pwd)"
 MODE="${1:-agent}"
 PANEL_PORT=8766
 case "$MODE" in
   agent|--daemon) ;;
   *) echo "usage: ./install-launchd.sh [--daemon]"; exit 2;;
 esac
-[ -x .venv/bin/viveka ] || { echo "run ./install.sh first"; exit 1; }
-mkdir -p "$HOME/Library/Logs/viveka"
+[ -x .venv/bin/bodh ] || { echo "run ./install.sh first"; exit 1; }
+mkdir -p "$HOME/Library/Logs/bodh"
 
 # launchd jobs cannot read ~/Documents, ~/Desktop or ~/Downloads (macOS privacy protection denies
 # them silently: "Operation not permitted", exit 126), and a path with spaces makes pip wrap the
-# entry point in /bin/sh, which is denied first. Keep the checkout somewhere plain, ~/viveka say.
-case "$VIVEKA_DIR" in
+# entry point in /bin/sh, which is denied first. Keep the checkout somewhere plain, ~/bodh say.
+case "$BODH_DIR" in
   "$HOME/Documents"*|"$HOME/Desktop"*|"$HOME/Downloads"*|*" "*)
-    echo "this checkout is at: $VIVEKA_DIR"
+    echo "this checkout is at: $BODH_DIR"
     echo "launchd cannot run jobs from Documents, Desktop or Downloads, or from a path with spaces."
-    echo "move it first, for example:  mv \"$VIVEKA_DIR\" ~/viveka && cd ~/viveka && rm -rf .venv && ./install.sh && ./install-launchd.sh"
+    echo "move it first, for example:  mv \"$BODH_DIR\" ~/bodh && cd ~/bodh && rm -rf .venv && ./install.sh && ./install-launchd.sh"
     exit 1;;
 esac
 
@@ -33,7 +33,7 @@ render() {  # $1 = template, $2 = destination
   else
     USERLINE=""
   fi
-  sed -e "s|__VIVEKA_DIR__|$VIVEKA_DIR|g" -e "s|__HOME__|$HOME|g" -e "s|__USERNAME__|$USERLINE|g" "$1" > "$2"
+  sed -e "s|__BODH_DIR__|$BODH_DIR|g" -e "s|__HOME__|$HOME|g" -e "s|__USERNAME__|$USERLINE|g" "$1" > "$2"
 }
 
 if [ "$MODE" = "--daemon" ]; then DOMAIN="system"; SUDO="sudo"; else DOMAIN="gui/$(id -u)"; SUDO=""; fi
@@ -47,7 +47,7 @@ for old in com.antriksh.triage com.antriksh.triage.weekly com.antriksh.triage.re
   if [ "$MODE" = "--daemon" ]; then sudo rm -f "/Library/LaunchDaemons/$old.plist"; else rm -f "$HOME/Library/LaunchAgents/$old.plist"; fi
 done
 
-for job in viveka.run viveka.weekly viveka.report viveka.console; do
+for job in bodh.run bodh.weekly bodh.report bodh.console; do
   # unload whatever is there under this label first (an older checkout's job, say), then load the new plist
   $SUDO launchctl bootout "$DOMAIN/$job" 2>/dev/null || true
   sleep 1
@@ -84,21 +84,21 @@ if [ -n "$up" ]; then
   echo "http://127.0.0.1:$PANEL_PORT"
 else
   echo "not answering on port $PANEL_PORT after 15 s"
-  printed="$($SUDO launchctl print "$DOMAIN/viveka.console" 2>/dev/null || true)"
+  printed="$($SUDO launchctl print "$DOMAIN/bodh.console" 2>/dev/null || true)"
   if [ -n "$printed" ]; then
     echo "  job state: $(echo "$printed" | grep -E 'state =|last exit code|pid =' | tr -s ' ' | tr '\n' ';')"
   else
     echo "  job state: not loaded"
   fi
-  for f in "$HOME/Library/Logs/viveka/panel.err.log" "$VIVEKA_DIR/data/panel.log"; do
+  for f in "$HOME/Library/Logs/bodh/panel.err.log" "$BODH_DIR/data/panel.log"; do
     [ -s "$f" ] && { echo "  $f:"; tail -5 "$f" | sed 's/^/    /'; }
   done
-  echo "  try it in the foreground to see the error: .venv/bin/viveka panel"
+  echo "  try it in the foreground to see the error: .venv/bin/bodh panel"
 fi
 
 if [ "$MODE" = "--daemon" ]; then
-  echo "jobs run as daemons; see them with: sudo launchctl print system/viveka.run"
+  echo "jobs run as daemons; see them with: sudo launchctl print system/bodh.run"
 else
-  echo "jobs run as agents while you are logged in; see them with: launchctl print gui/$(id -u)/viveka.run"
+  echo "jobs run as agents while you are logged in; see them with: launchctl print gui/$(id -u)/bodh.run"
 fi
-echo "logs: ~/Library/Logs/viveka/   status: .venv/bin/viveka status   stop everything: .venv/bin/viveka halt"
+echo "logs: ~/Library/Logs/bodh/   status: .venv/bin/bodh status   stop everything: .venv/bin/bodh halt"

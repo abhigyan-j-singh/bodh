@@ -24,7 +24,7 @@ from .teacher import Teacher, has_more_to_read
 log = logging.getLogger(__name__)
 
 BAND = 20  # one scoring band; the concept cap never displaces an article by more than this
-BREAKER_KEY = "breaker_tripped"  # kv: the run whose floor tripped the breaker; set until `viveka safety reset`
+BREAKER_KEY = "breaker_tripped"  # kv: the run whose floor tripped the breaker; set until `bodh safety reset`
 
 
 class BreakerTripped(Exception):
@@ -77,7 +77,7 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
     if tripped:
         # a trip stands until someone has looked: the same scores would trip it again next run
         sel.blocked = (f"breaker tripped in run {tripped}; the floor cuts nothing until "
-                       "`viveka safety reset`")
+                       "`bodh safety reset`")
         log.warning("cut: %s", sel.blocked)
         sel.survivors = list(pool)
         sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
@@ -103,7 +103,7 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
             raise BreakerTripped(
                 f"floor would cut {new_candidates} of {len(newly_scored)} newly scored articles "
                 f"({share:.0%}); stopping before any write. The prompt or model has probably broken; "
-                "the floor stays off until `viveka safety reset`."
+                "the floor stays off until `bodh safety reset`."
             )
 
     # second look: a close call whose full text holds more than the opening gets the stronger

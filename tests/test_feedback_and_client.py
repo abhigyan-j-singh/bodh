@@ -5,9 +5,9 @@ import json
 import httpx
 from conftest import FakeClient, make_item, seed_scored
 
-from viveka import feedback, store
-from viveka.bazqux import READ, BazQuxClient, _parse_item, label
-from viveka.ids import short_to_long
+from bodh import feedback, store
+from bodh.bazqux import READ, BazQuxClient, _parse_item, label
+from bodh.ids import short_to_long
 
 
 def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
@@ -83,7 +83,7 @@ def _mock_transport(state: dict):
 
 
 def test_client_pagination_relogin_and_edit_batches(monkeypatch):
-    import viveka.bazqux as bq
+    import bodh.bazqux as bq
 
     monkeypatch.setattr(bq, "MIN_REQUEST_INTERVAL", 0.0)
     monkeypatch.setattr(bq, "EDIT_BATCH", 2)
@@ -133,7 +133,7 @@ def test_costs_can_be_recorded_from_worker_threads(conn):
 
 
 def test_duplicate_index(conn, cfg):
-    from viveka.teacher import DupIndex
+    from bodh.teacher import DupIndex
 
     seed_scored(conn, cfg, [dict(n=1, score=50, title="A long enough title to be matched exactly", url="https://a.test/x?utm_source=rss")])
     index = DupIndex(conn)
@@ -149,7 +149,7 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     cfg.root = tmp_path
     (tmp_path / "profile").mkdir(exist_ok=True)
     (tmp_path / "profile" / "learner.md").write_text("## What the student has been learning\nnothing yet\n", encoding="utf-8")
-    monkeypatch.setattr("viveka.learner.git_commit", lambda *a, **k: True)
+    monkeypatch.setattr("bodh.learner.git_commit", lambda *a, **k: True)
     ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 7)])
     labels = {cfg.tags.great: [ids[0]], cfg.tags.good: [ids[1], ids[2]], cfg.tags.bad: [ids[2]],
               cfg.tags.basic: [ids[3]], cfg.tags.more: [ids[4]], cfg.tags.less: [ids[5]], cfg.tags.meh: []}
@@ -180,7 +180,7 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
     assert store.verdicts(conn, store.GRADES)[ids[0]] == "great"
     # the teacher's lists and the article's record
-    from viveka.teacher import concept_context
+    from bodh.teacher import concept_context
 
     ctx = concept_context(conn, cfg)
     assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
@@ -193,7 +193,7 @@ def test_login_and_heartbeat_logs_carry_no_secrets(caplog, monkeypatch):
     (whose path is the check's secret) must never appear in them."""
     import logging
 
-    from viveka.ops import Heartbeat
+    from bodh.ops import Heartbeat
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("ClientLogin"):

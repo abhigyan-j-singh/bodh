@@ -1,5 +1,5 @@
 [project]
-name = "viveka-rss"
+name = "bodh"
 dynamic = ["version"]
 description = "A teacher for your BazQux unread list: scores every article as reading material for you, tags it, cuts the worst, learns from what you read."
 readme = "README.md"
@@ -7,13 +7,14 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Abhigyan J Singh" }]
 requires-python = ">=3.10"
-keywords = ["rss", "bazqux", "reading-list", "claude", "anthropic"]
+keywords = ["rss", "bazqux", "reading-list", "feed-reader", "claude", "anthropic", "llm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -32,21 +33,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.2", "ruff>=0.5"]
+dev = ["pytest>=8.2", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10", "types-PyYAML", "tomli>=2.0; python_version < '3.11'"]
+
+[project.urls]
+Homepage = "https://github.com/abhigyan-j-singh/bodh"
+Repository = "https://github.com/abhigyan-j-singh/bodh"
+Issues = "https://github.com/abhigyan-j-singh/bodh/issues"
+Changelog = "https://github.com/abhigyan-j-singh/bodh/blob/main/CHANGELOG.md"
 
 [project.scripts]
-viveka = "viveka.cli:app"
-triage = "viveka.cli:triage_alias"   # the old name, for one release: prints a note, then runs
+bodh = "bodh.cli:app"
+triage = "bodh.cli:triage_alias"   # the old name, for one release: prints a note, then runs
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/viveka/__init__.py"
+path = "src/bodh/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/viveka"]
+packages = ["src/bodh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,4 +69,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/viveka/cli.py" = ["B008"]
+"src/bodh/cli.py" = ["B008"]

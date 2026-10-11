@@ -262,7 +262,7 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             if sel.held:
                 res.held = teacher.submit_second_looks(run_id, sel.held)
             if res.feedback.get("prune_requested") and sel.blocked:
-                res.notes.append("prune requested by tag; it waits for `viveka safety reset`")
+                res.notes.append("prune requested by tag; it waits for `bodh safety reset`")
             elif res.feedback.get("prune_requested"):
                 psel = cutmod.select_prune(conn, cfg)
                 res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, run_id, "prune")
@@ -421,7 +421,7 @@ def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
     tripped = cutmod.breaker_tripped(conn)
     if tripped:
         raise cutmod.BreakerTripped(f"the breaker tripped in run {tripped}: the latest scores may be wrong; "
-                                    "check a few with `viveka why ID`, then `viveka safety reset`")
+                                    "check a few with `bodh why ID`, then `bodh safety reset`")
     sel = cutmod.select_prune(conn, cfg, keep=keep, fraction=fraction, below=below)
     if confirmed is not None:
         unconfirmed = [r for r in sel.cut if r["id"] not in confirmed]
@@ -441,7 +441,7 @@ def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
         return n, sel
     except KeyboardInterrupt:
         store.finish_run(conn, run_id, False, cut_prune=len(sel.cut_ids), boundary=sel.boundary,
-                         error="stopped; the next run finishes the tags and read marks, `viveka undo` reverses it")
+                         error="stopped; the next run finishes the tags and read marks, `bodh undo` reverses it")
         raise
     except Exception as exc:
         store.finish_run(conn, run_id, False, error=f"{type(exc).__name__}: {exc}")

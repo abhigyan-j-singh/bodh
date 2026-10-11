@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from viveka import store
+from bodh import store
 
 
 def test_schema_version_and_migrations_apply_in_order(tmp_path):

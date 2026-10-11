@@ -1,6 +1,6 @@
 """SQLite store: the system's memory of what it judged, cut and learned, next to BazQux,
 which stays the only source of truth for what is read and tagged. (A rebuild of the
-scored set from the bucket tags in BazQux is planned, not written: `viveka rebuild`.)"""
+scored set from the bucket tags in BazQux is planned, not written: `bodh rebuild`.)"""
 
 from __future__ import annotations
 
@@ -270,7 +270,7 @@ MAX_JUDGE_FAILURES = 3  # empty answers from the model for one article before it
 
 def bump_judge_failures(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
     """The model answered for these articles and said nothing usable; three times and they
-    are left unread, unjudged, until `viveka safety reset`."""
+    are left unread, unjudged, until `bodh safety reset`."""
     conn.executemany("UPDATE state SET judge_failures = judge_failures + 1 WHERE article_id = ?", [(i,) for i in ids])
 
 

@@ -7,18 +7,18 @@ import logging
 
 from conftest import seed_scored
 
-from viveka import dashboard, ops, progress
+from bodh import dashboard, ops, progress
 
 
 def test_live_file_never_carries_env_values(conn, cfg, tmp_path, monkeypatch):
     """A log line with a secret in it must not reach progress.json or the dashboard, which
     README says to publish; the redactor cleans every line before it is written at all."""
-    log_path = tmp_path / "logs" / "viveka.log"
+    log_path = tmp_path / "logs" / "bodh.log"
     monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
     email, url = "student@example.com", "https://hc-ping.com/0123abcd-secret-uuid"
     ops.setup_logging(cfg.root / cfg.data_dir, verbose=True, secrets=[email, url, "hunter2"])
     try:
-        log = logging.getLogger("viveka.test")
+        log = logging.getLogger("bodh.test")
         log.info("logged in as %s with %s", email, "hunter2")
         log.warning("heartbeat %s failed", url)
         log.error("header was GoogleLogin auth=abc123token and key sk-ant-xyz")
@@ -55,7 +55,7 @@ def _reset_logging() -> None:
 def test_setup_logging_rotates_and_skips_stderr_when_not_a_terminal(cfg, tmp_path, monkeypatch):
     from logging.handlers import RotatingFileHandler
 
-    log_path = tmp_path / "logs" / "viveka.log"
+    log_path = tmp_path / "logs" / "bodh.log"
     monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
     monkeypatch.setattr(ops, "_stderr_is_a_terminal", lambda: False)
     ops.setup_logging(cfg.root / cfg.data_dir)
@@ -104,12 +104,12 @@ def test_run_lock_is_not_refused_by_status_probes(cfg):
 
 def test_pid_file_and_liveness(cfg, monkeypatch):
     data_dir = cfg.root / cfg.data_dir
-    pid_path = data_dir / "viveka.pid"
+    pid_path = data_dir / "bodh.pid"
     with ops.run_lock(data_dir, "blast"):
         pid, kind, started = pid_path.read_text(encoding="utf-8").split()
         assert int(pid) == __import__("os").getpid() and kind == "blast"
         assert ops.run_in_progress(data_dir) and ops.running_process(data_dir)["kind"] == "blast"
-        assert (data_dir / "viveka.lock").stat().st_size == 0   # never truncated, never written
+        assert (data_dir / "bodh.lock").stat().st_size == 0   # never truncated, never written
         with __import__("pytest").raises(ops.AlreadyRunning):
             with ops.run_lock(data_dir, "run"):
                 pass
@@ -145,7 +145,7 @@ def test_sigterm_ends_a_run_like_ctrl_c(cfg):
     src = str(Path(__file__).resolve().parents[1] / "src")
     code = (
         f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path\n"
-        "from viveka.ops import run_lock, graceful_sigterm\n"
+        "from bodh.ops import run_lock, graceful_sigterm\n"
         f"with run_lock(Path({str(data_dir)!r}), 'run'), graceful_sigterm():\n"
         "    print('locked', flush=True)\n"
         "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        print('interrupted', flush=True)\n"
@@ -157,7 +157,7 @@ def test_sigterm_ends_a_run_like_ctrl_c(cfg):
         out = proc.stdout.read()
         proc.wait(timeout=10)
     assert "interrupted" in out and proc.returncode == 0
-    assert not (data_dir / "viveka.pid").exists()
+    assert not (data_dir / "bodh.pid").exists()
 
 
 def test_time_limit_without_sigalrm_is_a_noop(monkeypatch):
@@ -171,7 +171,7 @@ def test_time_limit_without_sigalrm_is_a_noop(monkeypatch):
 def test_redactor_cleans_tracebacks_with_a_single_handler(cfg, tmp_path, monkeypatch):
     """With the file handler alone (launchd: no terminal), the filter runs before the formatter
     caches the traceback; the exception line used to reach the file unredacted."""
-    log_path = tmp_path / "logs" / "viveka.log"
+    log_path = tmp_path / "logs" / "bodh.log"
     monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
     monkeypatch.setattr(ops, "_stderr_is_a_terminal", lambda: False)
     ops.setup_logging(cfg.root / cfg.data_dir, secrets=["https://hc-ping.com/uuid-secret"])
@@ -180,7 +180,7 @@ def test_redactor_cleans_tracebacks_with_a_single_handler(cfg, tmp_path, monkeyp
         try:
             raise RuntimeError("ping https://hc-ping.com/uuid-secret failed, header GoogleLogin auth=tok123")
         except RuntimeError:
-            logging.getLogger("viveka.test").exception("boom")
+            logging.getLogger("bodh.test").exception("boom")
         for handler in logging.getLogger().handlers:
             handler.flush()
         text = log_path.read_text(encoding="utf-8")

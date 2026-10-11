@@ -6,14 +6,16 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from viveka.cli import app
+from bodh.cli import app
 
 runner = CliRunner()
 
 
 def test_refuses_without_config(tmp_path, monkeypatch):
     """A folder with no config.yaml gets a one-line refusal, and nothing is created in it."""
-    monkeypatch.delenv("VIVEKA_HOME", raising=False)
+    monkeypatch.delenv("BODH_HOME", raising=False)
+    monkeypatch.delenv("TRIAGE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # a real ~/bodh on this machine must not answer
     monkeypatch.chdir(tmp_path)
     for args in (["status"], ["run", "--shadow"], ["prune", "--dry-run"], ["doctor"], ["enforce", "off"], ["stop"]):
         result = runner.invoke(app, args)
@@ -27,21 +29,21 @@ def _project(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("timezone: UTC\n", encoding="utf-8")
     (tmp_path / "profile").mkdir()
     (tmp_path / "profile" / "learner.md").write_text("## What the student has been learning\nx\n", encoding="utf-8")
-    monkeypatch.setenv("VIVEKA_HOME", str(tmp_path))
+    monkeypatch.setenv("BODH_HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
 def test_weekly_want_meh_and_revert_take_the_lock(tmp_path, monkeypatch):
     """They write learner.md, which a run may be writing too (a steer tag, the gate)."""
-    from viveka import ops
+    from bodh import ops
 
     root = _project(tmp_path, monkeypatch)
     with ops.run_lock(root / "data", "run"):
         for args in (["weekly"], ["want", "reefs"], ["meh", "crypto"], ["profile", "revert"]):
             result = runner.invoke(app, args)
             assert result.exit_code == 5 and "run is in progress" in result.output, (args, result.output)
-    monkeypatch.setattr("viveka.learner.git_commit", lambda *a, **k: True)
+    monkeypatch.setattr("bodh.learner.git_commit", lambda *a, **k: True)
     result = runner.invoke(app, ["want", "reefs"])
     assert result.exit_code == 0 and "wants more on reefs" in result.output
     assert "wants more on reefs" in (root / "profile" / "learner.md").read_text(encoding="utf-8")
@@ -70,8 +72,8 @@ def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
 def test_prune_confirms_and_rejects_negative_keep(tmp_path, monkeypatch):
     from conftest import FakeClient, seed_scored
 
-    from viveka import pipeline, store
-    from viveka.config import Config
+    from bodh import pipeline, store
+    from bodh.config import Config
 
     root = _project(tmp_path, monkeypatch)
     cfg = Config()
@@ -88,7 +90,7 @@ def test_prune_confirms_and_rejects_negative_keep(tmp_path, monkeypatch):
     result = runner.invoke(app, ["prune", "--keep", "1", "--dry-run"])
     assert result.exit_code == 0 and "would cut 2 of 3" in result.output and client.read == []
     # in a terminal, a declined confirmation cuts nothing; `n` is the answer
-    monkeypatch.setattr("viveka.cli._interactive", lambda: True)
+    monkeypatch.setattr("bodh.cli._interactive", lambda: True)
     result = runner.invoke(app, ["prune", "--keep", "1"], input="n\n")
     assert result.exit_code == 0 and client.read == [] and "Cut these 2" in result.output
     # --yes cuts without asking

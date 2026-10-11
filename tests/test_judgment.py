@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from viveka.ids import resolve_ordinal, short_to_long
-from viveka.teacher import (
+from bodh.ids import resolve_ordinal, short_to_long
+from bodh.teacher import (
     JudgmentIn,
     Teacher,
     Verdict,
@@ -70,7 +70,7 @@ def test_adapt_to_error_word_boundaries():
 
 
 def test_prompt_home_flag_follows_the_config(cfg, conn):
-    from viveka.teacher import Teacher, fill_prompt, load_prompt
+    from bodh.teacher import Teacher, fill_prompt, load_prompt
 
     class StubLLM:
         plain_json = False
@@ -88,7 +88,7 @@ def test_prompt_home_flag_follows_the_config(cfg, conn):
     assert "outside the student's own field" in text
     cfg.scoring.home_angle = "  "   # whitespace is off, like "": no flag in the prompt, no bonus in compose
     assert cfg.model_validate(cfg.model_dump()).scoring.home_angle == ""
-    from viveka.teacher import normalize_flags
+    from bodh.teacher import normalize_flags
 
     assert normalize_flags(["india_angle", "funding_round_non_infra", "primary_source"]) == ["home_angle", "funding_offfield", "primary_source"]
     assert normalize_flags(None) == []

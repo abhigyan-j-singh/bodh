@@ -8,7 +8,7 @@ you starred. A stratified sample by default (random rows are proportional to fee
 plus every starred article, so the eval gate can be checked: no starred article may fall
 below the automatic floor.
 
-    cd <your viveka folder>
+    cd <your bodh folder>
     .venv/bin/python contrib/replay_archive.py --archive /path/to/archive.db [--golden golden.jsonl] [--sample 500]
 
 Costs about a dollar for 500 articles. Touches nothing in BazQux.
@@ -23,9 +23,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from viveka import store
-from viveka.config import Config, load_config, load_secrets
-from viveka.teacher import LLM, Teacher, compose, concept_context
+from bodh import store
+from bodh.config import Config, load_config, load_secrets
+from bodh.teacher import LLM, Teacher, compose, concept_context
 
 ARCHIVE_QUERY = """
 SELECT id, feed, title, url, summary, fetched_at, decision, quality AS old_quality

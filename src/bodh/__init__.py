@@ -1,4 +1,4 @@
-"""viveka: keeps a BazQux unread list worth reading.
+"""bodh: keeps a BazQux unread list worth reading.
 
 A teacher (a strong model) scores every unread article once; the worst are
 marked read in BazQux; you choose how deep the cut goes. BazQux is the only

@@ -18,7 +18,7 @@ htmlcov/
 build/
 dist/
 
-# your own prompt overrides (./prompts/ next to config.yaml; the packaged ones live in src/viveka/prompts/)
+# your own prompt overrides (./prompts/ next to config.yaml; the packaged ones live in src/bodh/prompts/)
 /prompts/
 
 # scratch

@@ -272,8 +272,8 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     from . import progress
 
     parts = [f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-             f"<title>viveka</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
-             f"<h1>viveka</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
+             f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
+             f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
              f"unread {hl['unread']} · target {cfg.cut.target_unread} · floor {cfg.cut.default_floor}</div>"]
 
     # KPIs
@@ -396,7 +396,7 @@ def weekly_note(cfg: Config, conn: sqlite3.Connection, learner_result: dict | No
     covered, frontier = concept_map(conn, cfg)
     misses = near_misses(conn)
     hl = health(conn, cfg)
-    lines = [f"# Viveka weekly · {now.strftime('%d %b %Y')}", "",
+    lines = [f"# Bodh weekly · {now.strftime('%d %b %Y')}", "",
              f"Unread now: {hl['unread']} (target {cfg.cut.target_unread}). Spend last 7 days: ${hl['spend_week']:.2f}.", ""]
     lines.append("## Learnings this week")
     if not lessons:

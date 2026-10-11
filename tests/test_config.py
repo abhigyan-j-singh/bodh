@@ -8,22 +8,24 @@ from pathlib import Path
 import pytest
 import yaml
 
-from viveka.config import Config, ConfigError, find_root, load_config
+from bodh.config import Config, ConfigError, find_root, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_find_root_env_ancestor_and_refusal(tmp_path, monkeypatch):
-    monkeypatch.delenv("VIVEKA_HOME", raising=False)
+    monkeypatch.delenv("BODH_HOME", raising=False)
+    monkeypatch.delenv("TRIAGE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # a real ~/bodh on this machine must not answer
     project = tmp_path / "proj"
     (project / "deep" / "er").mkdir(parents=True)
     (project / "config.yaml").write_text("timezone: UTC\n", encoding="utf-8")
     assert find_root(project / "deep" / "er") == project.resolve()
     with pytest.raises(ConfigError):
         find_root(tmp_path)  # nothing above tmp_path holds a config.yaml of ours
-    monkeypatch.setenv("VIVEKA_HOME", str(project))
+    monkeypatch.setenv("BODH_HOME", str(project))
     assert find_root(tmp_path) == project.resolve()
-    monkeypatch.setenv("VIVEKA_HOME", str(tmp_path))
+    monkeypatch.setenv("BODH_HOME", str(tmp_path))
     with pytest.raises(ConfigError):
         find_root()
     with pytest.raises(ConfigError):
@@ -80,7 +82,7 @@ def test_config_rejects_typos_bounds_and_timezone():
 
 
 def test_secrets_never_appear_in_repr_or_str():
-    from viveka.config import Secrets
+    from bodh.config import Secrets
 
     s = Secrets(bazqux_email="student@example.com", bazqux_password="hunter2", anthropic_api_key="sk-ant-xyz",
                 healthcheck_url="https://hc-ping.com/uuid-secret")
@@ -94,7 +96,7 @@ def test_secrets_never_appear_in_repr_or_str():
 def test_unknown_model_warns_once(caplog):
     import logging
 
-    from viveka.config import Models, _warned_models
+    from bodh.config import Models, _warned_models
 
     _warned_models.discard("brand-new-model")
     m = Models()
@@ -107,7 +109,7 @@ def test_unknown_model_warns_once(caplog):
 def test_timezone_defaults_to_the_machine_and_the_example_leaves_it_out(monkeypatch):
     """A stranger's budget day ends at their midnight, not the author's; $TZ wins, then
     /etc/localtime, then UTC; a name this machine does not know is passed over."""
-    from viveka import config
+    from bodh import config
 
     monkeypatch.setenv("TZ", ":Europe/Lisbon")
     assert config.system_timezone() == "Europe/Lisbon"
@@ -124,7 +126,7 @@ def test_timezone_defaults_to_the_machine_and_the_example_leaves_it_out(monkeypa
 
 
 def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
-    from viveka import config
+    from bodh import config
 
     link = tmp_path / "localtime"
     target = tmp_path / "usr" / "share" / "zoneinfo" / "Europe" / "Lisbon"
@@ -145,7 +147,7 @@ def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
 def test_localtime_name_copied_file_falls_back_to_etc_timezone(tmp_path, monkeypatch):
     """Debian copies the zone file to /etc/localtime and names it in /etc/timezone; a machine
     with neither (Windows) says nothing and the default is UTC; junk in /etc/timezone is not a crash."""
-    from viveka import config
+    from bodh import config
 
     files = {"/etc/localtime": tmp_path / "localtime", "/etc/timezone": tmp_path / "timezone"}
     real_path = config.Path
@@ -165,7 +167,7 @@ def test_localtime_name_copied_file_falls_back_to_etc_timezone(tmp_path, monkeyp
 def test_the_example_seed_is_recognised_and_refused(tmp_path, cfg, conn):
     """profile.example/seed.md describes an invented student: `doctor` reports it, the
     teacher refuses to judge for it, and a real seed in the example's shape passes."""
-    from viveka.teacher import Teacher
+    from bodh.teacher import Teacher
 
     example = (ROOT / "profile.example" / "seed.md").read_text(encoding="utf-8")
     cfg.seed_path.write_text(example, encoding="utf-8")
@@ -176,3 +178,30 @@ def test_the_example_seed_is_recognised_and_refused(tmp_path, cfg, conn):
     cfg.seed_path.write_text(own, encoding="utf-8")
     assert not cfg.seed_is_example() and "geologist" in cfg.read_seed()
     Teacher(cfg, None, conn)  # type: ignore[arg-type]
+
+
+def test_find_root_tries_the_default_home_last(tmp_path, monkeypatch):
+    """With no variable and no config.yaml above the working directory, ~/bodh is tried last;
+    it answers only when it holds a config.yaml."""
+    monkeypatch.delenv("BODH_HOME", raising=False)
+    monkeypatch.delenv("TRIAGE_HOME", raising=False)
+    home = tmp_path / "home"
+    (home / "bodh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    with pytest.raises(ConfigError):
+        find_root(tmp_path)
+    (home / "bodh" / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
+    assert find_root(tmp_path) == (home / "bodh").resolve()
+
+
+def test_empty_timezone_means_this_computer_and_doctor_knows_the_source(tmp_path, monkeypatch):
+    from bodh.config import system_timezone
+
+    monkeypatch.setenv("TZ", "Europe/Lisbon")
+    assert Config(timezone="").timezone == system_timezone() == "Europe/Lisbon"
+    assert Config(timezone=" Asia/Kolkata ").timezone == "Asia/Kolkata"
+    (tmp_path / "config.yaml").write_text("timezone: Asia/Kolkata\n", encoding="utf-8")
+    assert load_config(tmp_path).timezone_source == "config.yaml"
+    (tmp_path / "config.yaml").write_text('timezone: ""\n', encoding="utf-8")
+    cfg = load_config(tmp_path)
+    assert cfg.timezone_source == "this computer" and cfg.timezone == "Europe/Lisbon"

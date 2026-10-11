@@ -1,6 +1,6 @@
 # The Prune button
 
-One Apple Shortcut, named **Prune**, runs `viveka prune` on the Mac that runs viveka, over SSH. It works from the
+One Apple Shortcut, named **Prune**, runs `bodh prune` on the Mac that runs bodh, over SSH. It works from the
 iPhone home screen, the Mac menu bar, the Apple Watch and Siri ("Hey Siri, Prune"). Nothing new listens
 on the network: it uses the SSH you already have through Tailscale.
 
@@ -9,7 +9,7 @@ on the network: it uses the SSH you already have through Tailscale.
 1. System Settings → General → Sharing → turn on **Remote Login** (SSH). Allow access for your user only.
 2. Tailscale is installed and signed in; note the machine name (for example `my-mac`), reachable as
    `my-mac` or `my-mac.<tailnet>.ts.net` from your other devices.
-3. Make sure `~/viveka/.venv/bin/viveka prune --dry-run --yes` works from a terminal (`~/viveka` being
+3. Make sure `~/bodh/.venv/bin/bodh prune --dry-run --yes` works from a terminal (`~/bodh` being
    wherever you cloned it).
 
 ## Build the Shortcut (iPhone or Mac; it syncs to both)
@@ -24,7 +24,7 @@ on the network: it uses the SSH you already have through Tailscale.
    - Script:
 
      ```sh
-     cd "$HOME/viveka" && .venv/bin/viveka prune --yes 2>&1 | tail -n 4
+     cd "$HOME/bodh" && .venv/bin/bodh prune --yes 2>&1 | tail -n 4
      ```
 
 3. Add **Show Notification** (or **Show Result**) with the SSH output as its text.
@@ -36,13 +36,13 @@ on the network: it uses the SSH you already have through Tailscale.
 
 Duplicate the Shortcut and change the script line for other depths:
 
-- `… viveka prune --fraction 0.3 --yes …` cuts the worst 30% of what is unread, each time you press it
-- `… viveka prune --below 65 --yes …` cuts everything scoring under 65
-- `… viveka prune --dry-run …` shows the cut without making it
-- `… viveka undo …` reverses the last cut
+- `… bodh prune --fraction 0.3 --yes …` cuts the worst 30% of what is unread, each time you press it
+- `… bodh prune --below 65 --yes …` cuts everything scoring under 65
+- `… bodh prune --dry-run …` shows the cut without making it
+- `… bodh undo …` reverses the last cut
 
 ## Without a Shortcut
 
 Any BazQux client works as a trigger too: add the tag `prune` to any article in BazQux and the next
 timer run prunes one step to the target, then removes the tag. And plain `ssh my-mac` followed by
-`viveka prune` is always there.
+`bodh prune` is always there.

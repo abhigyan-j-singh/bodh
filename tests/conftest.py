@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from viveka import store
-from viveka.config import Config
-from viveka.ids import short_to_long
+from bodh import store
+from bodh.config import Config
+from bodh.ids import short_to_long
 
 
 @dataclass
@@ -40,7 +40,7 @@ def make_item(n: int, feed: str = "Feed A", title: str | None = None, url: str |
 @pytest.fixture(autouse=True)
 def _no_real_launchd(monkeypatch):
     """The suite runs on the owner's Mac too: never touch the real launchd jobs or processes."""
-    from viveka import control
+    from bodh import control
 
     monkeypatch.setattr(control, "_plist_path", lambda label: (None, ""))
     monkeypatch.setattr(control, "launchctl_available", lambda: False)
@@ -124,7 +124,7 @@ class FakeClient:
         self.unread_marked: list[list[str]] = []
 
     def unread_ids(self):
-        from viveka.bazqux import ItemRef
+        from bodh.bazqux import ItemRef
 
         return [ItemRef(id=i, timestamp_usec=None) for i in self.unread]
 

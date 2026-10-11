@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from conftest import FakeClient, seed_scored
 
-from viveka import cut, store
-from viveka.config import FolderPolicy
+from bodh import cut, store
+from bodh.config import FolderPolicy
 
 
 def test_prune_keep_with_concept_cap(conn, cfg):

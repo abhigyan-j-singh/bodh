@@ -8,9 +8,9 @@ import time
 import pytest
 from conftest import make_item
 
-from viveka import store
-from viveka.config import Secrets
-from viveka.teacher import ModelConfigError, Teacher, Verdict
+from bodh import store
+from bodh.config import Secrets
+from bodh.teacher import ModelConfigError, Teacher, Verdict
 
 
 class CountingLLM:
@@ -122,7 +122,7 @@ def test_second_looks_record_each_result_as_it_lands(cfg, conn):
 
 
 def test_secrets_shape_for_llm(cfg, conn):
-    from viveka.teacher import LLM, TeacherError
+    from bodh.teacher import LLM, TeacherError
 
     with pytest.raises(TeacherError):
         LLM(cfg, Secrets(), conn)

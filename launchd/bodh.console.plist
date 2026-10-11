@@ -2,26 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- viveka control room: a small local web server (http://127.0.0.1:8766), kept alive.
+    <!-- bodh control room: a small local web server (http://127.0.0.1:8766), kept alive.
          Publish it on your tailnet with tailscale serve (port 8766). -->
     <key>Label</key>
-    <string>viveka.console</string>
+    <string>bodh.console</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>__VIVEKA_DIR__/.venv/bin/viveka</string>
+        <string>__BODH_DIR__/.venv/bin/bodh</string>
         <string>panel</string>
         <string>--port</string>
         <string>8766</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>__VIVEKA_DIR__</string>
+    <string>__BODH_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>VIVEKA_HOME</key>
-        <string>__VIVEKA_DIR__</string>
+        <key>BODH_HOME</key>
+        <string>__BODH_DIR__</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
@@ -39,9 +39,9 @@ __USERNAME__
     <integer>60</integer>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/viveka/panel.out.log</string>
+    <string>__HOME__/Library/Logs/bodh/panel.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/viveka/panel.err.log</string>
+    <string>__HOME__/Library/Logs/bodh/panel.err.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>
