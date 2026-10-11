@@ -18,17 +18,6 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-KINDS = ["primary_source", "original_analysis", "reporting", "commentary", "aggregation", "promo", "other"]
-FLAGS = [
-    "primary_source",
-    "home_angle",
-    "vendor_marketing_no_data",
-    "funding_offfield",
-    "perishable",
-    "paywalled_stub",
-    "duplicate",
-]
-
 # the compact codes the model writes (one token each) and what they mean in the database
 KIND_CODES = {
     "src": "primary_source",
@@ -49,6 +38,8 @@ FLAG_CODES = {
     "dupe": "duplicate",
     "india": "home_angle",
 }  # the code the prompt used before home_angle was configurable
+KINDS = list(dict.fromkeys(KIND_CODES.values()))  # the long names, in the codes' order
+FLAGS = [name for code, name in FLAG_CODES.items() if code != "india"]
 # flag names written by earlier versions, read as today's
 FLAG_ALIASES = {"india_angle": "home_angle", "funding_round_non_infra": "funding_offfield"}
 SUBSCORES = ("quality", "learning", "fit", "breadth", "relevance")
@@ -108,7 +99,7 @@ class JudgmentBatchOut(BaseModel):
 
 class JudgmentIn(BaseModel):
     """What comes back, read leniently: the API does not promise the case of enum values,
-    and structured outputs cannot enforce bounds or lengths, so everything is normalized here."""
+    and structured outputs cannot enforce bounds or lengths, so everything is normalised here."""
 
     n: int
     s: list[int]
@@ -246,7 +237,7 @@ def normalized_title(title: str) -> str:
 
 class DupIndex:
     """Earlier articles telling the same story: the same canonical URL, or the same
-    normalized title in a different feed, within the window. Built once per scoring pass."""
+    normalised title in a different feed, within the window. Built once per scoring pass."""
 
     def __init__(self, conn: sqlite3.Connection, window_days: int = 7) -> None:
         since = store.days_ago_iso(window_days)
@@ -278,7 +269,3 @@ class DupIndex:
         if hit and hit["id"] != row["id"] and hit.get("feed_title") != row["feed_title"]:
             return hit
         return None
-
-
-def find_duplicate(conn: sqlite3.Connection, row: sqlite3.Row, window_days: int = 7) -> dict[str, Any] | None:
-    return DupIndex(conn, window_days).find(row)

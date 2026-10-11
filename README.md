@@ -260,6 +260,13 @@ record). The learned profile's history: `git log` in `profile/`.
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # the suite: ids, scoring rules, cuts, safety, client, feedback, batches, catch-up, progress, locks, the console, pipeline end to end
-.venv/bin/ruff check src tests
+make check                 # ruff, ruff format --check, mypy --strict, the suite; CI runs the same
+.venv/bin/pytest -q        # the suite alone: ids, scoring rules, cuts, safety, client, feedback, batches, catch-up, progress, locks, the console, a run end to end
+pre-commit install         # the same checks before every commit (pip install pre-commit first)
 ```
+
+`docs/glossary.md` has the words, `docs/internals.md` the rules the code keeps (threads and
+connections, the run lock, failing open, exit codes, stored words). Every error bodh raises on
+purpose exits with a code a script can act on: 2 configuration, 3 BazQux, 4 the model, 5 a run
+in progress, 1 anything else. Prose is in British spelling; identifiers follow Python's
+conventions (`normalize`, `color` in CSS).

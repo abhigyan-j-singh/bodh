@@ -301,9 +301,6 @@ def _flagged_config(text: str, before: object, on: bool) -> tuple[str | None, st
     return new_text, f"{section}.{key}", ""
 
 
-set_enforce = set_autocut  # the name before October 2026
-
-
 _SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")  # a top-level `name:` line
 
 

@@ -1,0 +1,24 @@
+# pre-commit: ruff, ruff-format, mypy and the tests before every commit.
+#   pip install pre-commit && pre-commit install        (once)
+#   pre-commit run --all-files                           (by hand)
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy --strict
+        entry: .venv/bin/mypy
+        language: system
+        pass_filenames: false
+        files: ^src/
+      - id: pytest
+        name: pytest
+        entry: .venv/bin/pytest -q -x
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/

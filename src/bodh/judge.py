@@ -38,7 +38,6 @@ from .judgment import (  # noqa: F401 — re-exported for one release: these liv
     Verdict,
     canonical_url,
     compose,
-    find_duplicate,
     matches_topic,
     normalize_flags,
     normalized_title,

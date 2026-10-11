@@ -69,8 +69,8 @@ def setup_logging(data_dir: Path, verbose: bool = False, secrets: Iterable[str] 
         path = log_file(data_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"))
-    except OSError:
-        pass
+    except OSError as exc:  # a read-only or missing log folder: the terminal handler, if any, still works
+        sys.stderr.write(f"bodh: the log file could not be opened ({exc}); logging to stderr only\n")
     for handler in handlers:
         handler.addFilter(redactor)
     logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)

@@ -291,17 +291,6 @@ class LLM:
         except Exception as exc:
             raise _batch_classify(exc) from exc
 
-    def batch_counts(self, batch_id: str) -> dict[str, Any]:
-        """How many requests of a batch are processing, succeeded, errored, canceled, expired."""
-        try:
-            counts = self._client.messages.batches.retrieve(batch_id).request_counts
-        except Exception as exc:
-            raise _batch_classify(exc) from exc
-        return {
-            k: int(getattr(counts, k, 0) or 0)
-            for k in ("processing", "succeeded", "errored", "canceled", "expired")
-        }
-
     def retries(self, n: int) -> None:
         """More patience with 429s and 5xx, for a deliberate catch-up through a backlog."""
         self._client = self._client.with_options(max_retries=max(0, n))

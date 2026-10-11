@@ -209,9 +209,6 @@ def repeats_about(new_text: str, about: str) -> bool:
     return any(len(line) >= 40 and line in low for line in (ln.strip().lower() for ln in about.splitlines()))
 
 
-repeats_seed = repeats_about  # the name before October 2026
-
-
 def _evidence_line(r: sqlite3.Row) -> str:
     score = f"{r['score']:.0f}" if r["score"] is not None else "?"
     return (

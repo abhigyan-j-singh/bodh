@@ -72,14 +72,14 @@ def test_status_text_and_enforce_flip(conn, cfg):
     assert st["jobs"]["run"]["installed"] is False and st["runs"][0]["summary"] == "unread 2 · judged 2"
     text = jobs.render_status_text(st)
     assert "idle" in text and "scoring-only" in text and "unread 2" in text
-    ok, msg = jobs.set_enforce(cfg.root, True)
+    ok, msg = jobs.set_autocut(cfg.root, True)
     assert ok and "now true" in msg
     assert "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
-    ok, msg = jobs.set_enforce(cfg.root, False)
+    ok, msg = jobs.set_autocut(cfg.root, False)
     assert ok and "scoring-only" in msg
     # a file without the key, in either layout, gets the new one
     (cfg.root / "config.yaml").write_text("cut:\n  target_unread: 40\n", encoding="utf-8")
-    ok, msg = jobs.set_enforce(cfg.root, True)
+    ok, msg = jobs.set_autocut(cfg.root, True)
     assert ok and "autocut:\n  enabled: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     # launchd is not here: states say so instead of failing
     j = jobs.job_state("bodh.run")
@@ -277,7 +277,6 @@ def test_set_autocut_every_yaml_spelling(cfg):
     assert ok and "cut.enforce is now true" in msg
     assert path.read_text(encoding="utf-8") == "cut:\n  enforce: true # kept\n  target_unread: 40\n"
     assert load_config(cfg.root).autocut.enabled is True
-    assert jobs.set_enforce is jobs.set_autocut
     # a shape the line editor cannot handle is refused, and the file is untouched
     path.write_text("autocut: { enabled: false, cutoff: 40 }\n", encoding="utf-8")
     before = path.read_text(encoding="utf-8")

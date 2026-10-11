@@ -12,7 +12,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 SCHEMA = """
@@ -98,7 +98,7 @@ def utcnow_iso() -> str:
 
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # worker threads record model costs through the same connection, serialized by a lock
+    # worker threads record model costs through the same connection, serialised by a lock
     conn = sqlite3.connect(str(path), timeout=30, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -633,7 +633,12 @@ def rescued_ids(conn: sqlite3.Connection) -> set[str]:
 # -- runs and costs -----------------------------------------------------------
 
 
-def begin_run(conn: sqlite3.Connection, kind: str) -> int:
+# the kinds of run, as `runs.kind` records them (older rows may say blast, bankruptcy or nudge)
+RunKind = Literal["run", "prune", "undo", "clear-old", "catch-up", "weekly", "steer"]
+
+
+def begin_run(conn: sqlite3.Connection, kind: RunKind) -> int:
+    """A new row in `runs`, open; `finish_run` closes it with its summary."""
     cur = conn.execute("INSERT INTO runs (kind, started_at, ok) VALUES (?, ?, 0)", (kind, utcnow_iso()))
     return int(cur.lastrowid or 0)
 
@@ -713,17 +718,34 @@ def feedback_kind_name(kind: str | None) -> str:
 
 # -- feedback and concepts ----------------------------------------------------
 
-# The kinds of feedback, and what they mean to the judge and the weekly rewrite.
-# Stars and reads come from BazQux state; the rest are the student's tags.
+# The kinds of feedback, and what they mean to the judge and the weekly rewrite. Stars and reads
+# come from BazQux state; the rest are the student's tags. `wrong` is the rescue tag's positive
+# (recorded under the old tag's name for good; see config.Tags.rescue_tags).
+FeedbackKind = Literal[
+    "star",
+    "read",
+    "dismiss",
+    "rescue",
+    "wrong",
+    "great",
+    "good",
+    "meh",
+    "bad",
+    "basic",
+    "heavy",
+    "more",
+    "less",
+]
 GRADES = ("great", "good", "meh", "bad")  # one per article; the harsher wins when two are present
 LEVELS = ("basic", "heavy")  # the level missed: too elementary, too dense
 STEERS = ("more", "less")  # steer the judge by this article's concept, now
 LOVED_KINDS = ("star", "great", "wrong")  # the strongest positives: the eval gate checks against these
 POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong")
-NEGATIVE_KINDS = ("bad", "meh", "dismiss", "prune")
+NEGATIVE_KINDS = ("bad", "meh", "dismiss")
 
 
-def add_feedback(conn: sqlite3.Connection, article_id: str, kind: str) -> bool:
+def add_feedback(conn: sqlite3.Connection, article_id: str, kind: FeedbackKind) -> bool:
+    """Record one piece of feedback once; False when it was recorded already."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO feedback (article_id, kind, at) VALUES (?, ?, ?)",
         (article_id, kind, utcnow_iso()),
@@ -734,13 +756,16 @@ def add_feedback(conn: sqlite3.Connection, article_id: str, kind: str) -> bool:
 def set_verdict(conn: sqlite3.Connection, article_id: str, kind: str, group: Iterable[str]) -> bool:
     """Record one kind out of an exclusive group (a grade, a level, a steer), replacing any other
     member recorded for the article. True when something changed."""
-    others = [k for k in group if k != kind]
+    members = tuple(group)
+    if kind not in members:
+        raise ValueError(f"{kind!r} is not one of {members}")
+    others = [k for k in members if k != kind]
     if others:
         conn.execute(
             f"DELETE FROM feedback WHERE article_id = ? AND kind IN ({','.join('?' * len(others))})",
             (article_id, *others),
         )
-    return add_feedback(conn, article_id, kind)
+    return add_feedback(conn, article_id, cast(FeedbackKind, kind))
 
 
 def verdicts(conn: sqlite3.Connection, kinds: Iterable[str]) -> dict[str, str]:

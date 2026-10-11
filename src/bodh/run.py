@@ -256,6 +256,7 @@ def run(
     except KeyboardInterrupt:
         res.ok = False
         res.error = "stopped"
+        log.warning("run %d stopped: %s", run_id, res.summary())
         store.finish_run(conn, run_id, False, error=res.error, summary=res.summary())
         st.phase("")
         raise
@@ -441,6 +442,9 @@ def _finish(st: _Run) -> None:
     st.phase("rendering the dashboard")
     render_dashboard(cfg, conn, res)
     st.phase("")
+    log.info(
+        "run %d: %s", st.run_id, res.summary()
+    )  # the same line the heartbeat, the run row and the dashboard carry
     ctx.heartbeat.ok(res.summary())
 
 

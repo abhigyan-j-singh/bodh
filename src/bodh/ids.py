@@ -52,7 +52,7 @@ def normalize_item_id(item_id: int | str) -> str:
     try:
         return short_to_long(int(s, 10))
     except ValueError:
-        raise ValueError(f"unrecognized item id format: {item_id!r}") from None
+        raise ValueError(f"unrecognised item id format: {item_id!r}") from None
 
 
 def resolve_ordinal(raw: int | str, ordered_ids: list[str]) -> str | None:

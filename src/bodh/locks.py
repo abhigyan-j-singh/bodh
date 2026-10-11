@@ -105,7 +105,14 @@ def run_in_progress(data_dir: Path) -> bool:
 def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
     """One run at a time. launchd fires every 30 minutes regardless; a slow run must not overlap.
     While held, data/bodh.pid names the process, so `bodh stop` and the console can end it,
-    and `bodh progress` can say how long it has been running."""
+    and `bodh progress` can say how long it has been running.
+
+    Two writes, reviewed for a crash between them: the lock is the flock on bodh.lock, which
+    the kernel releases when the process dies, however it dies; the pid file is advisory and
+    written second. A crash before it leaves no pid file; a crash after it leaves a pid file
+    naming a dead process, which `running_process` and `run_in_progress` ignore (they probe
+    the pid first) and the next run overwrites. Without flock (Windows) the lock file itself
+    holds the pid and a file naming a dead process is taken over."""
     path = data_dir / "bodh.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     pid_path = data_dir / "bodh.pid"

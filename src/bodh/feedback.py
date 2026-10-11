@@ -111,7 +111,7 @@ def _collect_reads(
     expired = [r["id"] for r in rows if r["id"] not in recent_ids]
     feeds = Counter(r["feed_title"] for r in recent)
     bulk = len(recent) >= cfg.safety.mark_all_read_threshold and len(feeds) >= 3
-    kind = "dismiss" if bulk else "read"
+    kind: store.FeedbackKind = "dismiss" if bulk else "read"
     for r in recent:
         store.add_feedback(conn, r["id"], kind)
     store.set_flags(conn, recent_ids, status=("dismissed" if bulk else "read"), read_at=store.utcnow_iso())

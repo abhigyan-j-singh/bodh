@@ -121,16 +121,16 @@ def test_gate_judges_with_the_proposed_model(cfg, conn):
     assert "# Learner model\n## What the student has been learning\nnothing" not in seen["system"]
 
 
-def test_repeats_seed():
+def test_repeats_about():
     seed = "# Seed\n\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n\nAlready knows well: coral reef ecology.\n"
-    assert profiler.repeats_seed("## What\n# Seed\n", seed)
-    assert profiler.repeats_seed(
+    assert profiler.repeats_about("## What\n# Seed\n", seed)
+    assert profiler.repeats_about(
         "## What\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n", seed
     )
-    assert not profiler.repeats_seed(
+    assert not profiler.repeats_about(
         "## What\nThe student already knows well that reefs are in trouble.\n", seed
     )
-    assert not profiler.repeats_seed(
+    assert not profiler.repeats_about(
         "## What\nAlready knows well: coral reef ecology.\n", seed
     )  # a short line is not proof
 
