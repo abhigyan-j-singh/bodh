@@ -67,7 +67,7 @@ def test_the_style_guide_shows_every_token_and_component():
     ):
         assert part in page, part
     assert "<style>" in page and "<script>" in page
-    assert 'src="http' not in page and 'href="http' not in page  # no request to any host
+    assert 'src="http' not in page and "<link" not in page  # no request to any host; links out are content
     assert 'lang="en"' in page and '<meta name="viewport"' in page and "Skip to the content" in page
 
 

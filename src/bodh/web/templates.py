@@ -6,6 +6,7 @@ console serves at /design in development and the visual tests screenshot."""
 from __future__ import annotations
 
 import html
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -151,7 +152,7 @@ def tile(label: str, value: str, delta: str = "", delta_class: str = "", spark: 
     )
 
 
-def sparkline(values: list[float], label: str) -> str:
+def sparkline(values: Sequence[float], label: str) -> str:
     """Seven points: the last in the accent with a ring, the rest muted; no axes. The tile's
     value and delta carry the numbers, so the picture is decorative with a text alternative."""
     if len(values) < 2:
@@ -259,49 +260,96 @@ def _design_type() -> str:
     )
 
 
-def _design_components() -> str:
-    chips = " ".join(band_chip(s, b) for s, b in ((94, 90), (78, 70), (55, 50), (41, 30), (12, 0)))
-    status = " ".join(
-        (
-            chip("Scoring only", "accent"),
-            chip("Cut below 35", "accent"),
-            chip("ok", "good", "check"),
-            chip("budget reached", "warning", "warning"),
-            chip("failed", "critical", "warning"),
-        )
+def bars(rows: list[tuple[str, float, float]], first: str, second: str) -> str:
+    """Two shares per row as horizontal bars in one hue and its lighter step, with a legend and
+    direct labels at the bar ends: the calibration chart's form."""
+    legend = f'<div class="legend"><span class="one"><i></i>{esc(first)}</span><span class="two"><i></i>{esc(second)}</span></div>'
+    body = "".join(
+        f'<span class="name">{esc(name)}</span><div class="pair">'
+        f'<div class="bar" style="width:{a:.0f}%"><span class="v">{a:.0f}%</span></div>'
+        f'<div class="bar second" style="width:{b:.0f}%"><span class="v">{b:.0f}%</span></div></div>'
+        for name, a, b in rows
     )
-    tiles = (
-        '<div class="tiles">'
-        + tile(
+    return f'{legend}<div class="bars">{body}</div>'
+
+
+def list_item(
+    score: float,
+    band: int,
+    title: str,
+    url: str,
+    lesson: str,
+    meta: list[str],
+    reader_url: str | None = None,
+    verdicts: tuple[str, ...] = (),
+    article_id: str = "",
+) -> str:
+    """One row of the list: the band chip, the title as the link, the lesson, the meta line
+    (concept, feed, age), a quiet link to the reader, and in the console the verdict buttons."""
+    parts = [f"<span>{esc(m)}</span>" for m in meta if m]
+    if reader_url:
+        parts.append(f'<a href="{href(reader_url)}">{icons.icon("link")}BazQux</a>')
+    meta_html = "<span>·</span>".join(parts)
+    buttons = (
+        '<div class="verdicts">'
+        + "".join(
+            f'<button type="button" class="button quiet small" data-verdict="{esc(v)}" data-id="{esc(article_id)}">{esc(v)}</button>'
+            for v in verdicts
+        )
+        + "</div>"
+        if verdicts
+        else ""
+    )
+    return (
+        f'<li class="list-row" data-id="{esc(article_id)}">{band_chip(score, band)}'
+        f'<div class="title"><a href="{href(url)}">{esc(title)}</a></div>'
+        f'<div class="lesson">{esc(lesson)}</div><div class="meta">{meta_html}</div>{buttons}</li>'
+    )
+
+
+def _design_tiles() -> str:
+    samples = (
+        (
             "Judged today",
             "1,251",
             "+120 vs yesterday",
             "up-good",
-            sparkline([900, 1100, 950, 1300, 1200, 1131, 1251], "judged, last seven days"),
-        )
-        + tile(
-            "Cut today",
-            "402",
-            "−31 vs yesterday",
-            "down-good",
-            sparkline([500, 420, 460, 380, 410, 433, 402], "cut, last seven days"),
-        )
-        + tile(
-            "Read today",
-            "7",
-            "−2 vs yesterday",
-            "down-bad",
-            sparkline([5, 9, 4, 8, 6, 9, 7], "read, last seven days"),
-        )
-        + tile(
+            [900, 1100, 950, 1300, 1200, 1131, 1251],
+            "judged",
+        ),
+        ("Cut today", "402", "−31 vs yesterday", "down-good", [500, 420, 460, 380, 410, 433, 402], "cut"),
+        ("Read today", "7", "−2 vs yesterday", "down-bad", [5, 9, 4, 8, 6, 9, 7], "read"),
+        (
             "Spend today",
             "$0.78",
             "+$0.10 vs yesterday",
             "up-bad",
-            sparkline([0.6, 0.7, 0.5, 0.9, 0.8, 0.68, 0.78], "spend, last seven days"),
+            [0.6, 0.7, 0.5, 0.9, 0.8, 0.68, 0.78],
+            "spend",
+        ),
+    )
+    return (
+        '<div class="tiles">'
+        + "".join(
+            tile(label, value, delta, cls, sparkline(series, f"{what}, last seven days"))
+            for label, value, delta, cls, series, what in samples
         )
         + "</div>"
     )
+
+
+_STATUS_SAMPLES = (
+    ("Scoring only", "accent", None),
+    ("Cut below 35", "accent", None),
+    ("ok", "good", "check"),
+    ("budget reached", "warning", "warning"),
+    ("failed", "critical", "warning"),
+)
+
+
+def _design_components() -> str:
+    chips = " ".join(band_chip(s, b) for s, b in ((94, 90), (78, 70), (55, 50), (41, 30), (12, 0)))
+    status = " ".join(chip(t, k, i) for t, k, i in _STATUS_SAMPLES)
     buttons = (
         '<div class="levers">'
         + button("Run now", "run", "primary")
@@ -310,22 +358,16 @@ def _design_components() -> str:
         + button("Show as table", kind="quiet")
         + "</div>"
     )
-    the_meter = meter(240, 1200, "judging, 240 of 1,200")
-    bars = (
-        '<div class="legend"><span class="one"><i></i>read</span><span class="two"><i></i>starred</span></div>'
-        '<div class="bars">'
-        + "".join(
-            f'<span class="name">{b}</span><div class="pair"><div class="bar" style="width:{r}%"><span class="v">{r}%</span></div>'
-            f'<div class="bar second" style="width:{s}%"><span class="v">{s}%</span></div></div>'
-            for b, r, s in (
-                ("90 and up", 62, 20),
-                ("70 to 89", 41, 9),
-                ("50 to 69", 18, 2),
-                ("30 to 49", 6, 0),
-                ("under 30", 2, 0),
-            )
-        )
-        + "</div>"
+    the_bars = bars(
+        [
+            ("90 and up", 62, 20),
+            ("70 to 89", 41, 9),
+            ("50 to 69", 18, 2),
+            ("30 to 49", 6, 0),
+            ("under 30", 2, 0),
+        ],
+        "read",
+        "starred",
     )
     grid = grades_grid(
         [("90 and up", [14, 6, 1, 0]), ("70 to 89", [6, 9, 3, 1]), ("50 to 69", [1, 2, 7, 2])],
@@ -333,28 +375,29 @@ def _design_components() -> str:
         "Your grades against the judge's bands (a sample)",
     )
     row = (
-        '<ul class="list"><li class="list-row">'
-        + band_chip(92, 90)
-        + '<div class="title"><a href="#">Why liquid cooling retrofits cost more than greenfield builds</a></div>'
-        '<div class="lesson">Retrofits pay for manifolds, CDUs and leak detection in a live hall; greenfield sizes the plant once.</div>'
-        '<div class="meta"><span>data centres</span><span>·</span><span>The Register</span><span>·</span><span>2 h</span>'
-        f'<span>·</span><a href="#">{icons.icon("link")}BazQux</a></div>'
-        '<div class="verdicts">'
-        + "".join(
-            f'<button type="button" class="button quiet small">{g}</button>'
-            for g in ("great", "good", "meh", "bad")
+        '<ul class="list">'
+        + list_item(
+            92,
+            90,
+            "Why liquid cooling retrofits cost more than greenfield builds",
+            "https://example.org/retrofits",
+            "Retrofits pay for manifolds, CDUs and leak detection in a live hall; greenfield sizes the plant once.",
+            ["data centres", "The Register", "2 h"],
+            "https://bazqux.com/i/1",
+            ("great", "good", "meh", "bad"),
+            "1",
         )
-        + "</div></li></ul>"
+        + "</ul>"
     )
     return section(
         "components",
         "Components",
         "Chips, tiles, buttons, the meter, bars, the grid, a list row: each built from the tokens, each with its text alternative.",
         f"<h3>Chips</h3><p>{chips}</p><p style='margin-top: var(--space-2)'>{status}</p>"
-        f'<h3 style="margin-top: var(--space-4)">Tiles</h3>{tiles}'
+        f'<h3 style="margin-top: var(--space-4)">Tiles</h3>{_design_tiles()}'
         f'<h3 style="margin-top: var(--space-4)">Buttons</h3>{buttons}'
-        f'<h3 style="margin-top: var(--space-4)">The meter</h3>{the_meter}'
-        f'<h3 style="margin-top: var(--space-4)">Bars</h3>{bars}'
+        f'<h3 style="margin-top: var(--space-4)">The meter</h3>{meter(240, 1200, "judging, 240 of 1,200")}'
+        f'<h3 style="margin-top: var(--space-4)">Bars</h3>{the_bars}'
         f'<h3 style="margin-top: var(--space-4)">The grid</h3>{grid}'
         f'<h3 style="margin-top: var(--space-4)">A list row</h3>{row}',
     )
