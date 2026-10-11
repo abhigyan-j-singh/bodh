@@ -198,6 +198,7 @@ class _Run:
     protected: set[str] | None = None
     judge: Judge | None = None
     newly_scored: set[str] = field(default_factory=set)
+    budget_stop: bool = False  # the daily budget stopped the judging: this run cuts nothing
 
     @property
     def cfg(self) -> Config:
@@ -330,6 +331,7 @@ def _submit_batch(st: _Run, collected: int) -> None:
     sub = judge.submit_pending(st.run_id, limit=st.score_limit)
     res.submitted, res.dupes = sub["submitted"], sub["dupes"]
     if sub["budget_stop"]:
+        st.budget_stop = True
         res.notes.append("daily budget reached; the rest waits for tomorrow")
     if sub["waiting"]:
         res.notes.append(f"{sub['waiting']} articles wait for a fuller batch")
@@ -362,6 +364,7 @@ def _judge_now(st: _Run) -> None:
     res.scored += stats["scored"]
     res.dupes, res.pending = stats["dupes"], stats["pending_after"]
     if stats["budget_stop"]:
+        st.budget_stop = True
         res.notes.append("daily budget reached; unscored articles stay unread")
     if stats["failed_batches"]:
         res.notes.append(f"{stats['failed_batches']} batch(es) failed and stay pending")
@@ -384,6 +387,11 @@ def _autocut(st: _Run) -> None:
         res.notes.append("scoring-only mode: nothing cut")
         if res.feedback.get("prune_requested"):
             res.notes.append("prune requested by tag; it waits for a run with autocut on")
+        return
+    if st.budget_stop:
+        # a run the budget cut short is a half-judged run: the close calls could not have their
+        # reviews, so nothing is cut on its scores; tomorrow's runs cut as usual
+        res.notes.append("daily budget reached: nothing cut this run")
         return
     st.phase("autocut")
     if feedback.rescue_rate_week(conn) > cfg.safety.rescue_rate_week:

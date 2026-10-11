@@ -235,7 +235,7 @@ def canonical_url(url: str) -> str:
         [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _TRACKING.match(k)]
     )
     host = parts.netloc.lower().removeprefix("www.")
-    path = parts.path.rstrip("/") or "/"
+    path = parts.path.rstrip("/").strip() or "/"  # stripped so the result is its own canonical form
     return urlunsplit((parts.scheme.lower() or "https", host, path, query, ""))
 
 
