@@ -230,7 +230,7 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         out_dir = cfg.root / cfg.dashboard_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / LIVE_FILE
-        tmp = path.with_suffix(".json.tmp")
+        tmp = out_dir / f".{LIVE_FILE}.{os.getpid()}.tmp"  # a console child beside a run: two writers, two files
         tmp.write_text(json.dumps(snap, default=str), encoding="utf-8")
         os.replace(tmp, path)
         _last_live_write = now

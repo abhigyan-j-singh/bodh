@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -34,6 +36,7 @@ app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_
 log = logging.getLogger(__name__)
 
 EXIT_CONFIG = 2  # no usable config.yaml
+VERBOSE = typer.Option(False, "-v", "--verbose", help="Debug-level log lines in the terminal.")
 
 
 def _config() -> Config:
@@ -67,7 +70,8 @@ def version() -> None:
 
 
 @app.command()
-def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models.")) -> None:
+def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
+           verbose: bool = VERBOSE) -> None:
     """Connectivity and configuration checks. Run after every update. Exits 1 when a check
     fails, so an installer stops on a broken install."""
     cfg = _config()
@@ -178,7 +182,7 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
         limit: int | None = typer.Option(None, "--limit", help="Score (or submit) at most this many articles this run."),
         sync: bool = typer.Option(False, "--sync", help="Wait for every model call instead of using the Batches API."),
         workers: int | None = typer.Option(None, "--workers", help="Model calls in flight at once (--sync); default from config."),
-        verbose: bool = typer.Option(False, "-v")) -> None:
+        verbose: bool = VERBOSE) -> None:
     """One full pass. This is what launchd runs every 30 minutes."""
     ctx = _ctx(verbose)
     try:
@@ -202,14 +206,15 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
 
 @app.command()
 def score(limit: int | None = typer.Option(None, "--limit"), sync: bool = typer.Option(False, "--sync"),
-          workers: int | None = typer.Option(None, "--workers"), verbose: bool = typer.Option(False, "-v")) -> None:
+          workers: int | None = typer.Option(None, "--workers"), verbose: bool = VERBOSE) -> None:
     """Score and tag without cutting (the same as `run --shadow`)."""
     run(shadow=True, limit=limit, sync=sync, workers=workers, verbose=verbose)
 
 
 @app.command()
 def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
-             every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch.")) -> None:
+             every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
+             verbose: bool = VERBOSE) -> None:
     """How far the teacher has got: judged, in flight, pending, by folder; rate and ETA while a
     run is going; batches; spend; the log."""
     import time
@@ -243,7 +248,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
           budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars for the blast."),
           max_seconds: float | None = typer.Option(None, "--max-seconds", help="Start no new call after this long; run again to continue."),
           yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
+          verbose: bool = VERBOSE) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, full price. Scores and tags; cuts nothing. Stop it with Ctrl-C and run
     it again to continue. Watch it on the dashboard or with `triage progress --watch`."""
@@ -320,20 +325,48 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
           fraction: float | None = typer.Option(None, "--fraction", help="Cut this share of what is unread."),
           below: float | None = typer.Option(None, "--below", help="Cut everything scoring under this."),
           dry_run: bool = typer.Option(False, "--dry-run", help="Show the cut without making it."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
-    """Cut the worst of what is still unread. Default keeps the target (40). Run again to cut deeper."""
+          yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+          verbose: bool = VERBOSE) -> None:
+    """Cut the worst of what is still unread. Default keeps the target (40). Run again to cut
+    deeper. Shows what would go and asks first, unless --yes or not in a terminal."""
     if sum(x is not None for x in (keep, fraction, below)) > 1:
         _fail("choose one of --keep, --fraction, --below")
+    if keep is not None and keep < 0:
+        _fail("--keep must be 0 or more")
+    if fraction is not None and not 0 <= fraction <= 1:
+        _fail("--fraction is a share between 0 and 1")
     ctx = _ctx(verbose)
+    lock = ctx.cfg.root / ctx.cfg.data_dir
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "prune"), graceful_sigterm():
-            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=dry_run)
+        with run_lock(lock, "prune"):
+            _, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=True)
+        _show_prune(sel, dry_run=True)
+        if dry_run or not sel.cut:
+            return
+        # the question is asked with the lock released: a run must not be skipped over a prompt
+        if not yes and _interactive() and not typer.confirm(f"Cut these {len(sel.cut)} (undo reverses it)?"):
+            raise typer.Exit(0)
+        with run_lock(lock, "prune"), graceful_sigterm():
+            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
         return
     except KeyboardInterrupt:
         _fail("stopped; the next run finishes the tags and read marks, `triage undo` reverses the prune", 130)
         return
+    if n:
+        typer.echo(f"cut {n}; `triage undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
+
+
+def _interactive() -> bool:
+    """Someone is at the keyboard (so a question can be asked); a script or launchd is not."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _show_prune(sel: Any, dry_run: bool) -> None:
     unread_scored = len(sel.cut) + len(sel.survivors)
     verb = "would cut" if dry_run else "cut"
     typer.echo(f"{verb} {len(sel.cut)} of {unread_scored} scored unread articles; boundary "
@@ -343,12 +376,10 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         typer.echo("the best of what goes (this is the boundary you are choosing):")
         for r in best:
             typer.echo(f"  {r['score']:5.1f}  {(r['title'] or '')[:70]}  [{(r['feed_title'] or '')[:25]}]")
-    if not dry_run and n:
-        typer.echo("done; `triage undo` reverses it")
 
 
 @app.command()
-def undo(verbose: bool = typer.Option(False, "-v")) -> None:
+def undo(verbose: bool = VERBOSE) -> None:
     """Reverse the last cut: mark its articles unread again and remove the cut tag."""
     ctx = _ctx(verbose)
     try:
@@ -366,7 +397,7 @@ def undo(verbose: bool = typer.Option(False, "-v")) -> None:
 @app.command()
 def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
                yes: bool = typer.Option(False, "--yes"), dry_run: bool = typer.Option(False, "--dry-run"),
-               verbose: bool = typer.Option(False, "-v")) -> None:
+               verbose: bool = VERBOSE) -> None:
     """Clear the debt: every unread article older than the cutoff is marked read and tagged `cut`.
     Stars and protected articles are exempt. Reversible with `triage undo`."""
     ctx = _ctx(verbose)
@@ -386,7 +417,7 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
 
 
 @app.command()
-def status(verbose: bool = typer.Option(False, "-v")) -> None:
+def status(verbose: bool = VERBOSE) -> None:
     """The whole system at a glance: what is running, the schedule, the pile, spend, the last runs."""
     from . import control
 
@@ -396,7 +427,7 @@ def status(verbose: bool = typer.Option(False, "-v")) -> None:
 
 
 @app.command()
-def stop() -> None:
+def stop(verbose: bool = VERBOSE) -> None:
     """Stop the run, prune or blast in progress (the same as Ctrl-C in its terminal)."""
     from .ops import stop_process
 
@@ -406,7 +437,8 @@ def stop() -> None:
 
 @app.command()
 def schedule(action: str = typer.Argument("status", help="status, pause, resume or kick (a run now, via launchd)"),
-             job: str = typer.Option("all", "--job", help="run, weekly, report, panel or all")) -> None:
+             job: str = typer.Option("all", "--job", help="run, weekly, report, panel or all"),
+             verbose: bool = VERBOSE) -> None:
     """The launchd jobs: show them, pause them all (nothing fires until resume), resume, or kick a run."""
     from . import control
 
@@ -425,7 +457,7 @@ def schedule(action: str = typer.Argument("status", help="status, pause, resume 
 
 
 @app.command()
-def halt() -> None:
+def halt(verbose: bool = VERBOSE) -> None:
     """Stop everything: pause every launchd job, interrupt the run in progress, end any other
     triage process including the control room. `triage schedule resume` brings the jobs back."""
     from . import control
@@ -436,14 +468,14 @@ def halt() -> None:
 
 
 @app.command()
-def safety(action: str = typer.Argument("status", help="status, or reset")) -> None:
+def safety(action: str = typer.Argument("status", help="status, or reset"), verbose: bool = VERBOSE) -> None:
     """The breaker: a floor that would cut nearly everything newly judged trips it, and the
     floor then cuts nothing until `triage safety reset` says someone has looked."""
     from . import cut as cutmod
 
     if action not in ("status", "reset"):
         _fail("say status or reset")
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     tripped = cutmod.breaker_tripped(ctx.conn)
     given_up = store.given_up(ctx.conn)
     if action == "reset":
@@ -468,7 +500,7 @@ def safety(action: str = typer.Argument("status", help="status, or reset")) -> N
 
 
 @app.command()
-def enforce(state: str = typer.Argument(..., help="on or off")) -> None:
+def enforce(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
     """Flip the automatic floor: on = the floor cuts from the next run; off = shadow mode."""
     from . import control
 
@@ -484,7 +516,7 @@ def enforce(state: str = typer.Argument(..., help="on or off")) -> None:
 @app.command()
 def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("127.0.0.1", "--host",
           help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
+          verbose: bool = VERBOSE) -> None:
     """The control room: status, run, stop, schedule, prune, undo, blast, log, dashboard, in one page."""
     import traceback
 
@@ -502,9 +534,9 @@ def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("12
 
 
 @app.command()
-def why(article_id: str) -> None:
+def why(article_id: str, verbose: bool = VERBOSE) -> None:
     """One article's score, sub-scores, lesson and state."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     try:
         aid = normalize_item_id(article_id)
     except ValueError:
@@ -532,12 +564,16 @@ def why(article_id: str) -> None:
 
 
 @app.command()
-def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk")) -> None:
+def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE) -> None:
     """From the terminal, the same as tagging it great (star) or bad (junk) in BazQux."""
     if judgment not in ("star", "junk"):
         _fail("judgment must be star or junk")
-    ctx = _ctx()
-    aid = normalize_item_id(article_id)
+    ctx = _ctx(verbose)
+    try:
+        aid = normalize_item_id(article_id)
+    except ValueError:
+        _fail(f"not an article id: {article_id!r} (the long tag:google.com form or the signed number)")
+        return
     row = store.article(ctx.conn, aid)
     if row is None:
         _fail("unknown article; it must have been ingested first")
@@ -550,19 +586,19 @@ def label(article_id: str, judgment: str = typer.Argument(..., help="star or jun
 
 
 @app.command()
-def want(phrase: str) -> None:
+def want(phrase: str, verbose: bool = VERBOSE) -> None:
     """Tell the teacher now that you want more on a topic."""
-    _nudge("want", phrase)
+    _nudge("want", phrase, verbose)
 
 
 @app.command()
-def meh(phrase: str) -> None:
+def meh(phrase: str, verbose: bool = VERBOSE) -> None:
     """Tell the teacher now that you want less of a topic."""
-    _nudge("meh", phrase)
+    _nudge("meh", phrase, verbose)
 
 
-def _nudge(kind: str, phrase: str) -> None:
-    ctx = _ctx()
+def _nudge(kind: str, phrase: str, verbose: bool) -> None:
+    ctx = _ctx(verbose)
     try:
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "nudge"), graceful_sigterm():   # learner.md is written: not under a run
             typer.echo(learner.nudge(ctx.cfg, ctx.conn, kind, phrase))
@@ -571,9 +607,9 @@ def _nudge(kind: str, phrase: str) -> None:
 
 
 @app.command()
-def profile(action: str = typer.Argument("show", help="show or revert")) -> None:
+def profile(action: str = typer.Argument("show", help="show or revert"), verbose: bool = VERBOSE) -> None:
     """Show the learner model, or go back one version."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     if action == "revert":
         try:
             with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
@@ -589,7 +625,7 @@ def profile(action: str = typer.Argument("show", help="show or revert")) -> None
 
 
 @app.command()
-def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = typer.Option(False, "-v")) -> None:
+def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VERBOSE) -> None:
     """Sunday's job: rewrite the learner model (gated), write the weekly note, run the drift check."""
     ctx = _ctx(verbose)
     try:
@@ -654,17 +690,17 @@ def _drift_check(ctx: pipeline.Context, run_id: int) -> str:
 
 
 @app.command("report")
-def report_cmd(days: int = typer.Option(30, "--days")) -> None:
+def report_cmd(days: int = typer.Option(30, "--days"), verbose: bool = VERBOSE) -> None:
     """The monthly feed report with proposals; written to the dashboard folder."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     path = report.render(ctx.cfg, ctx.conn, days=days)
     typer.echo(path.read_text(encoding="utf-8"))
 
 
 @app.command("dashboard")
-def dashboard_cmd() -> None:
+def dashboard_cmd(verbose: bool = VERBOSE) -> None:
     """Regenerate the dashboard now."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     typer.echo(str(dashboard.render(ctx.cfg, ctx.conn)))
 
 
@@ -672,7 +708,7 @@ def dashboard_cmd() -> None:
 def replay(archive: Path = typer.Option(..., "--archive", help="FeedBrain's feedfilter.db"),
            golden: Path | None = typer.Option(None, "--golden", help="FeedBrain's evals/golden.jsonl"),
            sample: int = typer.Option(500, "--sample"), workers: int | None = typer.Option(None, "--workers"),
-           verbose: bool = typer.Option(False, "-v")) -> None:
+           verbose: bool = VERBOSE) -> None:
     """Judge a sample of FeedBrain's archive offline and check the eval gate. Touches nothing live."""
     from . import replay as replaymod
 

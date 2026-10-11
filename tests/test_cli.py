@@ -56,3 +56,42 @@ def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0 and result.output.rstrip().endswith("ok"), result.output
     assert "sk-ant-test" not in result.output and "pw" not in result.output.split("credentials")[1][:20]
+
+
+def test_prune_confirms_and_rejects_negative_keep(tmp_path, monkeypatch):
+    from conftest import FakeClient, seed_scored
+
+    from triage import pipeline, store
+    from triage.config import Config
+
+    root = _project(tmp_path, monkeypatch)
+    cfg = Config()
+    cfg.root = root
+    conn = store.connect(cfg.db_path)
+    seed_scored(conn, cfg, [dict(n=1, score=90), dict(n=2, score=20), dict(n=3, score=30)])
+    conn.close()
+    assert runner.invoke(app, ["prune", "--keep", "-1"]).exit_code == 1
+    assert runner.invoke(app, ["prune", "--fraction", "2"]).exit_code == 1
+    assert runner.invoke(app, ["prune", "--keep", "1", "--below", "5"]).exit_code == 1
+    client = FakeClient(unread=[])
+    monkeypatch.setattr(pipeline.Context, "client", property(lambda self: client))
+    # a dry run shows and cuts nothing
+    result = runner.invoke(app, ["prune", "--keep", "1", "--dry-run"])
+    assert result.exit_code == 0 and "would cut 2 of 3" in result.output and client.read == []
+    # in a terminal, a declined confirmation cuts nothing; `n` is the answer
+    monkeypatch.setattr("triage.cli._interactive", lambda: True)
+    result = runner.invoke(app, ["prune", "--keep", "1"], input="n\n")
+    assert result.exit_code == 0 and client.read == [] and "Cut these 2" in result.output
+    # --yes cuts without asking
+    result = runner.invoke(app, ["prune", "--keep", "1", "--yes"])
+    assert result.exit_code == 0 and len(client.read[0]) == 2 and "undo" in result.output
+
+
+def test_label_bad_id_and_verbose_everywhere(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["label", "not-an-id", "star"])
+    assert result.exit_code == 1 and "not an article id" in result.output
+    for args in (["status", "-v"], ["why", "1", "-v"], ["safety", "-v"], ["schedule", "status", "-v"],
+                 ["profile", "show", "-v"], ["report", "-v"], ["dashboard", "-v"], ["stop", "-v"]):
+        result = runner.invoke(app, args)
+        assert "No such option" not in result.output, (args, result.output)

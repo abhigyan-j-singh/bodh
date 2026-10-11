@@ -78,3 +78,18 @@ def test_proposal_thresholds(conn, cfg):
     conn.execute("UPDATE articles SET fetched_at = ?", (now,))
     row = {r["feed_title"]: r for r in dashboard.feeds(conn)}["Loud Feed"]
     assert report.proposal(row, cfg).startswith("move to Torrent")
+
+
+def test_links_only_http(conn, cfg):
+    ids = seed_scored(conn, cfg, [dict(n=1, score=95, url="javascript:alert(1)"), dict(n=2, score=90, url="https://ok.test/a")])
+    store.add_feedback(conn, ids[0], "read")
+    store.add_feedback(conn, ids[1], "read")
+    html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
+    assert "javascript:" not in html and "href='https://ok.test/a'" in html and "href='#'" in html
+
+
+def test_write_live_unique_tmp(conn, cfg):
+    from triage import progress
+
+    path = progress.write_live(cfg, conn)
+    assert path is not None and not list(path.parent.glob("*.tmp")) and path.name == "progress.json"
