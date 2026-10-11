@@ -28,12 +28,23 @@ class FakeItem:
     categories: list[str] = field(default_factory=list)
 
 
-def make_item(n: int, feed: str = "Feed A", title: str | None = None, url: str | None = None,
-              html: str = "<p>Some text about things.</p>", crawled_msec: int | None = None) -> FakeItem:
+def make_item(
+    n: int,
+    feed: str = "Feed A",
+    title: str | None = None,
+    url: str | None = None,
+    html: str = "<p>Some text about things.</p>",
+    crawled_msec: int | None = None,
+) -> FakeItem:
     return FakeItem(
-        id=short_to_long(n), short_id=n, feed_stream_id=f"feed/{feed}", feed_title=feed,
-        url=url or f"https://example.com/{feed.replace(' ', '')}/{n}", title=title or f"Article {n}",
-        html=html, crawled_msec=crawled_msec,
+        id=short_to_long(n),
+        short_id=n,
+        feed_stream_id=f"feed/{feed}",
+        feed_title=feed,
+        url=url or f"https://example.com/{feed.replace(' ', '')}/{n}",
+        title=title or f"Article {n}",
+        html=html,
+        crawled_msec=crawled_msec,
     )
 
 
@@ -91,14 +102,37 @@ def seed_scored(conn: sqlite3.Connection, cfg: Config, specs: Iterable[dict]) ->
     """specs: dicts with n, score, and optional folder, feed, concept, confidence, starred, protected, quality."""
     ids = []
     for s in specs:
-        item = make_item(s["n"], feed=s.get("feed", "Feed A"), title=s.get("title"), url=s.get("url"),
-                         crawled_msec=s.get("crawled_msec", 1_700_000_000_000 + s["n"]))
+        item = make_item(
+            s["n"],
+            feed=s.get("feed", "Feed A"),
+            title=s.get("title"),
+            url=s.get("url"),
+            crawled_msec=s.get("crawled_msec", 1_700_000_000_000 + s["n"]),
+        )
         store.upsert_article(conn, item, s.get("folder"))
-        verdict = {"quality": s.get("quality", int(s["score"])), "learning": int(s["score"]), "fit": int(s["score"]),
-                   "breadth": int(s["score"]), "relevance": int(s["score"]), "lesson": "l", "concept": s.get("concept", "c"),
-                   "kind": "reporting", "flags": [], "dupe_of": s.get("dupe_of"), "confidence": s.get("confidence", "high")}
-        store.record_score(conn, item.id, verdict, s["score"], s["score"], cfg.tags.band_for(s["score"]),
-                           cfg.judge.prompt_version, "test")
+        verdict = {
+            "quality": s.get("quality", int(s["score"])),
+            "learning": int(s["score"]),
+            "fit": int(s["score"]),
+            "breadth": int(s["score"]),
+            "relevance": int(s["score"]),
+            "lesson": "l",
+            "concept": s.get("concept", "c"),
+            "kind": "reporting",
+            "flags": [],
+            "dupe_of": s.get("dupe_of"),
+            "confidence": s.get("confidence", "high"),
+        }
+        store.record_score(
+            conn,
+            item.id,
+            verdict,
+            s["score"],
+            s["score"],
+            cfg.tags.band_for(s["score"]),
+            cfg.judge.prompt_version,
+            "test",
+        )
         flags = {}
         if s.get("starred"):
             flags["starred"] = 1
@@ -113,8 +147,12 @@ def seed_scored(conn: sqlite3.Connection, cfg: Config, specs: Iterable[dict]) ->
 class FakeClient:
     """Records every write; serves configured reads."""
 
-    def __init__(self, unread: list[str] | None = None, starred: list[str] | None = None,
-                 labels: dict[str, list[str]] | None = None) -> None:
+    def __init__(
+        self,
+        unread: list[str] | None = None,
+        starred: list[str] | None = None,
+        labels: dict[str, list[str]] | None = None,
+    ) -> None:
         self.unread = list(unread or [])
         self.starred = list(starred or [])
         self.labels = {k: list(v) for k, v in (labels or {}).items()}

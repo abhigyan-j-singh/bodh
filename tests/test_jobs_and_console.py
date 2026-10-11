@@ -17,7 +17,7 @@ from conftest import seed_scored
 from bodh import jobs, locks, store
 from bodh.console import Console
 
-FAKE = '''
+FAKE = """
 import sys, time
 args = sys.argv[1:]
 if args[:1] == ["run"]:
@@ -35,7 +35,7 @@ elif args[:1] == ["sleepy"]:
         print("interrupted", flush=True); sys.exit(130)
 else:
     print("fake bodh", *args)
-'''
+"""
 
 
 def _fake_command(tmp_path: Path) -> list[str]:
@@ -232,23 +232,37 @@ def test_set_autocut_every_yaml_spelling(cfg):
 
     path = cfg.root / "config.yaml"
     for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
-        path.write_text(f"timezone: UTC\n# enabled: not this one\nautocut:\n  max_per_run: 40\n  enabled: {spelling}\n"
-                        "  cutoff: 35\nsafety:\n  lowered_cutoff: 25\n", encoding="utf-8")
+        path.write_text(
+            f"timezone: UTC\n# enabled: not this one\nautocut:\n  max_per_run: 40\n  enabled: {spelling}\n"
+            "  cutoff: 35\nsafety:\n  lowered_cutoff: 25\n",
+            encoding="utf-8",
+        )
         for on in (False, True):
             ok, msg = jobs.set_autocut(cfg.root, on)
             assert ok, (spelling, on, msg)
             text = path.read_text(encoding="utf-8")
             loaded = load_config(cfg.root)
-            assert loaded.autocut.enabled is on and loaded.autocut.max_per_run == 40 and loaded.autocut.cutoff == 35
-            assert "# enabled: not this one" in text and "timezone: UTC" in text and "lowered_cutoff: 25" in text
+            assert (
+                loaded.autocut.enabled is on
+                and loaded.autocut.max_per_run == 40
+                and loaded.autocut.cutoff == 35
+            )
+            assert (
+                "# enabled: not this one" in text and "timezone: UTC" in text and "lowered_cutoff: 25" in text
+            )
             if "comment" in spelling:
                 assert "# a comment" in text
     # a key under another section is never the one edited (text level: the loader forbids it)
     text = "other:\n  enabled: true\nautocut:\n  cutoff: 40\n"
-    assert _edit_flag(text, "autocut", "enabled", False) == "other:\n  enabled: true\nautocut:\n  enabled: false\n  cutoff: 40\n"
+    assert (
+        _edit_flag(text, "autocut", "enabled", False)
+        == "other:\n  enabled: true\nautocut:\n  enabled: false\n  cutoff: 40\n"
+    )
     # no enabled line under autocut: added there, nothing else moves
-    path.write_text("autocut:\n  cutoff: 40\nfolders:\n  Comics: { protected: true }\nsafety:\n  lowered_cutoff: 25\n",
-                    encoding="utf-8")
+    path.write_text(
+        "autocut:\n  cutoff: 40\nfolders:\n  Comics: { protected: true }\nsafety:\n  lowered_cutoff: 25\n",
+        encoding="utf-8",
+    )
     ok, _ = jobs.set_autocut(cfg.root, True)
     assert ok and path.read_text(encoding="utf-8").startswith("autocut:\n  enabled: true\n  cutoff: 40\n")
     assert load_config(cfg.root).folders["Comics"].protected
@@ -287,8 +301,14 @@ def test_halt_stops_before_pausing(conn, cfg, monkeypatch):
     """Pausing launchd first sent SIGTERM to the running job with no handler: no run row, no
     heartbeat, a pid file left behind. The run is interrupted first, then the schedule."""
     order = []
-    monkeypatch.setattr(locks, "stop_process", lambda data_dir, wait=20.0: order.append("stop") or "nothing is running")
-    monkeypatch.setattr(jobs, "schedule", lambda action, which="all", data_dir=None: order.append(f"{action} {which}") or "paused")
+    monkeypatch.setattr(
+        locks, "stop_process", lambda data_dir, wait=20.0: order.append("stop") or "nothing is running"
+    )
+    monkeypatch.setattr(
+        jobs,
+        "schedule",
+        lambda action, which="all", data_dir=None: order.append(f"{action} {which}") or "paused",
+    )
     jobs.stop_all(cfg)
     assert order == ["stop", "pause all"]
 
@@ -298,7 +318,7 @@ def test_schedule_kick_refuses_while_running(conn, cfg):
     with locks.run_lock(data_dir, "blast"):
         msg = jobs.schedule("kick", "run", data_dir)
     assert msg.startswith("not kicked") and "blast" in msg
-    assert "not installed" in jobs.schedule("kick", "run", data_dir)   # idle: launchd (absent here) is asked
+    assert "not installed" in jobs.schedule("kick", "run", data_dir)  # idle: launchd (absent here) is asked
     assert "console is paused too" in jobs.schedule("pause", "all", data_dir)
 
 
@@ -314,22 +334,39 @@ def test_stray_processes_only_this_checkout(tmp_path):
         103: f"vim {tmp_path}/.venv/bin/bodh",
         104: "/usr/bin/python3 -m bodh.cli run",
         105: f"{tmp_path}/.venv/bin/bodh",
-        106: f"{tmp_path}/.venv/bin/python {tmp_path}/.venv/bin/bodh progress --watch",   # as the shebang runs it
+        106: f"{tmp_path}/.venv/bin/python {tmp_path}/.venv/bin/bodh progress --watch",  # as the shebang runs it
         107: "/Users/other/bodh/.venv/bin/python /Users/other/bodh/.venv/bin/bodh panel",
     }
     assert {pid for pid, cmd in lines.items() if pattern.search(cmd)} == {101, 104, 105, 106}
 
 
 def test_next_run_uses_last_timer_run(conn, cfg, monkeypatch):
-    monkeypatch.setattr(jobs, "job_state", lambda label: {"label": label, "installed": True, "loaded": True,
-                                                              "state": "waiting", "last_exit": 0, "pid": None,
-                                                              "mode": "agent", "plist": "x", "interval": 1800})
+    monkeypatch.setattr(
+        jobs,
+        "job_state",
+        lambda label: {
+            "label": label,
+            "installed": True,
+            "loaded": True,
+            "state": "waiting",
+            "last_exit": 0,
+            "pid": None,
+            "mode": "agent",
+            "plist": "x",
+            "interval": 1800,
+        },
+    )
     run_id = store.begin_run(conn, "run")
-    conn.execute("UPDATE runs SET started_at = ? WHERE id = ?", (store.days_ago_iso(0).replace("+00:00", "+00:00"), run_id))
+    conn.execute(
+        "UPDATE runs SET started_at = ? WHERE id = ?",
+        (store.days_ago_iso(0).replace("+00:00", "+00:00"), run_id),
+    )
     store.finish_run(conn, run_id, True, summary="run")
-    conn.execute("UPDATE runs SET started_at = ? WHERE id = ?",
-                 ((store.utcnow() - __import__("datetime").timedelta(minutes=20)).isoformat(), run_id))
-    prune_id = store.begin_run(conn, "prune")           # a prune just now must not reset the countdown
+    conn.execute(
+        "UPDATE runs SET started_at = ? WHERE id = ?",
+        ((store.utcnow() - __import__("datetime").timedelta(minutes=20)).isoformat(), run_id),
+    )
+    prune_id = store.begin_run(conn, "prune")  # a prune just now must not reset the countdown
     store.finish_run(conn, prune_id, True, summary="prune")
     st = jobs.status(cfg, conn)
     assert st["next_run_in"] is not None and 500 < st["next_run_in"] < 700
@@ -360,8 +397,12 @@ def test_console_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
             raise AssertionError(host)
         except urllib.error.HTTPError as exc:
             assert exc.code == 403
-        req = urllib.request.Request(base + "/api/action", data=b"{}", method="POST",
-                                     headers={"Host": host, "X-Bodh": "panel", "Content-Type": "application/json"})
+        req = urllib.request.Request(
+            base + "/api/action",
+            data=b"{}",
+            method="POST",
+            headers={"Host": host, "X-Bodh": "panel", "Content-Type": "application/json"},
+        )
         try:
             urllib.request.urlopen(req, timeout=10)
             raise AssertionError(host)
@@ -370,7 +411,11 @@ def test_console_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
     for host in ("127.0.0.1", "localhost:1234", "mac.tail1234.ts.net", "[::1]:80"):
         req = urllib.request.Request(base + "/api/status", headers={"Host": host})
         assert urllib.request.urlopen(req, timeout=10).status == 200, host
-    assert panel.host_allowed("[::1]") and not panel.host_allowed("") and not panel.host_allowed("ts.net.evil.com")
+    assert (
+        panel.host_allowed("[::1]")
+        and not panel.host_allowed("")
+        and not panel.host_allowed("ts.net.evil.com")
+    )
     # the page carries the configured target as the prune default
     page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
     assert "id='keep' type='number' value='33'" in page
@@ -385,8 +430,9 @@ def test_installer_rejects_unknown_mode_and_plists_parse():
     import plistlib
 
     root = Path(__file__).resolve().parents[1]
-    res = subprocess.run(["bash", str(root / "install-launchd.sh"), "--bogus"], capture_output=True, text=True,
-                         cwd=str(root))
+    res = subprocess.run(
+        ["bash", str(root / "install-launchd.sh"), "--bogus"], capture_output=True, text=True, cwd=str(root)
+    )
     assert res.returncode == 2 and "usage" in res.stdout
     for label in jobs.JOBS.values():
         with (root / "launchd" / f"{label}.plist").open("rb") as fh:
@@ -395,5 +441,14 @@ def test_installer_rejects_unknown_mode_and_plists_parse():
         if label.endswith(".console"):
             assert plist["KeepAlive"] is True and plist["ThrottleInterval"] == 60
     ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
-    for personal in (".env", "/config.yaml", "data/", "profile/", "dashboard/", "/prompts/", ".coverage", ".mypy_cache/"):
+    for personal in (
+        ".env",
+        "/config.yaml",
+        "data/",
+        "profile/",
+        "dashboard/",
+        "/prompts/",
+        ".coverage",
+        ".mypy_cache/",
+    ):
         assert personal in ignored, personal

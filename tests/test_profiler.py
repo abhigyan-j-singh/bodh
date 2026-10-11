@@ -26,9 +26,11 @@ def test_git_commit_stays_inside_profile_dir(tmp_path):
     (profile / "learned.md").write_text("## What the student has been learning\nx\n", encoding="utf-8")
     assert profiler.git_commit(profile, "learner v1: test")
     assert (profile / ".git").is_dir()
-    assert _git(parent, "rev-parse", "HEAD") == head                      # the parent did not move
-    assert "uncommitted.txt" in _git(parent, "status", "--porcelain")      # and was not staged
-    assert _git(profile, "log", "--oneline").count("\n") == 0 and "learner v1" in _git(profile, "log", "--oneline")
+    assert _git(parent, "rev-parse", "HEAD") == head  # the parent did not move
+    assert "uncommitted.txt" in _git(parent, "status", "--porcelain")  # and was not staged
+    assert _git(profile, "log", "--oneline").count("\n") == 0 and "learner v1" in _git(
+        profile, "log", "--oneline"
+    )
     assert _git(profile, "ls-files") == "learned.md"
     # nothing changed: still fine, no warning worth a failure
     assert profiler.git_commit(profile, "learner v1 again")
@@ -50,7 +52,11 @@ def test_git_commit_without_identity_logs_and_returns_false(tmp_path, monkeypatc
     assert profiler.git_commit(profile, "v1")
     assert "bodh@localhost" in _git(profile, "log", "-1", "--format=%ae")
     # git itself failing is a warning with git's words, and False
-    monkeypatch.setattr(profiler, "GIT_IDENTITY", ["-c", "core.hooksPath=/nonexistent", "-c", "user.name=", "-c", "user.email="])
+    monkeypatch.setattr(
+        profiler,
+        "GIT_IDENTITY",
+        ["-c", "core.hooksPath=/nonexistent", "-c", "user.name=", "-c", "user.email="],
+    )
     (profile / "learned.md").write_text("y\n", encoding="utf-8")
     with caplog.at_level(logging.WARNING):
         ok = profiler.git_commit(profile, "v2")
@@ -82,7 +88,9 @@ def test_gate_check_never_writes_the_learner_file(cfg, conn):
     import pytest
 
     with pytest.raises(JudgeError):
-        profiler.gate_check(cfg, ExplodingLLM(), conn, None, "## What the student has been learning\nproposed\n")  # type: ignore[arg-type]
+        profiler.gate_check(
+            cfg, ExplodingLLM(), conn, None, "## What the student has been learning\nproposed\n"
+        )  # type: ignore[arg-type]
     assert path.read_text(encoding="utf-8") == before and path.stat().st_mtime_ns == mtime
 
 
@@ -106,7 +114,9 @@ def test_gate_judges_with_the_proposed_model(cfg, conn):
 
     ids = seed_scored(conn, cfg, [dict(n=1, score=90)])
     store.add_feedback(conn, ids[0], "star")
-    result = profiler.gate_check(cfg, RecordingLLM(), conn, None, "## What the student has been learning\nPROPOSED TEXT\n")  # type: ignore[arg-type]
+    result = profiler.gate_check(
+        cfg, RecordingLLM(), conn, None, "## What the student has been learning\nPROPOSED TEXT\n"
+    )  # type: ignore[arg-type]
     assert result["passed"] and "PROPOSED TEXT" in seen["system"]
     assert "# Learner model\n## What the student has been learning\nnothing" not in seen["system"]
 
@@ -114,9 +124,15 @@ def test_gate_judges_with_the_proposed_model(cfg, conn):
 def test_repeats_seed():
     seed = "# Seed\n\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n\nAlready knows well: coral reef ecology.\n"
     assert profiler.repeats_seed("## What\n# Seed\n", seed)
-    assert profiler.repeats_seed("## What\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n", seed)
-    assert not profiler.repeats_seed("## What\nThe student already knows well that reefs are in trouble.\n", seed)
-    assert not profiler.repeats_seed("## What\nAlready knows well: coral reef ecology.\n", seed)  # a short line is not proof
+    assert profiler.repeats_seed(
+        "## What\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n", seed
+    )
+    assert not profiler.repeats_seed(
+        "## What\nThe student already knows well that reefs are in trouble.\n", seed
+    )
+    assert not profiler.repeats_seed(
+        "## What\nAlready knows well: coral reef ecology.\n", seed
+    )  # a short line is not proof
 
 
 def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
@@ -125,15 +141,19 @@ def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
     from bodh import store
 
     (cfg.root / "profile" / "about.md").write_text(
-        "# About the student\n\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n", encoding="utf-8")
+        "# About the student\n\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n",
+        encoding="utf-8",
+    )
     ids = seed_scored(conn, cfg, [dict(n=i, score=90) for i in range(1, 7)])
     for i in ids:
         store.add_feedback(conn, i, "star")
 
     class CopyingLLM:
         def complete(self, *a, **k):
-            return ("## What the student has been learning\nStudent: a marine biologist who reads to decide where the "
-                    "lab's next decade goes.\n\n## Expansion topics for next week\n- x\n")
+            return (
+                "## What the student has been learning\nStudent: a marine biologist who reads to decide where the "
+                "lab's next decade goes.\n\n## Expansion topics for next week\n- x\n"
+            )
 
     result = profiler.weekly_rewrite(cfg, CopyingLLM(), conn, None)  # type: ignore[arg-type]
     assert not result["applied"] and "repeated the student's own description" in result["reason"]

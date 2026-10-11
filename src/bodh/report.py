@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .dashboard import feeds
 
-MIN_VOLUME_FOR_PROPOSAL = 40   # articles in the window, and judged ones: a feed nobody judged proposes nothing
+MIN_VOLUME_FOR_PROPOSAL = 40  # articles in the window, and judged ones: a feed nobody judged proposes nothing
 
 
 def strictest_folder(cfg: Config) -> str | None:
@@ -48,9 +48,12 @@ def proposal(row: sqlite3.Row, cfg: Config) -> str:
 def render(cfg: Config, conn: sqlite3.Connection, days: int = 30) -> Path:
     tz = ZoneInfo(cfg.timezone)
     rows = feeds(conn, days=days, limit=200)
-    lines = [f"# Feed report · {datetime.now(tz).strftime('%d %b %Y')} · last {days} days", "",
-             "| Feed | Folder | Articles | Mean score | Cut | Read | Starred | Proposal |",
-             "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |"]
+    lines = [
+        f"# Feed report · {datetime.now(tz).strftime('%d %b %Y')} · last {days} days",
+        "",
+        "| Feed | Folder | Articles | Mean score | Cut | Read | Starred | Proposal |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
     proposals = 0
     for r in rows:
         p = proposal(r, cfg)
@@ -60,8 +63,11 @@ def render(cfg: Config, conn: sqlite3.Connection, days: int = 30) -> Path:
             f"| {r['feed_title'][:40]} | {r['folder'] or ''} | {r['n']} | {mean} | {(r['cut_share'] or 0) * 100:.0f}% | "
             f"{(r['read_share'] or 0) * 100:.0f}% | {(r['star_share'] or 0) * 100:.0f}% | {p} |"
         )
-    lines += ["", f"{proposals} proposals. Act on them in BazQux (unsubscribe, or drag the feed into a folder); "
-                  "this report never changes anything itself."]
+    lines += [
+        "",
+        f"{proposals} proposals. Act on them in BazQux (unsubscribe, or drag the feed into a folder); "
+        "this report never changes anything itself.",
+    ]
     out_dir = cfg.root / cfg.dashboard_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "feed-report.md"

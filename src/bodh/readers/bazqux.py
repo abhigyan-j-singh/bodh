@@ -35,7 +35,7 @@ MIN_REQUEST_INTERVAL = 0.5
 MAX_RETRIES = 4
 BACKOFF_BASE = 1.5
 IDS_PAGE = 1000
-MAX_PAGES = 500         # 500,000 items: more than any reading list; a continuation that loops stops here
+MAX_PAGES = 500  # 500,000 items: more than any reading list; a continuation that loops stops here
 CONTENTS_BATCH = 200
 EDIT_BATCH = 500
 
@@ -250,7 +250,9 @@ class BazQuxClient:
             if continuation in seen:
                 # a shorter list than the truth would read as "everything else was read" (or
                 # "nothing else is protected"): a stream that loops is an error, not an answer
-                raise BazQuxError(f"{stream}: the continuation {continuation!r} repeated after {len(out)} items")
+                raise BazQuxError(
+                    f"{stream}: the continuation {continuation!r} repeated after {len(out)} items"
+                )
             seen.add(continuation)
         raise BazQuxError(f"{stream}: no end after {MAX_PAGES} pages ({len(out)} items)")
 

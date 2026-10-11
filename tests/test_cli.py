@@ -17,7 +17,14 @@ def test_refuses_without_config(tmp_path, monkeypatch):
     monkeypatch.delenv("TRIAGE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))  # a real ~/bodh on this machine must not answer
     monkeypatch.chdir(tmp_path)
-    for args in (["status"], ["run", "--shadow"], ["prune", "--dry-run"], ["doctor"], ["enforce", "off"], ["stop"]):
+    for args in (
+        ["status"],
+        ["run", "--shadow"],
+        ["prune", "--dry-run"],
+        ["doctor"],
+        ["enforce", "off"],
+        ["stop"],
+    ):
         result = runner.invoke(app, args)
         assert result.exit_code == 2, (args, result.output)
         assert "no config.yaml" in result.output
@@ -28,7 +35,9 @@ def test_refuses_without_config(tmp_path, monkeypatch):
 def _project(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("timezone: UTC\n", encoding="utf-8")
     (tmp_path / "profile").mkdir()
-    (tmp_path / "profile" / "learned.md").write_text("## What the student has been learning\nx\n", encoding="utf-8")
+    (tmp_path / "profile" / "learned.md").write_text(
+        "## What the student has been learning\nx\n", encoding="utf-8"
+    )
     monkeypatch.setenv("BODH_HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -55,12 +64,16 @@ def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1 and "MISSING" in result.output and "problem(s)" in result.output
-    (root / ".env").write_text("BAZQUX_EMAIL=a@b.c\nBAZQUX_PASSWORD=pw\nANTHROPIC_API_KEY=sk-ant-test\n", encoding="utf-8")
-    example = (Path(__file__).resolve().parents[1] / "profile.example" / "about.md").read_text(encoding="utf-8")
+    (root / ".env").write_text(
+        "BAZQUX_EMAIL=a@b.c\nBAZQUX_PASSWORD=pw\nANTHROPIC_API_KEY=sk-ant-test\n", encoding="utf-8"
+    )
+    example = (Path(__file__).resolve().parents[1] / "profile.example" / "about.md").read_text(
+        encoding="utf-8"
+    )
     (root / "profile" / "about.md").write_text(example, encoding="utf-8")  # what ./install.sh leaves behind
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1 and "STILL THE EXAMPLE" in result.output, result.output
-    for args in (["run", "--shadow"], ["blast", "--yes"]):   # refused before any network, exit code 2
+    for args in (["run", "--shadow"], ["blast", "--yes"]):  # refused before any network, exit code 2
         result = runner.invoke(app, args)
         assert result.exit_code == 2 and "still the worked example" in result.output, (args, result.output)
     (root / "profile" / "about.md").write_text("# About the student\nStudent: test.\n", encoding="utf-8")
@@ -102,8 +115,16 @@ def test_label_bad_id_and_verbose_everywhere(tmp_path, monkeypatch):
     _project(tmp_path, monkeypatch)
     result = runner.invoke(app, ["label", "not-an-id", "star"])
     assert result.exit_code == 1 and "not an article id" in result.output
-    for args in (["status", "-v"], ["why", "1", "-v"], ["safety", "-v"], ["schedule", "status", "-v"],
-                 ["profile", "show", "-v"], ["report", "-v"], ["dashboard", "-v"], ["stop", "-v"]):
+    for args in (
+        ["status", "-v"],
+        ["why", "1", "-v"],
+        ["safety", "-v"],
+        ["schedule", "status", "-v"],
+        ["profile", "show", "-v"],
+        ["report", "-v"],
+        ["dashboard", "-v"],
+        ["stop", "-v"],
+    ):
         result = runner.invoke(app, args)
         assert "No such option" not in result.output, (args, result.output)
 
@@ -136,7 +157,9 @@ def test_mark_records_verdicts_steers_and_rescues(tmp_path, monkeypatch):
     assert runner.invoke(app, ["mark", "1", "maybe"]).exit_code == 1
     assert "not an article id" in runner.invoke(app, ["mark", "not-an-id", "great"]).output
     conn = store.connect(cfg.db_path)
-    assert store.verdicts(conn, store.GRADES) == {ids[0]: "great"} and store.verdicts(conn, store.LEVELS) == {ids[0]: "heavy"}
+    assert store.verdicts(conn, store.GRADES) == {ids[0]: "great"} and store.verdicts(conn, store.LEVELS) == {
+        ids[0]: "heavy"
+    }
     assert store.verdicts(conn, store.STEERS) == {ids[0]: "more"}
     assert "wants more on reefs" in (root / "profile" / "learned.md").read_text(encoding="utf-8")
     row = store.article(conn, ids[1])

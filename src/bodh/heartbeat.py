@@ -8,6 +8,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
+
 def _host_only(url: str) -> str:
     """A ping URL without its secret path (the check's UUID), for log lines."""
     from urllib.parse import urlsplit
@@ -17,6 +18,7 @@ def _host_only(url: str) -> str:
         return f"{parts.scheme}://{parts.netloc}/…"
     except ValueError:
         return "<heartbeat url>"
+
 
 class Heartbeat:
     """healthchecks.io: a ping on success (with the run summary), /fail on failure.

@@ -22,15 +22,23 @@ def test_pyproject_metadata_is_complete():
     data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = data["project"]
     assert project["name"] == "bodh"
-    assert "version" in project["dynamic"] and data["tool"]["hatch"]["version"]["path"] == "src/bodh/__init__.py"
+    assert (
+        "version" in project["dynamic"] and data["tool"]["hatch"]["version"]["path"] == "src/bodh/__init__.py"
+    )
     assert re.fullmatch(r"\d+\.\d+\.\d+(\.dev\d+)?", __version__)
-    assert project["license"] == "MIT" and (ROOT / "LICENSE").read_text(encoding="utf-8").startswith("MIT License")
+    assert project["license"] == "MIT" and (ROOT / "LICENSE").read_text(encoding="utf-8").startswith(
+        "MIT License"
+    )
     assert project["authors"] == [{"name": "Abhigyan J Singh"}]
     assert project["requires-python"] == ">=3.10"
     for key in ("Homepage", "Repository", "Issues", "Changelog"):
         assert project["urls"][key].startswith("https://github.com/abhigyan-j-singh/bodh")
     assert project["scripts"] == {"bodh": "bodh.cli:app", "triage": "bodh.cli:triage_alias"}
     assert "rss" in project["keywords"] and "bazqux" in project["keywords"]
-    for c in ("Programming Language :: Python :: 3.10", "Operating System :: MacOS",
-              "Operating System :: POSIX :: Linux", "Operating System :: Microsoft :: Windows"):
+    for c in (
+        "Programming Language :: Python :: 3.10",
+        "Operating System :: MacOS",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
+    ):
         assert c in project["classifiers"], c

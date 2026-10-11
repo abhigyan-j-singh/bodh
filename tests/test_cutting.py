@@ -18,13 +18,26 @@ def test_prune_keep_with_concept_cap(conn, cfg):
     # the cap lets history (70) in ahead of the third gpu article (87), a gap inside one band;
     # cooling (60) cannot displace an 87, so the cap yields and the 87 takes the last seat
     assert survivors == {("gpus", 89.0), ("gpus", 88.0), ("gpus", 87.0), ("history", 70.0)}
-    assert {(r["concept"], r["score"]) for r in sel.cut} == {("gpus", 86.0), ("gpus", 85.0), ("cooling", 60.0)}
+    assert {(r["concept"], r["score"]) for r in sel.cut} == {
+        ("gpus", 86.0),
+        ("gpus", 85.0),
+        ("cooling", 60.0),
+    }
     assert sel.boundary == 70.0
 
 
 def test_prune_fraction_and_below_and_protection(conn, cfg):
-    ids = seed_scored(conn, cfg, [dict(n=1, score=10, starred=True), dict(n=2, score=20), dict(n=3, score=50),
-                                  dict(n=4, score=80, protected=True), dict(n=5, score=90)])
+    ids = seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=10, starred=True),
+            dict(n=2, score=20),
+            dict(n=3, score=50),
+            dict(n=4, score=80, protected=True),
+            dict(n=5, score=90),
+        ],
+    )
     sel = cutting.select_prune(conn, cfg, fraction=0.5)
     assert {r["id"] for r in sel.cut} == {ids[1], ids[2]}  # 3 movable, ceil(1.5)=2 lowest
     sel = cutting.select_prune(conn, cfg, below=60)
@@ -38,14 +51,18 @@ def test_floor_respects_folders_confidence_and_cap(conn, cfg):
     cfg.folders = {"Always read": FolderPolicy(protected=True), "Firehose": FolderPolicy(cutoff=70)}
     cfg.autocut.max_per_run = 2
     cfg.autocut.new_ground_share = 0.0
-    ids = seed_scored(conn, cfg, [
-        dict(n=1, score=10),                                   # cut
-        dict(n=2, score=20, confidence="low"),                 # left alone
-        dict(n=3, score=30, folder="Always read"),             # protected folder
-        dict(n=4, score=60, folder="Firehose"),                # below 70 -> cut
-        dict(n=5, score=15),                                   # cut, but capped out (lowest two go first)
-        dict(n=6, score=50),                                   # stays
-    ])
+    ids = seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=10),  # cut
+            dict(n=2, score=20, confidence="low"),  # left alone
+            dict(n=3, score=30, folder="Always read"),  # protected folder
+            dict(n=4, score=60, folder="Firehose"),  # below 70 -> cut
+            dict(n=5, score=15),  # cut, but capped out (lowest two go first)
+            dict(n=6, score=50),  # stays
+        ],
+    )
     sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None)
     cut_ids = sel.cut_ids
     assert ids[0] in cut_ids and ids[4] in cut_ids and len(cut_ids) == 2
@@ -63,12 +80,16 @@ def test_floor_breaker_trips_on_mass_cut(conn, cfg):
 
 def test_floor_exploration_reserves_novel_quality(conn, cfg):
     cfg.autocut.new_ground_share = 0.5
-    ids = seed_scored(conn, cfg, [
-        dict(n=1, score=30, quality=70, concept="unknown field"),   # novel, decent quality -> reserved
-        dict(n=2, score=30, quality=20, concept="junk topic"),      # low quality -> cut
-        dict(n=3, score=80, concept="gpus"),                        # survivor
-        dict(n=4, score=80, concept="gpus"),
-    ])
+    ids = seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=30, quality=70, concept="unknown field"),  # novel, decent quality -> reserved
+            dict(n=2, score=30, quality=20, concept="junk topic"),  # low quality -> cut
+            dict(n=3, score=80, concept="gpus"),  # survivor
+            dict(n=4, score=80, concept="gpus"),
+        ],
+    )
     sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None, newly_scored=set(ids))
     assert ids[0] not in sel.cut_ids and ids[1] in sel.cut_ids
     assert sel.reserved_for_new_ground == 1
@@ -107,7 +128,7 @@ def test_rescued_article_survives_floor_and_prune(conn, cfg):
     ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12), dict(n=3, score=90)])
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[:1], run_id, "floor")
-    store.restore_unread(conn, ids[:1], rescued=True)   # the student marked it unread again
+    store.restore_unread(conn, ids[:1], rescued=True)  # the student marked it unread again
     sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None)
     assert sel.cut_ids == [ids[1]]
     sel = cutting.select_prune(conn, cfg)
@@ -121,10 +142,10 @@ def test_undo_is_not_reversed_by_the_next_floor(conn, cfg):
     run_id = store.begin_run(conn, "run")
     cutting.apply_cut(client, conn, cfg, ids, run_id, "floor")
     assert cutting.undo(client, conn, cfg, run_id) == 2
-    assert cutting.select_autocut(conn, cfg, judge=None, run_id=None).cut_ids == []   # not cut again
-    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0        # an undo is not a rescue
+    assert cutting.select_autocut(conn, cfg, judge=None, run_id=None).cut_ids == []  # not cut again
+    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0  # an undo is not a rescue
     cfg.prune.keep = 0
-    assert set(cutting.select_prune(conn, cfg).cut_ids) == set(ids)                  # a prune may still take them
+    assert set(cutting.select_prune(conn, cfg).cut_ids) == set(ids)  # a prune may still take them
 
 
 def test_breaker_blocks_the_floor_until_cleared(conn, cfg):
@@ -164,8 +185,8 @@ def test_finish_pending_cuts_respects_a_new_star(conn, cfg):
     ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12), dict(n=3, score=14)])
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids, run_id, "floor")
-    store.set_flags(conn, ids[:1], starred=1)        # starred since
-    store.set_flags(conn, ids[1:2], protected=1)     # moved into Must read since
+    store.set_flags(conn, ids[:1], starred=1)  # starred since
+    store.set_flags(conn, ids[1:2], protected=1)  # moved into Must read since
     client = FakeClient()
     untagged, unmarked = cutting.finish_pending_cuts(client, conn, cfg)
     assert (untagged, unmarked) == (1, 1) and client.read == [[ids[2]]]

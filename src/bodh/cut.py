@@ -5,5 +5,8 @@ import warnings
 
 from .cutting import *  # noqa: E402,F401,F403
 
-warnings.warn("bodh.cut is bodh.cutting since October 2026; the old name goes away in the next release",
-              DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "bodh.cut is bodh.cutting since October 2026; the old name goes away in the next release",
+    DeprecationWarning,
+    stacklevel=2,
+)

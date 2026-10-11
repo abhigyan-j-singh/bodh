@@ -23,8 +23,15 @@ class FakeBazQux(FakeClient):
         self.folders = folders or {}
 
     def subscriptions(self):
-        return [Subscription(stream_id=i.feed_stream_id, title=i.feed_title, html_url="", folders=[self.folders[i.feed_title]] if i.feed_title in self.folders else [])
-                for i in self.items.values()]
+        return [
+            Subscription(
+                stream_id=i.feed_stream_id,
+                title=i.feed_title,
+                html_url="",
+                folders=[self.folders[i.feed_title]] if i.feed_title in self.folders else [],
+            )
+            for i in self.items.values()
+        ]
 
     def contents(self, ids):
         found = [self.items[i] for i in ids if i in self.items]
@@ -105,7 +112,7 @@ class FakeLLM:
         self.calls = []
         self.batches: dict[str, list[dict]] = {}
         self.status: dict[str, str] = {}
-        self.fail_ids: set[str] = set()   # custom_ids whose result is an error
+        self.fail_ids: set[str] = set()  # custom_ids whose result is an error
         self.recorded = []
 
     # budget
@@ -128,21 +135,40 @@ class FakeLLM:
         for m in re.finditer(r"\[(\d+)\]\n.*?\ntitle: (.*?)\n", user_text, re.S):
             n, title = int(m.group(1)), m.group(2)
             s = score_for(title, purpose)
-            out.append(Verdict(n=n, quality=s, learning=s, fit=s, breadth=s, relevance=s, lesson=f"lesson {n}",
-                               concept="gold things" if "gold" in title.lower() else f"topic {n % 3}", kind="reporting",
-                               flags=[], dupe_of=None, confidence="high"))
+            out.append(
+                Verdict(
+                    n=n,
+                    quality=s,
+                    learning=s,
+                    fit=s,
+                    breadth=s,
+                    relevance=s,
+                    lesson=f"lesson {n}",
+                    concept="gold things" if "gold" in title.lower() else f"topic {n % 3}",
+                    kind="reporting",
+                    flags=[],
+                    dupe_of=None,
+                    confidence="high",
+                )
+            )
         return out
 
     def complete(self, model, system_text, user_text, run_id, purpose, max_tokens=2000):
         self.calls.append((model, purpose))
-        return ("## What the student has been learning\nGold things.\n\n## Moving past\nnothing\n\n"
-                "## Concepts covered, last 90 days\ngold things\n\n## Expansion topics for next week\n- silver things: adjacent\n\n"
-                "## Notes to the teacher\nbe kind")
+        return (
+            "## What the student has been learning\nGold things.\n\n## Moving past\nnothing\n\n"
+            "## Concepts covered, last 90 days\ngold things\n\n## Expansion topics for next week\n- silver things: adjacent\n\n"
+            "## Notes to the teacher\nbe kind"
+        )
 
     # batches
     def request_params(self, model, system_text, user_text, ttl=None):
-        return {"model": model, "max_tokens": 8000, "system": [{"type": "text", "text": system_text}],
-                "messages": [{"role": "user", "content": user_text}]}
+        return {
+            "model": model,
+            "max_tokens": 8000,
+            "system": [{"type": "text", "text": system_text}],
+            "messages": [{"role": "user", "content": user_text}],
+        }
 
     def submit_batch(self, requests):
         bid = f"msgbatch_{len(self.batches) + 1}"
@@ -166,9 +192,22 @@ class FakeLLM:
                 continue
             purpose = "second_look" if cid.startswith("s") else "teacher"
             verdicts = self._verdicts(req["params"]["messages"][0]["content"], purpose)
-            compact = [{"n": v.n, "s": [v.quality, v.learning, v.fit, v.breadth, v.relevance], "lesson": v.lesson,
-                        "concept": v.concept, "kind": "news", "flags": [], "dupe": None, "conf": "high"} for v in verdicts]
-            out.append(FakeResponse(cid, FakeSucceeded(FakeMessage([FakeText(json.dumps({"judgments": compact}))]))))
+            compact = [
+                {
+                    "n": v.n,
+                    "s": [v.quality, v.learning, v.fit, v.breadth, v.relevance],
+                    "lesson": v.lesson,
+                    "concept": v.concept,
+                    "kind": "news",
+                    "flags": [],
+                    "dupe": None,
+                    "conf": "high",
+                }
+                for v in verdicts
+            ]
+            out.append(
+                FakeResponse(cid, FakeSucceeded(FakeMessage([FakeText(json.dumps({"judgments": compact}))])))
+            )
         return out
 
     def record(self, run_id, model, purpose, usage, discount=1.0):
@@ -177,7 +216,12 @@ class FakeLLM:
 
     def cost(self, model, usage, discount=1.0):
         self.recorded.append((model, "batch", discount))
-        return {"input_tokens": 1000, "output_tokens": 100, "cache_write": 0, "cache_read": 0}, 0.001 * discount
+        return {
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "cache_write": 0,
+            "cache_read": 0,
+        }, 0.001 * discount
 
     def adapt_to_error(self, model, message):
         return False
@@ -197,9 +241,16 @@ def build(cfg, conn, titles, folders=None, starred=None, must_read=None, batch=F
         body = f"<p>{t} body text</p>"
         if "edge" in t.lower():  # a long article: the first pass saw only its opening
             body = "<p>" + f"{t} body text. " * 150 + "</p>"
-        items.append(make_item(n, feed=f"Feed {n % 2}", title=t, html=body, crawled_msec=1_800_000_000_000 + n))
-    client = FakeBazQux(items, folders=folders, unread=[i.id for i in items], starred=starred or [],
-                        labels={cfg.protect.must_read_stream: must_read or []})
+        items.append(
+            make_item(n, feed=f"Feed {n % 2}", title=t, html=body, crawled_msec=1_800_000_000_000 + n)
+        )
+    client = FakeBazQux(
+        items,
+        folders=folders,
+        unread=[i.id for i in items],
+        starred=starred or [],
+        labels={cfg.protect.must_read_stream: must_read or []},
+    )
     ctx = run.Context(cfg, Secrets(), conn)
     ctx._client = client
     ctx._llm = FakeLLM()
@@ -207,6 +258,7 @@ def build(cfg, conn, titles, folders=None, starred=None, must_read=None, batch=F
 
 
 # -- synchronous ----------------------------------------------------------------
+
 
 def test_shadow_run_scores_and_tags_but_cuts_nothing(cfg, conn):
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "edge case", "plain news"])
@@ -220,14 +272,27 @@ def test_shadow_run_scores_and_tags_but_cuts_nothing(cfg, conn):
     conn.execute("UPDATE scores SET prompt_version = 'teacher.v0', bucket = 'score-50', bucket_tagged = 1")
     res = run.run(ctx, enforce=False)
     assert res.scored == 4
-    assert ("score-50", sorted(i.id for i in items if "plain" not in i.title)) in [(n, sorted(ids)) for n, ids in client.untagged]
+    assert ("score-50", sorted(i.id for i in items if "plain" not in i.title)) in [
+        (n, sorted(ids)) for n, ids in client.untagged
+    ]
     assert store.article(conn, items[0].id)["bucket"] == "score-90"
 
 
 def test_enforcing_run_cuts_junk_and_second_look_saves_edge(cfg, conn):
     cfg.autocut.new_ground_share = 0.0
-    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "edge case", "plain news", "junk again",
-                                           "edge2 confirmed", "short close call"])
+    ctx, client, items = build(
+        cfg,
+        conn,
+        [
+            "gold essay",
+            "junk listicle",
+            "edge case",
+            "plain news",
+            "junk again",
+            "edge2 confirmed",
+            "short close call",
+        ],
+    )
     # a close call with nothing more to read is not looked at again: the first verdict stands
     short = items[6]
     conn.execute("UPDATE articles SET text = 'tiny' WHERE id = ?", (short.id,))
@@ -248,8 +313,7 @@ def test_enforcing_run_cuts_junk_and_second_look_saves_edge(cfg, conn):
 
 def test_protected_and_starred_survive_the_floor(cfg, conn):
     cfg.autocut.new_ground_share = 0.0
-    ctx, client, items = build(cfg, conn, ["junk one", "junk two", "junk three"],
-                               starred=[], must_read=[])
+    ctx, client, items = build(cfg, conn, ["junk one", "junk two", "junk three"], starred=[], must_read=[])
     client.starred = [items[0].id]
     client.labels[cfg.protect.must_read_stream] = [items[1].id]
     res = run.run(ctx, enforce=True)
@@ -311,12 +375,17 @@ def test_old_and_unscored_folders_are_never_judged(cfg, conn):
 
 # -- batched ----------------------------------------------------------------------
 
+
 def test_batch_run_submits_then_collects(cfg, conn):
     cfg.judge.articles_per_call = 2
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "plain news"], batch=True)
     res = run.run(ctx, enforce=False)
-    assert res.batch_mode and res.scored == 0 and res.submitted == 3 and res.inflight == 3 and res.pending == 0
-    assert len(ctx.llm.batches) == 1 and len(next(iter(ctx.llm.batches.values()))) == 2  # 3 articles, 2 requests
+    assert (
+        res.batch_mode and res.scored == 0 and res.submitted == 3 and res.inflight == 3 and res.pending == 0
+    )
+    assert (
+        len(ctx.llm.batches) == 1 and len(next(iter(ctx.llm.batches.values()))) == 2
+    )  # 3 articles, 2 requests
     assert client.tagged == []  # nothing judged yet, nothing tagged
     # the batch has not finished: the next run neither scores nor resubmits
     res = run.run(ctx, enforce=False)
@@ -343,17 +412,19 @@ def test_batch_waits_for_a_fuller_batch_unless_articles_are_old(cfg, conn):
 def test_batch_second_look_holds_then_decides(cfg, conn):
     cfg.autocut.new_ground_share = 0.0
     cfg.judge.articles_per_call = 2
-    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "edge case", "edge2 confirmed"], batch=True)
-    run.run(ctx, enforce=True)            # submits the first pass
+    ctx, client, items = build(
+        cfg, conn, ["gold essay", "junk listicle", "edge case", "edge2 confirmed"], batch=True
+    )
+    run.run(ctx, enforce=True)  # submits the first pass
     ctx.llm.finish_all()
-    res = run.run(ctx, enforce=True)      # judgments land; junk goes; close calls are held
+    res = run.run(ctx, enforce=True)  # judgments land; junk goes; close calls are held
     assert res.scored == 4 and res.cut_autocut == 1 and client.read[0] == [items[1].id]
     assert res.held == 2 and res.reviews == 0
     assert len(store.inflight_ids(conn, "second_look")) == 2
-    res = run.run(ctx, enforce=True)      # second looks not back yet: still held, not resubmitted
+    res = run.run(ctx, enforce=True)  # second looks not back yet: still held, not resubmitted
     assert res.cut_autocut == 0 and res.held == 0 and len(ctx.llm.batches) == 2
     ctx.llm.finish_all()
-    res = run.run(ctx, enforce=True)      # second looks land: edge saved, edge2 cut
+    res = run.run(ctx, enforce=True)  # second looks land: edge saved, edge2 cut
     assert res.reviews == 2 and res.saved == 1 and res.cut_autocut == 1
     assert client.read[-1] == [items[3].id]
     edge = store.article(conn, items[2].id)
@@ -367,7 +438,7 @@ def test_batch_errors_go_back_to_pending_and_failed_second_looks_stay_unread(cfg
     res = run.run(ctx, enforce=True)
     first = next(iter(ctx.llm.batches.values()))
     carrying_junk_a = next(r["custom_id"] for r in first if "junk a" in r["params"]["messages"][0]["content"])
-    ctx.llm.fail_ids.add(carrying_junk_a)   # that request errors
+    ctx.llm.fail_ids.add(carrying_junk_a)  # that request errors
     ctx.llm.finish_all()
     res = run.run(ctx, enforce=True)
     # junk b judged and cut, edge judged and held, junk a pending again and resubmitted at once
@@ -375,14 +446,21 @@ def test_batch_errors_go_back_to_pending_and_failed_second_looks_stay_unread(cfg
     assert "requests failed" in " ".join(res.notes)
     assert [b["status"] for b in store.recent_batches(conn)][-1] == "partial"
     ctx.llm.fail_ids.clear()
-    ctx.llm.fail_ids |= {r["custom_id"] for b in ctx.llm.batches.values() for r in b if r["custom_id"].startswith("s")}
+    ctx.llm.fail_ids |= {
+        r["custom_id"] for b in ctx.llm.batches.values() for r in b if r["custom_id"].startswith("s")
+    }
     ctx.llm.finish_all()
     res = run.run(ctx, enforce=True)
     # junk a lands and goes; the second look failed, so edge counts as examined and stays unread
     assert res.scored == 1 and res.cut_autocut == 1 and res.reviews == 0
     assert store.article(conn, items[2].id)["status"] == "unread"
-    assert conn.execute("SELECT second_look_model FROM scores WHERE article_id = ?", (items[2].id,)).fetchone()[0] == "failed"
-    res = run.run(ctx, enforce=True)   # a failed look is not retried, and the article is not cut
+    assert (
+        conn.execute("SELECT second_look_model FROM scores WHERE article_id = ?", (items[2].id,)).fetchone()[
+            0
+        ]
+        == "failed"
+    )
+    res = run.run(ctx, enforce=True)  # a failed look is not retried, and the article is not cut
     assert len(store.inflight_ids(conn, "second_look")) == 0 and res.held == 0 and res.cut_autocut == 0
 
 
@@ -394,15 +472,20 @@ def test_sync_flag_overrides_batch_mode(cfg, conn):
 
 # -- the blast ------------------------------------------------------------------
 
+
 def test_blast_judges_everything_in_rounds_and_tags(cfg, conn):
     cfg.judge.articles_per_call = 2
     ctx, client, items = build(cfg, conn, [f"plain {i}" for i in range(7)] + ["gold essay"], batch=True)
-    run.run(ctx, enforce=False)                  # ingest; batch mode would only submit
-    for bid in list(ctx.llm.batches):                 # pretend nothing was ever submitted
+    run.run(ctx, enforce=False)  # ingest; batch mode would only submit
+    for bid in list(ctx.llm.batches):  # pretend nothing was ever submitted
         store.close_batch(conn, bid, "lost")
     seen = []
-    total = run.catch_up(ctx, workers=3, chunk=3, on_progress=lambda t, s: seen.append((t["rounds"], s["scored"])))
-    assert total["scored"] == 8 and total["rounds"] == 3 and total["pending"] == 0 and not total["interrupted"]
+    total = run.catch_up(
+        ctx, workers=3, chunk=3, on_progress=lambda t, s: seen.append((t["rounds"], s["scored"]))
+    )
+    assert (
+        total["scored"] == 8 and total["rounds"] == 3 and total["pending"] == 0 and not total["interrupted"]
+    )
     assert seen and seen[-1][0] == 2
     assert {name for name, _ in client.tagged} >= {"score-90", "score-50"}
     assert ctx.llm.batches and all(store.recent_batches(conn)[0]["status"] != "submitted" for _ in [0])
@@ -416,10 +499,12 @@ def test_blast_all_ages_and_budget_and_interrupt(cfg, conn):
     cfg.judge.articles_per_call = 1
     cfg.models.daily_budget_usd = 1.0
     ctx, client, items = build(cfg, conn, ["plain a", "plain b", "plain c"], batch=False)
-    conn.execute("INSERT INTO articles (id, title, crawled_msec, fetched_at, text, feed_title) VALUES ('old1', 'ancient', 1, '2020-01-01T00:00:00+00:00', 'body', 'f')")
+    conn.execute(
+        "INSERT INTO articles (id, title, crawled_msec, fetched_at, text, feed_title) VALUES ('old1', 'ancient', 1, '2020-01-01T00:00:00+00:00', 'body', 'f')"
+    )
     conn.execute("INSERT INTO state (article_id, status) VALUES ('old1', 'unread')")
     client.unread.append("old1")
-    run.run(ctx, enforce=False)   # judges the three recent ones synchronously; old1 is outside the window
+    run.run(ctx, enforce=False)  # judges the three recent ones synchronously; old1 is outside the window
     assert store.article(conn, "old1")["score"] is None
     total = run.catch_up(ctx, workers=2, all_ages=True, budget=25.0)
     assert total["scored"] == 1 and store.article(conn, "old1")["score"] == 55.0
@@ -448,16 +533,18 @@ def test_blast_all_ages_and_budget_and_interrupt(cfg, conn):
 def test_blast_with_a_stand_in_model_then_the_teacher_rejudges_the_promising(cfg, conn):
     cfg.judge.articles_per_call = 2
     cfg.models.prices_per_mtok["fast-model"] = [0.1, 0.5, 0.01]
-    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "plain news", "gold again"], batch=False)
+    ctx, client, items = build(
+        cfg, conn, ["gold essay", "junk listicle", "plain news", "gold again"], batch=False
+    )
     # the teacher has already judged the first article; the stand-in must leave it alone
     run.run(ctx, enforce=False, score_limit=1)
     first = store.article(conn, items[3].id)  # newest first: 'gold again' was the one judged
     assert first["score"] == 90.0 and first["model"] == "claude-sonnet-5-5"
     total = run.catch_up(ctx, workers=2, model="fast-model")
     assert total["scored"] == 3 and cfg.models.judge == "fast-model"
-    assert store.article(conn, items[3].id)["model"] == "claude-sonnet-5-5"   # untouched
+    assert store.article(conn, items[3].id)["model"] == "claude-sonnet-5-5"  # untouched
     assert store.article(conn, items[0].id)["model"] == "fast-model"
-    cfg.models.judge = "claude-sonnet-5-5"   # a new process reads the config afresh
+    cfg.models.judge = "claude-sonnet-5-5"  # a new process reads the config afresh
     # pending for the teacher now: the stand-in's 50+ (gold 90, plain 55), not the junk (10)
     from bodh.judge import Judge
 
@@ -468,7 +555,7 @@ def test_blast_with_a_stand_in_model_then_the_teacher_rejudges_the_promising(cfg
     res = run.run(ctx, enforce=False)
     assert res.scored == 2
     assert store.article(conn, items[0].id)["model"] == "claude-sonnet-5-5"
-    assert store.article(conn, items[1].id)["model"] == "fast-model"   # junk stays with the stand-in's verdict
+    assert store.article(conn, items[1].id)["model"] == "fast-model"  # junk stays with the stand-in's verdict
     assert store.unscored_unread(conn, cfg.judge.prompt_version, rejudge=rule) == []
     from bodh import progress
 
@@ -487,6 +574,7 @@ def test_blast_stops_at_the_time_limit(cfg, conn):
 
     def slow(*a, **k):
         import time as _t
+
         _t.sleep(0.05)
         return real(*a, **k)
 
@@ -500,20 +588,21 @@ def test_blast_stops_at_the_time_limit(cfg, conn):
 
 # -- the student's rescue and the undo hold against the next floor -----------------
 
+
 def test_rescued_article_survives_the_floor(cfg, conn):
     cfg.autocut.new_ground_share = 0.0
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "plain news"])
     res = run.run(ctx, enforce=True)
     junk = items[1].id
     assert res.cut_autocut == 1 and store.article(conn, junk)["status"] == "cut"
-    client.labels[cfg.tags.rescue] = [junk]          # the student tags it `wrong` in BazQux
+    client.labels[cfg.tags.rescue] = [junk]  # the student tags it `wrong` in BazQux
     res = run.run(ctx, enforce=True)
     assert res.feedback["rescues"] == 1 and res.cut_autocut == 0
     row = store.article(conn, junk)
     assert row["status"] == "unread" and row["rescued_at"]
     assert [k for k, _ in store.feedback_for(conn, junk)] == ["rescue", "wrong"]
     assert client.unread_marked[-1] == [junk] and (cfg.tags.rescue, [junk]) in client.untagged
-    res = run.run(ctx, enforce=True)              # and it stays
+    res = run.run(ctx, enforce=True)  # and it stays
     assert res.cut_autocut == 0 and store.article(conn, junk)["status"] == "unread"
 
 
@@ -542,7 +631,7 @@ def test_tripped_breaker_blocks_later_floors_and_shows_in_status(cfg, conn):
     assert res.ok and res.cut_autocut == 0 and "safety reset" in " ".join(res.notes)
     assert "SAFETY LIMIT TRIPPED" in jobs.render_status_text(jobs.status(cfg, conn))
     assert cutting.reset_safety(conn)
-    res = run.run(ctx, enforce=True)   # nothing newly scored: the share test does not apply; the floor cuts
+    res = run.run(ctx, enforce=True)  # nothing newly scored: the share test does not apply; the floor cuts
     assert res.cut_autocut == 4
 
 
@@ -579,7 +668,7 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
     cfg.autocut.new_ground_share = 0.0
     ctx, client, items = build(cfg, conn, ["gold a", "plain b", "plain c"])
     client.labels[cfg.tags.prune] = [items[1].id]
-    res = run.run(ctx, enforce=False)                      # shadow: the tag is removed, the request kept
+    res = run.run(ctx, enforce=False)  # shadow: the tag is removed, the request kept
     assert res.cut_prune == 0 and "waits for a run with autocut on" in " ".join(res.notes)
     assert any(name == cfg.tags.prune for name, _ in client.untagged)
     client.labels[cfg.tags.prune] = []
@@ -592,16 +681,17 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
     import pytest
 
     with pytest.raises(RuntimeError):
-        run.run(ctx, enforce=True)                         # a failed run keeps it too
+        run.run(ctx, enforce=True)  # a failed run keeps it too
     assert store.kv_get(conn, "prune_requested") is not None and client.read == []
     client.starred_ids = real
     res = run.run(ctx, enforce=True)
     assert res.cut_prune == 2 and store.kv_get(conn, "prune_requested") is None
     res = run.run(ctx, enforce=True)
-    assert res.cut_prune == 0                                   # applied once
+    assert res.cut_prune == 0  # applied once
 
 
 # -- the batch lifecycle under trouble --------------------------------------------
+
 
 def test_vanished_batch_is_closed_as_lost(cfg, conn):
     """A batch deleted in the console (or submitted under a rotated key) used to fail every
@@ -620,7 +710,7 @@ def test_vanished_batch_is_closed_as_lost(cfg, conn):
     res = run.run(ctx, enforce=False)
     assert res.ok and "given up on" in " ".join(res.notes)
     assert [b["status"] for b in store.recent_batches(conn)][-1] == "lost"
-    assert res.submitted == 2 and res.inflight == 2        # resubmitted at once
+    assert res.submitted == 2 and res.inflight == 2  # resubmitted at once
 
 
 def test_ended_batch_with_unfetchable_results_is_given_up(cfg, conn):
@@ -634,10 +724,12 @@ def test_ended_batch_with_unfetchable_results_is_given_up(cfg, conn):
 
     ctx.llm.batch_results = broken
     res = run.run(ctx, enforce=False)
-    assert res.scored == 0 and store.recent_batches(conn)[0]["status"] == "submitted"   # young: kept open
+    assert res.scored == 0 and store.recent_batches(conn)[0]["status"] == "submitted"  # young: kept open
     conn.execute("UPDATE batches SET created_at = '2020-01-01T00:00:00+00:00'")
     res = run.run(ctx, enforce=False)
-    assert store.recent_batches(conn)[-1]["status"] == "lost" and res.submitted == 2       # old: given up, resubmitted
+    assert (
+        store.recent_batches(conn)[-1]["status"] == "lost" and res.submitted == 2
+    )  # old: given up, resubmitted
 
 
 def test_batch_mode_off_still_collects_open_batches(cfg, conn):
@@ -645,7 +737,7 @@ def test_batch_mode_off_still_collects_open_batches(cfg, conn):
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
     run.run(ctx, enforce=False)
     ctx.llm.finish_all()
-    cfg.models.batch = False                                   # the owner turns batches off
+    cfg.models.batch = False  # the owner turns batches off
     res = run.run(ctx, enforce=False)
     assert not res.batch_mode and res.scored == 2 and res.inflight == 0 and ctx.llm.batches
     assert store.article(conn, items[0].id)["score"] == 90.0
@@ -662,19 +754,19 @@ def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
     assert res.submitted == 2
     for attempt in range(1, 4):
         ctx.llm.finish_all()
-        res = run.run(ctx, enforce=False)                  # collected: nothing in it; resubmitted or not
+        res = run.run(ctx, enforce=False)  # collected: nothing in it; resubmitted or not
         assert res.scored == 0 and "no judgment" in " ".join(res.notes), attempt
         assert "partial" in [b["status"] for b in store.recent_batches(conn)]
         if attempt < 3:
-            assert res.submitted == 2, attempt                  # tried again
+            assert res.submitted == 2, attempt  # tried again
         else:
-            assert res.submitted == 0 and res.pending == 0      # given up on: not resubmitted
+            assert res.submitted == 0 and res.pending == 0  # given up on: not resubmitted
     assert store.given_up(conn) == 2
     from bodh import progress
 
     assert "given up on" in progress.render_text(progress.snapshot(conn, cfg))
     ctx.llm._verdicts = real
-    assert store.reset_judge_failures(conn) == 2                # `bodh safety reset`
+    assert store.reset_judge_failures(conn) == 2  # `bodh safety reset`
     res = run.run(ctx, enforce=False)
     assert res.submitted == 2
     ctx.llm.finish_all()
@@ -687,7 +779,7 @@ def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interr
     run.run(ctx, enforce=False)
     ctx.llm.finish_all()
     real_results = ctx.llm.batch_results
-    ctx.llm.batch_results = lambda bid: real_results(bid) * 2   # the same result listed twice
+    ctx.llm.batch_results = lambda bid: real_results(bid) * 2  # the same result listed twice
     # the first absorb is interrupted half way: nothing of it may stick
     from bodh import judge as judgemod
 
@@ -735,7 +827,10 @@ def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
 def test_bankruptcy_dry_run_records_no_run_row(cfg, conn):
     ctx, client, items = build(cfg, conn, ["old a", "old b"])
     run.run(ctx, enforce=False)
-    client.unread_ids = lambda: [__import__("bodh.readers.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1) for i in items]
+    client.unread_ids = lambda: [
+        __import__("bodh.readers.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1)
+        for i in items
+    ]
     before = len(store.last_runs(conn, 50))
     candidates, done = run.clear_old(ctx, 1, dry_run=True)
     assert candidates == 2 and done == 0 and len(store.last_runs(conn, 50)) == before and client.read == []
@@ -758,7 +853,10 @@ def test_refresh_protection_is_linear(cfg, conn):
     now = store.utcnow_iso()
     ids = [make_item(n).id for n in range(1, 50_001)]
     with store.transaction(conn):
-        conn.executemany("INSERT INTO articles (id, title, folder, fetched_at) VALUES (?, 'a', 'F', ?)", [(i, now) for i in ids])
+        conn.executemany(
+            "INSERT INTO articles (id, title, folder, fetched_at) VALUES (?, 'a', 'F', ?)",
+            [(i, now) for i in ids],
+        )
         conn.executemany("INSERT INTO state (article_id, status) VALUES (?, 'unread')", [(i,) for i in ids])
     ctx = run.Context(cfg, Secrets(), conn)
     t0 = _t.monotonic()
@@ -768,6 +866,7 @@ def test_refresh_protection_is_linear(cfg, conn):
 
 
 # -- the review's findings ---------------------------------------------------------
+
 
 def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
     """adapt_to_error writes through the LLM's own connection; called inside the absorb's
@@ -803,16 +902,18 @@ def test_read_then_unread_again_is_not_cut_by_the_floor(cfg, conn):
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"])
     run.run(ctx, enforce=False)
     junk = items[1].id
-    client.mark_read([junk])                        # the student reads it
+    client.mark_read([junk])  # the student reads it
     res = run.run(ctx, enforce=False)
     assert res.feedback["reads"] == 1 and store.article(conn, junk)["status"] == "read"
-    client.mark_unread([junk])                      # and keeps it for later
+    client.mark_unread([junk])  # and keeps it for later
     res = run.run(ctx, enforce=True)
     assert res.feedback["returned"] == 1 and res.cut_autocut == 0
-    assert store.article(conn, junk)["status"] == "unread" and len(client.read) == 1   # only the student's own read
+    assert (
+        store.article(conn, junk)["status"] == "unread" and len(client.read) == 1
+    )  # only the student's own read
     cfg.prune.keep = 1
     n, sel = run.prune(ctx)
-    assert n == 1 and sel.cut_ids == [junk]        # the student's own prune still may
+    assert n == 1 and sel.cut_ids == [junk]  # the student's own prune still may
 
 
 def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
@@ -827,9 +928,14 @@ def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
     with pytest.raises(cutting.SafetyTripped):
         run.run(ctx, enforce=True)
     res = run.run(ctx, enforce=True)
-    assert res.ok and res.cut_prune == 0 and client.read == [] and "waits for `bodh safety reset`" in " ".join(res.notes)
+    assert (
+        res.ok
+        and res.cut_prune == 0
+        and client.read == []
+        and "waits for `bodh safety reset`" in " ".join(res.notes)
+    )
     with pytest.raises(cutting.SafetyTripped):
-        run.prune(ctx)                         # the student's own prune is refused too
+        run.prune(ctx)  # the student's own prune is refused too
     assert cutting.reset_safety(conn)
     res = run.run(ctx, enforce=True)
     assert res.cut_autocut == 4 and res.cut_prune == 0 and store.kv_get(conn, "prune_requested") is None
@@ -849,14 +955,17 @@ def test_wrong_on_a_pending_cut_rescues_it(cfg, conn):
     import pytest
 
     with pytest.raises(RuntimeError):
-        run.run(ctx, enforce=True)              # tagged cut, not marked read
+        run.run(ctx, enforce=True)  # tagged cut, not marked read
     client.mark_read = real
     assert store.cut_pending(conn)[1] and client.read == []
     client.labels[cfg.tags.rescue] = [items[0].id]
     res = run.run(ctx, enforce=True)
     assert res.feedback["rescues"] == 1
-    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["rescued_at"]
-    assert client.read == [[items[1].id]]            # the other pending cut is finished
+    assert (
+        store.article(conn, items[0].id)["status"] == "unread"
+        and store.article(conn, items[0].id)["rescued_at"]
+    )
+    assert client.read == [[items[1].id]]  # the other pending cut is finished
     assert store.feedback_ids(conn, "rescue") == {items[0].id}
 
 
@@ -874,10 +983,15 @@ def test_pending_cut_moved_into_must_read_is_restored(cfg, conn):
     with pytest.raises(RuntimeError):
         run.run(ctx, enforce=True)
     client.mark_read = real
-    client.labels[cfg.protect.must_read_stream] = [items[0].id]   # the student moved it into Must read meanwhile
+    client.labels[cfg.protect.must_read_stream] = [
+        items[0].id
+    ]  # the student moved it into Must read meanwhile
     res = run.run(ctx, enforce=True)
     assert res.ok and client.read == [[items[1].id]]
-    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["protected"] == 1
+    assert (
+        store.article(conn, items[0].id)["status"] == "unread"
+        and store.article(conn, items[0].id)["protected"] == 1
+    )
 
 
 def test_prune_cuts_only_what_was_confirmed(cfg, conn):
@@ -886,5 +1000,5 @@ def test_prune_cuts_only_what_was_confirmed(cfg, conn):
     run.run(ctx, enforce=False)
     _, shown = run.prune(ctx, dry_run=True)
     assert len(shown.cut) == 2
-    n, sel = run.prune(ctx, confirmed={items[1].id})      # a run in between would have widened it
+    n, sel = run.prune(ctx, confirmed={items[1].id})  # a run in between would have widened it
     assert n == 1 and sel.cut_ids == [items[1].id]

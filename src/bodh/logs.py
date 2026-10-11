@@ -12,12 +12,14 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+
 def log_file(data_dir: Path) -> Path:
     """Where the run log lives: ~/Library/Logs/bodh on a Mac, data/logs elsewhere."""
     logs = Path(os.path.expanduser("~/Library/Logs"))
     if not logs.exists():
         return data_dir / "logs" / "bodh.log"
     return logs / "bodh" / "bodh.log"
+
 
 class Redactor(logging.Filter):
     """Every secret value, and any auth token, is replaced before a line is written anywhere:
@@ -51,6 +53,7 @@ class Redactor(logging.Filter):
             record.exc_text = self.redact(record.exc_text)
         return True
 
+
 def setup_logging(data_dir: Path, verbose: bool = False, secrets: Iterable[str] = ()) -> None:
     """The run log: the file (rotated) plus stderr when someone is watching a terminal.
     ``secrets`` are the values that must never appear in a line."""
@@ -71,6 +74,7 @@ def setup_logging(data_dir: Path, verbose: bool = False, secrets: Iterable[str] 
     logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("anthropic").setLevel(logging.WARNING)
+
 
 def _stderr_is_a_terminal() -> bool:
     # under launchd stderr is a file that already receives the log through the file handler

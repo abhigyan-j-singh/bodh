@@ -33,16 +33,36 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 KINDS = ["primary_source", "original_analysis", "reporting", "commentary", "aggregation", "promo", "other"]
-FLAGS = ["primary_source", "home_angle", "vendor_marketing_no_data", "funding_offfield",
-         "perishable", "paywalled_stub", "duplicate"]
+FLAGS = [
+    "primary_source",
+    "home_angle",
+    "vendor_marketing_no_data",
+    "funding_offfield",
+    "perishable",
+    "paywalled_stub",
+    "duplicate",
+]
 
 # the compact codes the model writes (one token each) and what they mean in the database
-KIND_CODES = {"src": "primary_source", "analysis": "original_analysis", "news": "reporting",
-              "opinion": "commentary", "roundup": "aggregation", "promo": "promo", "other": "other"}
-FLAG_CODES = {"primary": "primary_source", "home": "home_angle", "vendor": "vendor_marketing_no_data",
-              "funding": "funding_offfield", "perishable": "perishable", "stub": "paywalled_stub",
-              "dupe": "duplicate",
-              "india": "home_angle"}  # the code the prompt used before home_angle was configurable
+KIND_CODES = {
+    "src": "primary_source",
+    "analysis": "original_analysis",
+    "news": "reporting",
+    "opinion": "commentary",
+    "roundup": "aggregation",
+    "promo": "promo",
+    "other": "other",
+}
+FLAG_CODES = {
+    "primary": "primary_source",
+    "home": "home_angle",
+    "vendor": "vendor_marketing_no_data",
+    "funding": "funding_offfield",
+    "perishable": "perishable",
+    "stub": "paywalled_stub",
+    "dupe": "duplicate",
+    "india": "home_angle",
+}  # the code the prompt used before home_angle was configurable
 # flag names written by earlier versions, read as today's
 FLAG_ALIASES = {"india_angle": "home_angle", "funding_round_non_infra": "funding_offfield"}
 SUBSCORES = ("quality", "learning", "fit", "breadth", "relevance")
@@ -52,8 +72,9 @@ def normalize_flags(flags: list[str] | None) -> list[str]:
     """Flag names as the code knows them today, whatever version wrote them."""
     return [FLAG_ALIASES.get(f, f) for f in (flags or [])]
 
-BATCH_WAIT_MINUTES = 60   # a half-empty batch is still submitted once its oldest article has waited this long
-BATCH_LOST_HOURS = 26     # the API expires a batch after 24h; one never seen to end by then is given up on
+
+BATCH_WAIT_MINUTES = 60  # a half-empty batch is still submitted once its oldest article has waited this long
+BATCH_LOST_HOURS = 26  # the API expires a batch after 24h; one never seen to end by then is given up on
 
 
 class Verdict(BaseModel):
@@ -82,12 +103,20 @@ class JudgmentOut(BaseModel):
     the schema sent with every request; nothing is parsed with it (see JudgmentIn)."""
 
     n: int = Field(description="the article's number in this batch")
-    s: list[int] = Field(description="five integers 0-100 in this order: quality, learning, fit, breadth, relevance")
-    lesson: str = Field(description="at most 12 words: what the student takes from it, or what the piece is instead")
+    s: list[int] = Field(
+        description="five integers 0-100 in this order: quality, learning, fit, breadth, relevance"
+    )
+    lesson: str = Field(
+        description="at most 12 words: what the student takes from it, or what the piece is instead"
+    )
     concept: str = Field(description="one to three lowercase words: the concept or field taught")
     kind: KindCode = Field(description="src, analysis, news, opinion, roundup, promo or other")
-    flags: list[FlagCode] = Field(description="any of primary, home, vendor, funding, perishable, stub, dupe; usually empty")
-    dupe: int | None = Field(description="the number of an earlier article in this batch telling the same story, else null")
+    flags: list[FlagCode] = Field(
+        description="any of primary, home, vendor, funding, perishable, stub, dupe; usually empty"
+    )
+    dupe: int | None = Field(
+        description="the number of an earlier article in this batch telling the same story, else null"
+    )
     conf: Literal["high", "medium", "low"] = Field(description="low when the text is too thin to judge")
 
 
@@ -101,7 +130,7 @@ class JudgmentIn(BaseModel):
 
     n: int
     s: list[int]
-    lesson: str | None = ""          # None in any of these is read as "not given", never as a dropped judgment
+    lesson: str | None = ""  # None in any of these is read as "not given", never as a dropped judgment
     concept: str | None = ""
     kind: str | None = "other"
     flags: list[str | None] | None = None
@@ -112,7 +141,9 @@ class JudgmentIn(BaseModel):
         if len(self.s) != len(SUBSCORES):
             raise ValueError(f"expected {len(SUBSCORES)} sub-scores, got {len(self.s)}")
         scores = {name: max(0, min(100, int(val))) for name, val in zip(SUBSCORES, self.s, strict=True)}
-        flags = [FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags or []) if f in FLAG_CODES]
+        flags = [
+            FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags or []) if f in FLAG_CODES
+        ]
         dupe: int | None = None
         if isinstance(self.dupe, int):
             dupe = self.dupe
@@ -123,8 +154,13 @@ class JudgmentIn(BaseModel):
                 dupe = None
         conf = (self.conf or "").strip().lower()
         return Verdict(
-            n=self.n, **scores, lesson=(self.lesson or "").strip(), concept=(self.concept or "").strip().lower(),
-            kind=KIND_CODES.get((self.kind or "").strip().lower(), "other"), flags=flags, dupe_of=dupe,
+            n=self.n,
+            **scores,
+            lesson=(self.lesson or "").strip(),
+            concept=(self.concept or "").strip().lower(),
+            kind=KIND_CODES.get((self.kind or "").strip().lower(), "other"),
+            flags=flags,
+            dupe_of=dupe,
             confidence=conf if conf in ("high", "medium", "low") else "medium",  # type: ignore[arg-type]
         )
 
@@ -169,8 +205,12 @@ def _batch_classify(exc: Exception) -> Exception:
 def _classify(exc: Exception) -> Exception:
     import anthropic
 
-    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError)):
-        return ModelConfigError(f"model call rejected: {exc}. Check ANTHROPIC_API_KEY and the model ids in config.yaml")
+    if isinstance(
+        exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError)
+    ):
+        return ModelConfigError(
+            f"model call rejected: {exc}. Check ANTHROPIC_API_KEY and the model ids in config.yaml"
+        )
     return exc
 
 
@@ -218,7 +258,7 @@ def parse_judgments(text: str) -> list[Verdict] | None:
     if start < 0 or end < 0:
         return None
     try:
-        raw = json.loads(text[start: end + 1])
+        raw = json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         return None
     out: list[Verdict] = []
@@ -231,6 +271,7 @@ def parse_judgments(text: str) -> list[Verdict] | None:
 
 
 # -- composition --------------------------------------------------------------
+
 
 def _words(s: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(w) > 2}
@@ -284,7 +325,9 @@ def canonical_url(url: str) -> str:
         parts = urlsplit(url.strip())
     except ValueError:
         return url.strip().lower()
-    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _TRACKING.match(k)])
+    query = urlencode(
+        [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _TRACKING.match(k)]
+    )
     host = parts.netloc.lower().removeprefix("www.")
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower() or "https", host, path, query, ""))
@@ -336,6 +379,7 @@ def find_duplicate(conn: sqlite3.Connection, row: sqlite3.Row, window_days: int 
 
 # -- the model boundary -------------------------------------------------------
 
+
 def _output_format() -> dict:
     """The structured-outputs format for a judgment batch, built the way the SDK's
     ``messages.parse`` builds it (bounds moved into descriptions, no extra properties)."""
@@ -363,7 +407,9 @@ class LLM:
         # same query on one connection can hand each other empty results
         self._lock = threading.Lock()
         self.conn = self._private_connection(cfg, conn)
-        self._client = anthropic.Anthropic(api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0)
+        self._client = anthropic.Anthropic(
+            api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0
+        )
         self._format = _output_format()
         # once a model has rejected structured outputs, every later call asks for plain JSON instead;
         # once the API has rejected the 1-hour cache, the default 5-minute cache is used instead
@@ -414,11 +460,18 @@ class LLM:
             "cache_read": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
         }
         p_read = self.cfg.models.cache_read_price(model)
-        usd = (u["input_tokens"] * p_in + u["output_tokens"] * p_out
-               + write_5m * p_in * 1.25 + write_1h * p_in * 2.0 + u["cache_read"] * p_read) / 1_000_000
+        usd = (
+            u["input_tokens"] * p_in
+            + u["output_tokens"] * p_out
+            + write_5m * p_in * 1.25
+            + write_1h * p_in * 2.0
+            + u["cache_read"] * p_read
+        ) / 1_000_000
         return u, usd * discount
 
-    def record(self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0) -> float:
+    def record(
+        self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0
+    ) -> float:
         u, usd = self.cost(model, usage, discount)
         with self._lock:
             store.record_cost(self.conn, run_id, model, purpose, u, usd)
@@ -460,11 +513,19 @@ class LLM:
     def request_params(self, model: str, system_text: str, user_text: str, ttl: str | None = None) -> dict:
         """One judgment request, the same shape for a direct call and for a batch."""
         if self.plain_json:
-            return {"model": model, "max_tokens": 8000, "system": self._system(system_text, ttl),
-                    "messages": [{"role": "user", "content": user_text + PLAIN_JSON_INSTRUCTION}]}
-        return {"model": model, "max_tokens": 8000, "system": self._system(system_text, ttl),
-                "messages": [{"role": "user", "content": user_text}],
-                "output_config": {"format": self._format}}
+            return {
+                "model": model,
+                "max_tokens": 8000,
+                "system": self._system(system_text, ttl),
+                "messages": [{"role": "user", "content": user_text + PLAIN_JSON_INSTRUCTION}],
+            }
+        return {
+            "model": model,
+            "max_tokens": 8000,
+            "system": self._system(system_text, ttl),
+            "messages": [{"role": "user", "content": user_text}],
+            "output_config": {"format": self._format},
+        }
 
     @staticmethod
     def message_text(message: Any) -> str:
@@ -472,8 +533,9 @@ class LLM:
 
     # -- synchronous ----------------------------------------------------------
 
-    def judge(self, model: str, system_text: str, user_text: str, run_id: int | None,
-              purpose: str) -> list[Verdict]:
+    def judge(
+        self, model: str, system_text: str, user_text: str, run_id: int | None, purpose: str
+    ) -> list[Verdict]:
         """One call, waited for. Returns validated verdicts; invalid ones are dropped."""
         import anthropic
 
@@ -495,13 +557,22 @@ class LLM:
             raise NoJudgments(f"{model} returned no parsable judgments")
         return verdicts
 
-    def complete(self, model: str, system_text: str, user_text: str, run_id: int | None,
-                 purpose: str, max_tokens: int = 2000) -> str:
+    def complete(
+        self,
+        model: str,
+        system_text: str,
+        user_text: str,
+        run_id: int | None,
+        purpose: str,
+        max_tokens: int = 2000,
+    ) -> str:
         """Plain text completion (the weekly profile rewrite)."""
         self.ensure_budget()
         try:
             response = self._client.messages.create(
-                model=model, max_tokens=max_tokens, system=system_text,
+                model=model,
+                max_tokens=max_tokens,
+                system=system_text,
                 messages=[{"role": "user", "content": user_text}],
             )
         except Exception as exc:  # noqa: BLE001
@@ -532,7 +603,10 @@ class LLM:
             counts = self._client.messages.batches.retrieve(batch_id).request_counts
         except Exception as exc:  # noqa: BLE001
             raise _batch_classify(exc) from exc
-        return {k: int(getattr(counts, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")}
+        return {
+            k: int(getattr(counts, k, 0) or 0)
+            for k in ("processing", "succeeded", "errored", "canceled", "expired")
+        }
 
     def retries(self, n: int) -> None:
         """More patience with 429s and 5xx, for a deliberate catch-up through a backlog."""
@@ -546,6 +620,7 @@ class LLM:
 
 
 # -- the judge --------------------------------------------------------------
+
 
 def _fmt_date(published: int | None) -> str:
     if not published:
@@ -577,8 +652,15 @@ def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
 
 
 class Judge:
-    def __init__(self, cfg: Config, llm: LLM, conn: sqlite3.Connection, context: str = "",
-                 expansion_topics: list[str] | None = None, learned_text: str | None = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        llm: LLM,
+        conn: sqlite3.Connection,
+        context: str = "",
+        expansion_topics: list[str] | None = None,
+        learned_text: str | None = None,
+    ) -> None:
         """``learned_text`` stands in for profile/learned.md (the weekly rewrite's gate judges
         with a proposed model without writing it to disk)."""
         self.cfg = cfg
@@ -588,7 +670,7 @@ class Judge:
         self.expansion_topics = expansion_topics or []
         base = fill_prompt(load_prompt(self.prompt_version, cfg.root), cfg)
         intro, _, rubric = base.partition("\n\n")
-        cfg.check_about()   # the backstop; run and catch-up refuse earlier, before any network
+        cfg.check_about()  # the backstop; run and catch-up refuse earlier, before any network
         about = cfg.read_about() or "(nothing written about the student yet)"
         learned = (cfg.read_learned() if learned_text is None else learned_text) or "(no learned profile yet)"
         # the cached prefix changes only when the student's description or the learned profile
@@ -608,12 +690,20 @@ class Judge:
 
     # -- what is pending --------------------------------------------------------
 
-    def pending_rows(self, limit: int | None = None, exclude_inflight: bool = False) -> tuple[list[sqlite3.Row], int]:
+    def pending_rows(
+        self, limit: int | None = None, exclude_inflight: bool = False
+    ) -> tuple[list[sqlite3.Row], int]:
         """Unread articles still to judge, newest first, with duplicates of earlier stories
         recorded on the spot (no model call). Returns (rows to judge, duplicates recorded)."""
-        rows = store.unscored_unread(self.conn, self.prompt_version, self.cfg.limits.max_age_days,
-                                     self.cfg.unjudged_folders(), exclude_inflight=exclude_inflight,
-                                     limit=limit, rejudge=self.rejudge)
+        rows = store.unscored_unread(
+            self.conn,
+            self.prompt_version,
+            self.cfg.limits.max_age_days,
+            self.cfg.unjudged_folders(),
+            exclude_inflight=exclude_inflight,
+            limit=limit,
+            rejudge=self.rejudge,
+        )
         todo: list[sqlite3.Row] = []
         dupes = 0
         index = DupIndex(self.conn)
@@ -627,9 +717,14 @@ class Judge:
         return todo, dupes
 
     def pending_count(self, exclude_inflight: bool = False) -> int:
-        return store.unscored_unread_count(self.conn, self.prompt_version, self.cfg.limits.max_age_days,
-                                           self.cfg.unjudged_folders(), exclude_inflight=exclude_inflight,
-                                           rejudge=self.rejudge)
+        return store.unscored_unread_count(
+            self.conn,
+            self.prompt_version,
+            self.cfg.limits.max_age_days,
+            self.cfg.unjudged_folders(),
+            exclude_inflight=exclude_inflight,
+            rejudge=self.rejudge,
+        )
 
     @staticmethod
     def rejudge_rule(cfg: Config) -> tuple[str, float] | None:
@@ -666,22 +761,38 @@ class Judge:
                     v = v.model_copy(update={"dupe_of": target})
                     dupes.add(aid)
                 else:
-                    v = v.model_copy(update={"dupe_of": None, "flags": [f for f in v.flags if f != "duplicate"]})
+                    v = v.model_copy(
+                        update={"dupe_of": None, "flags": [f for f in v.flags if f != "duplicate"]}
+                    )
             out[aid] = v
         return out
 
-    def score_pending(self, run_id: int | None, limit: int | None = None, workers: int = 3,
-                      on_progress: Any = None, stop_after: float | None = None) -> dict:
+    def score_pending(
+        self,
+        run_id: int | None,
+        limit: int | None = None,
+        workers: int = 3,
+        on_progress: Any = None,
+        stop_after: float | None = None,
+    ) -> dict:
         """Score every pending article now, waiting for each call. Resumable: anything not
         scored stays pending for the next run. ``on_progress(stats)`` is called after every
         batch that lands; past ``stop_after`` (a time.monotonic() value) no new call starts.
         Returns stats."""
-        stats = {"scored": 0, "dupes": 0, "failed_batches": 0, "empty_batches": 0, "budget_stop": False,
-                 "pending_after": 0, "total": 0, "stopped_early": False}
+        stats = {
+            "scored": 0,
+            "dupes": 0,
+            "failed_batches": 0,
+            "empty_batches": 0,
+            "budget_stop": False,
+            "pending_after": 0,
+            "total": 0,
+            "stopped_early": False,
+        }
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)  # a batch may hold some
         stats["total"] = len(todo)
         size = self.cfg.judge.articles_per_call
-        batches = [todo[i: i + size] for i in range(0, len(todo), size)]
+        batches = [todo[i : i + size] for i in range(0, len(todo), size)]
         workers = max(1, workers)
         pool = ThreadPoolExecutor(max_workers=workers)
         try:
@@ -753,7 +864,14 @@ class Judge:
     def submit_pending(self, run_id: int | None, limit: int | None = None) -> dict:
         """Send what is pending to the Batches API. A batch smaller than one call's worth
         waits for more articles unless its oldest has waited an hour. Returns stats."""
-        stats = {"submitted": 0, "requests": 0, "dupes": 0, "budget_stop": False, "batch_id": None, "waiting": 0}
+        stats = {
+            "submitted": 0,
+            "requests": 0,
+            "dupes": 0,
+            "budget_stop": False,
+            "batch_id": None,
+            "waiting": 0,
+        }
         limit = limit or self.cfg.limits.per_run_batch
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)
         if not todo:
@@ -773,9 +891,11 @@ class Judge:
         ttl = self.cfg.models.cache_ttl
         requests, members = [], []
         for bi in range(0, len(todo), size):
-            batch = todo[bi: bi + size]
+            batch = todo[bi : bi + size]
             custom_id = f"t{run_id or 0}-{bi // size}"
-            params = self.llm.request_params(model, self.system_text, self._user_text(batch, self.cfg.judge.text_chars), ttl)
+            params = self.llm.request_params(
+                model, self.system_text, self._user_text(batch, self.cfg.judge.text_chars), ttl
+            )
             requests.append({"custom_id": custom_id, "params": params})
             members.append((custom_id, [r["id"] for r in batch]))
         batch_id = self.llm.submit_batch(requests)
@@ -810,7 +930,9 @@ class Judge:
                 continue
             custom_id = f"s{run_id or 0}-{n}"
             user_text = self._user_text([dict(full)], self.cfg.review.chars)
-            params = self.llm.request_params(model, self.second_look_text, user_text, self.cfg.models.cache_ttl)
+            params = self.llm.request_params(
+                model, self.second_look_text, user_text, self.cfg.models.cache_ttl
+            )
             requests.append({"custom_id": custom_id, "params": params})
             members.append((custom_id, [row["id"]]))
         if not requests:
@@ -852,7 +974,9 @@ class Judge:
             except Exception:  # noqa: BLE001
                 log.exception("judge: could not fetch results of batch %s", b["id"])
                 if self._lost(b):  # ended, but its results will not come: the same deadline applies
-                    self._give_up(b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats)
+                    self._give_up(
+                        b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats
+                    )
                 else:
                     stats["open"] += 1
                 continue
@@ -882,7 +1006,9 @@ class Judge:
             created = created.replace(tzinfo=timezone.utc)
         return store.utcnow() - created > timedelta(hours=BATCH_LOST_HOURS)
 
-    def _absorb(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict) -> None:
+    def _absorb(
+        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict
+    ) -> None:
         """Record one finished batch: judgments, reviews, costs and the batch's closing in
         one transaction, so an interrupt leaves it open and untouched for the next run to
         absorb again rather than half-recorded with its costs counted twice."""
@@ -893,8 +1019,9 @@ class Judge:
             # and that write would wait on this one's open transaction until it timed out
             self.llm.adapt_to_error(model, first_error)
 
-    def _absorb_results(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any,
-                        stats: dict) -> tuple[str, str]:
+    def _absorb_results(
+        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict
+    ) -> tuple[str, str]:
         """Returns (model, first error message) for the caller to act on once the transaction is over."""
         members = store.batch_members(self.conn, b["id"])
         purpose, model = b["purpose"], b["model"]
@@ -908,7 +1035,9 @@ class Judge:
             if getattr(result, "type", "") != "succeeded":
                 errored += 1
                 err = getattr(getattr(result, "error", None), "error", None)
-                first_error = first_error or f"{getattr(result, 'type', '?')}: {getattr(err, 'message', '') or ''}"
+                first_error = (
+                    first_error or f"{getattr(result, 'type', '?')}: {getattr(err, 'message', '') or ''}"
+                )
                 if purpose == "second_look":
                     store.record_review_failure(self.conn, ids[0])
                     stats["failed"] += 1
@@ -934,8 +1063,10 @@ class Judge:
             notes.append(f"{errored} of {b['n_requests']} requests failed: {first_error}")
         if empty:
             stats["empty"] += empty
-            notes.append(f"{empty} of {b['n_requests']} requests came back with no judgment "
-                         f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `bodh safety` shows how many)")
+            notes.append(
+                f"{empty} of {b['n_requests']} requests came back with no judgment "
+                f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `bodh safety` shows how many)"
+            )
         note = "; ".join(notes)
         store.close_batch(self.conn, b["id"], "partial" if errored or empty else "done", note)
         if note:
@@ -944,8 +1075,12 @@ class Judge:
         return model, first_error if errored else ""
 
     def _absorb_judge(self, ids: list[str], verdicts: list[Verdict]) -> int:
-        by_id = {r["id"]: r for r in self.conn.execute(
-            f"SELECT * FROM articles WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        by_id = {
+            r["id"]: r
+            for r in self.conn.execute(
+                f"SELECT * FROM articles WHERE id IN ({','.join('?' * len(ids))})", ids
+            )
+        }
         done = 0
         for aid, v in self._by_article(verdicts, ids).items():
             row = by_id.get(aid)
@@ -958,7 +1093,8 @@ class Judge:
     def _absorb_review(self, aid: str, verdicts: list[Verdict] | None, client: Any, stats: dict) -> None:
         current = self.conn.execute(
             "SELECT s.score, a.folder FROM scores s JOIN articles a ON a.id = s.article_id WHERE s.article_id = ?",
-            (aid,)).fetchone()
+            (aid,),
+        ).fetchone()
         if current is None or not verdicts:
             store.record_review_failure(self.conn, aid)
             stats["failed"] += 1
@@ -968,7 +1104,9 @@ class Judge:
         if self.apply_review(aid, float(current["score"]), second, current["folder"], client):
             stats["saved"] += 1
 
-    def apply_review(self, aid: str, first: float, second: float, folder: str | None, client: Any = None) -> bool:
+    def apply_review(
+        self, aid: str, first: float, second: float, folder: str | None, client: Any = None
+    ) -> bool:
         """Keep the higher score, retag the band if it moved. True when the article now
         clears its cut-off."""
         new_score = max(first, second)
@@ -991,27 +1129,57 @@ class Judge:
         d["lesson"] = (d.get("lesson") or "").strip()[:200]
         d["dupe_of"] = v.dupe_of if isinstance(v.dupe_of, str) else None
         score = compose(d, self.cfg, self.expansion_topics)
-        stale = store.record_score(self.conn, row["id"], d, base_score=score, score=score,
-                                   bucket=self.cfg.tags.band_for(score), prompt_version=self.prompt_version,
-                                   model=self.cfg.models.judge)
+        stale = store.record_score(
+            self.conn,
+            row["id"],
+            d,
+            base_score=score,
+            score=score,
+            bucket=self.cfg.tags.band_for(score),
+            prompt_version=self.prompt_version,
+            model=self.cfg.models.judge,
+        )
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])
 
     def _record_duplicate(self, row: sqlite3.Row, original: dict) -> None:
-        d = {"quality": 20, "learning": 10, "fit": 20, "breadth": 10, "relevance": 20,
-             "lesson": f"Same story as: {original['title'][:80]}", "concept": original["concept"] or "duplicate",
-             "kind": "other", "flags": ["duplicate"], "dupe_of": original["id"], "confidence": "high"}
-        stale = store.record_score(self.conn, row["id"], d, base_score=20.0, score=20.0,
-                                   bucket=self.cfg.tags.band_for(20.0), prompt_version=self.prompt_version,
-                                   model="dedup")
+        d = {
+            "quality": 20,
+            "learning": 10,
+            "fit": 20,
+            "breadth": 10,
+            "relevance": 20,
+            "lesson": f"Same story as: {original['title'][:80]}",
+            "concept": original["concept"] or "duplicate",
+            "kind": "other",
+            "flags": ["duplicate"],
+            "dupe_of": original["id"],
+            "confidence": "high",
+        }
+        stale = store.record_score(
+            self.conn,
+            row["id"],
+            d,
+            base_score=20.0,
+            score=20.0,
+            bucket=self.cfg.tags.band_for(20.0),
+            prompt_version=self.prompt_version,
+            model="dedup",
+        )
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])
 
     # -- review, synchronous -------------------------------------------------
 
-    def reviews(self, rows: list[sqlite3.Row], run_id: int | None, client: Any = None,
-                     workers: int | None = None, stop_after: float | None = None,
-                     max_looks: int | None = None) -> dict[str, bool | None]:
+    def reviews(
+        self,
+        rows: list[sqlite3.Row],
+        run_id: int | None,
+        client: Any = None,
+        workers: int | None = None,
+        stop_after: float | None = None,
+        max_looks: int | None = None,
+    ) -> dict[str, bool | None]:
         """Several reviews at once, each recorded the moment it lands (a look that was
         paid for is never lost to a timeout or a Ctrl-C later in the run). ``rows`` are
         autocut candidates with their score and folder. Returns {article id: True when the
@@ -1074,7 +1242,9 @@ class Judge:
                     store.record_review_failure(self.conn, aid)
                     results[aid] = None
                 else:
-                    results[aid] = self.apply_review(aid, float(row["score"]), float(second), row["folder"], client)
+                    results[aid] = self.apply_review(
+                        aid, float(row["score"]), float(second), row["folder"], client
+                    )
                 feed()
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
@@ -1088,8 +1258,9 @@ class Judge:
         full = dict(row)
         user_text = self._user_text([full], self.cfg.review.chars)
         try:
-            verdicts = self.llm.judge(self.cfg.models.reviewer, self.second_look_text, user_text, run_id,
-                                      "second_look")
+            verdicts = self.llm.judge(
+                self.cfg.models.reviewer, self.second_look_text, user_text, run_id, "second_look"
+            )
         except (BudgetExceeded, ModelConfigError):
             raise
         except Exception:  # noqa: BLE001
@@ -1114,7 +1285,9 @@ def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
     fmt = lambda pairs: ", ".join(f"{c}: {n}" for c, n in pairs)  # noqa: E731
     lines = []
     if loved:
-        lines.append(f"Loved (starred or marked great) in the last {days} days (concept: count): {fmt(loved)}")
+        lines.append(
+            f"Loved (starred or marked great) in the last {days} days (concept: count): {fmt(loved)}"
+        )
     if read:
         lines.append(f"Read, marked good or rescued in the last {days} days: {fmt(read)}")
     if not loved and not read:

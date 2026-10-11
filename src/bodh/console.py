@@ -63,8 +63,15 @@ class Child:
         with self.lock:
             if self.alive():
                 raise RuntimeError("a command is already running")
-            self.proc = subprocess.Popen(args, cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                         text=True, bufsize=1)
+            self.proc = subprocess.Popen(
+                args,
+                cwd=str(cwd),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
             self.args, self.started, self.ended, self.code = args, time.time(), 0.0, None
             self.output.clear()
             threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
@@ -96,18 +103,31 @@ class Child:
 
     def state(self) -> dict:
         alive = self.alive()
-        return {"running": alive, "args": self.args[1:] if self.args else [], "started": self.started,
-                "elapsed": (time.time() - self.started) if alive else (self.ended - self.started if self.started else 0),
-                "code": self.code, "output": list(self.output)}
+        return {
+            "running": alive,
+            "args": self.args[1:] if self.args else [],
+            "started": self.started,
+            "elapsed": (time.time() - self.started)
+            if alive
+            else (self.ended - self.started if self.started else 0),
+            "code": self.code,
+            "output": list(self.output),
+        }
 
 
-STATUS_CACHE_SECONDS = 2.0   # one page polls every 3 s; several tabs (or the phone) share one query
-JOBS_CACHE_SECONDS = 10.0    # four `launchctl print` subprocesses per status were the dearest part
+STATUS_CACHE_SECONDS = 2.0  # one page polls every 3 s; several tabs (or the phone) share one query
+JOBS_CACHE_SECONDS = 10.0  # four `launchctl print` subprocesses per status were the dearest part
 
 
 class Console:
-    def __init__(self, cfg: Config, conn: sqlite3.Connection, command: list[str] | None = None,
-                 host: str = "127.0.0.1", port: int = 8766) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        conn: sqlite3.Connection,
+        command: list[str] | None = None,
+        host: str = "127.0.0.1",
+        port: int = 8766,
+    ) -> None:
         self.cfg = cfg
         self.conn = conn
         self.command = command or [sys.executable, "-m", "bodh.cli"]
@@ -152,7 +172,9 @@ class Console:
             host = host.split("]", 1)[0] + "]"
         else:
             host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
-        return host in {"127.0.0.1", "localhost", "[::1]", "::1", self.host.lower()} or host.endswith(".ts.net")
+        return host in {"127.0.0.1", "localhost", "[::1]", "::1", self.host.lower()} or host.endswith(
+            ".ts.net"
+        )
 
     def _reload_config(self) -> None:
         """config.yaml edited by hand (or by `bodh autocut` in a terminal) shows on the next
@@ -173,12 +195,23 @@ class Console:
 
     def run_action(self, action: str, params: dict) -> dict:
         if action == "stop":
-            msg = self.child.stop() if self.child.alive() else locks.stop_process(self.cfg.root / self.cfg.data_dir)
+            msg = (
+                self.child.stop()
+                if self.child.alive()
+                else locks.stop_process(self.cfg.root / self.cfg.data_dir)
+            )
             return {"ok": True, "message": msg}
         if action in ("schedule_pause", "schedule_resume", "schedule_kick"):
-            msg = jobs.schedule(action.split("_", 1)[1], params.get("job", "run"), self.cfg.root / self.cfg.data_dir)
+            msg = jobs.schedule(
+                action.split("_", 1)[1], params.get("job", "run"), self.cfg.root / self.cfg.data_dir
+            )
             return {"ok": not msg.startswith("not kicked"), "message": msg}
-        if action in ("autocut_on", "autocut_off", "enforce_on", "enforce_off"):   # enforce_*: the names before October 2026
+        if action in (
+            "autocut_on",
+            "autocut_off",
+            "enforce_on",
+            "enforce_off",
+        ):  # enforce_*: the names before October 2026
             # the file is the truth: the page shows what the next run will read, never a wish
             ok, msg = jobs.set_autocut(self.cfg.root, action.endswith("_on"))
             if ok:
@@ -198,11 +231,17 @@ class Console:
             self.child.start(cmd, self.cfg.root, self.env)
             return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
         try:
-            res = subprocess.run(cmd, cwd=str(self.cfg.root), env=self.env, capture_output=True, text=True, timeout=600)
+            res = subprocess.run(
+                cmd, cwd=str(self.cfg.root), env=self.env, capture_output=True, text=True, timeout=600
+            )
         except subprocess.TimeoutExpired:
             return {"ok": False, "message": f"bodh {' '.join(args)} took longer than 10 minutes"}
         out = (res.stdout + ("\n" + res.stderr if res.stderr.strip() else "")).strip()
-        return {"ok": res.returncode == 0, "message": f"bodh {' '.join(args)} → exit {res.returncode}", "output": out[-6000:]}
+        return {
+            "ok": res.returncode == 0,
+            "message": f"bodh {' '.join(args)} → exit {res.returncode}",
+            "output": out[-6000:],
+        }
 
     # -- server ---------------------------------------------------------------
 
@@ -227,8 +266,9 @@ class Console:
                     return
                 url = urlsplit(self.path)
                 if url.path in ("/", "/index.html"):
-                    page = (PAGE.replace("__ROOT__", html.escape(str(console.cfg.root)))
-                                .replace("__KEEP__", str(console.cfg.prune.keep)))
+                    page = PAGE.replace("__ROOT__", html.escape(str(console.cfg.root))).replace(
+                        "__KEEP__", str(console.cfg.prune.keep)
+                    )
                     self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     try:
@@ -242,7 +282,7 @@ class Console:
                     lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
                     self._send(200, json.dumps({"lines": lines}).encode("utf-8"))
                 elif url.path.startswith("/dashboard/"):
-                    self._static(url.path[len("/dashboard/"):] or "index.html")
+                    self._static(url.path[len("/dashboard/") :] or "index.html")
                 else:
                     self._send(404, b'{"error":"not found"}')
 
@@ -253,13 +293,21 @@ class Console:
                     self._send(404, b'{"error":"not found"}')
                     return
                 ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-                self._send(200, path.read_bytes(), ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("json") else ""))
+                self._send(
+                    200,
+                    path.read_bytes(),
+                    ctype
+                    + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("json") else ""),
+                )
 
             def do_POST(self) -> None:  # noqa: N802
                 if not console.host_allowed(self.headers.get("Host")):
                     self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
                     return
-                if self.headers.get("X-Bodh") not in ("console", "panel"):  # a page of ours, not a stray form from another site
+                if self.headers.get("X-Bodh") not in (
+                    "console",
+                    "panel",
+                ):  # a page of ours, not a stray form from another site
                     self._send(403, b'{"ok":false,"message":"forbidden"}')
                     return
                 length = int(self.headers.get("Content-Length") or 0)
@@ -289,8 +337,18 @@ class Console:
         self.url = f"http://{self.host}:{self.port}"
         info = data_dir / "console.json"
         try:
-            info.write_text(json.dumps({"pid": os.getpid(), "host": self.host, "port": self.port, "url": self.url,
-                                        "started": time.time()}), encoding="utf-8")
+            info.write_text(
+                json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "host": self.host,
+                        "port": self.port,
+                        "url": self.url,
+                        "started": time.time(),
+                    }
+                ),
+                encoding="utf-8",
+            )
         except OSError:
             pass
         console_log(data_dir, f"serving on {self.url} (pid {os.getpid()})")

@@ -30,7 +30,7 @@ def test_retry_after_relogin_uses_fresh_write_token():
             return httpx.Response(200, text=f"Auth=auth{state['logins']}\n")
         auth = request.headers.get("Authorization", "")
         if auth.endswith("auth1") and path == "/reader/api/0/edit-tag":
-            return httpx.Response(401, text="Unauthorized")   # the session expired between token and edit
+            return httpx.Response(401, text="Unauthorized")  # the session expired between token and edit
         if path == "/reader/api/0/token":
             state["tokens"] += 1
             return httpx.Response(200, text=f"T{state['tokens']}-for-{auth[-5:]}")
@@ -46,8 +46,11 @@ def test_retry_after_relogin_uses_fresh_write_token():
 
 def test_login_401_and_403_raise_auth_error():
     for code, reason in ((401, ""), (403, "BadAuthentication")):
+
         def handler(request: httpx.Request, code=code, reason=reason) -> httpx.Response:
-            return httpx.Response(code, text="no", headers={"X-BQ-LoginErrorReason": reason} if reason else {})
+            return httpx.Response(
+                code, text="no", headers={"X-BQ-LoginErrorReason": reason} if reason else {}
+            )
 
         client = BazQuxClient("e@x", "hunter2", transport=httpx.MockTransport(handler))
         with pytest.raises(BazQuxAuthError) as exc:
@@ -76,16 +79,18 @@ def test_pagination_bounded_on_repeating_continuation(monkeypatch):
     with pytest.raises(BazQuxError):
         client.unread_ids()
     assert calls["n"] == 2
-    assert client.label_ids("Must read") == []                      # a label: empty, as before
+    assert client.label_ids("Must read") == []  # a label: empty, as before
     with pytest.raises(BazQuxError):
-        client.label_ids("Must read", strict=True)                  # unless the caller must know
+        client.label_ids("Must read", strict=True)  # unless the caller must know
     calls["n"] = 0
 
     def fresh(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/accounts/ClientLogin":
             return httpx.Response(200, text="Auth=a\n")
         calls["n"] += 1
-        return httpx.Response(200, json={"itemRefs": [{"id": str(calls["n"])}], "continuation": f"c{calls['n']}"})
+        return httpx.Response(
+            200, json={"itemRefs": [{"id": str(calls["n"])}], "continuation": f"c{calls['n']}"}
+        )
 
     client = BazQuxClient("e@x", "pw", transport=httpx.MockTransport(fresh))
     with pytest.raises(BazQuxError):
@@ -96,8 +101,13 @@ def test_pagination_bounded_on_repeating_continuation(monkeypatch):
 def test_parse_item_tolerates_bad_timestamps():
     assert _int_or_none("1.7e9") == 1_700_000_000 and _int_or_none("1700") == 1700 and _int_or_none(5) == 5
     assert _int_or_none("soon") is None and _int_or_none(None) is None and _int_or_none("") is None
-    raw = {"id": short_to_long(7), "title": "T", "published": "1.7e9", "crawlTimeMsec": "not-a-number",
-           "origin": {"streamId": "feed/x", "title": "X"}}
+    raw = {
+        "id": short_to_long(7),
+        "title": "T",
+        "published": "1.7e9",
+        "crawlTimeMsec": "not-a-number",
+        "origin": {"streamId": "feed/x", "title": "X"},
+    }
     item = _parse_item(raw)
     assert item.published == 1_700_000_000 and item.crawled_msec is None and item.id == short_to_long(7)
 
@@ -106,7 +116,10 @@ def test_item_refs_tolerate_bad_timestamps():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/accounts/ClientLogin":
             return httpx.Response(200, text="Auth=a\n")
-        return httpx.Response(200, json={"itemRefs": [{"id": "1", "timestampUsec": "1.7e15"}, {"id": "2", "timestampUsec": "x"}]})
+        return httpx.Response(
+            200,
+            json={"itemRefs": [{"id": "1", "timestampUsec": "1.7e15"}, {"id": "2", "timestampUsec": "x"}]},
+        )
 
     client = BazQuxClient("e@x", "pw", transport=httpx.MockTransport(handler))
     refs = client.item_refs(READ)

@@ -21,7 +21,7 @@ from .readers.bazqux import BazQuxClient, BazQuxError
 log = logging.getLogger(__name__)
 
 RUN_TIMEOUT_SECONDS = 15 * 60
-RUN_DEADLINE_MARGIN = 60   # no new model call starts this close to the limit; running ones finish
+RUN_DEADLINE_MARGIN = 60  # no new model call starts this close to the limit; running ones finish
 INGEST_BATCH = 200
 
 
@@ -34,11 +34,11 @@ class RunResult:
     scored: int = 0
     dupes: int = 0
     pending: int = 0
-    submitted: int = 0        # batch mode: articles sent to the Batches API this run
-    inflight: int = 0         # batch mode: articles whose judgment is still on its way
+    submitted: int = 0  # batch mode: articles sent to the Batches API this run
+    inflight: int = 0  # batch mode: articles whose judgment is still on its way
     reviews: int = 0
     saved: int = 0
-    held: int = 0             # batch mode: close calls waiting for their review
+    held: int = 0  # batch mode: close calls waiting for their review
     new_ground: int = 0
     cut_autocut: int = 0
     cut_prune: int = 0
@@ -55,11 +55,16 @@ class RunResult:
         if self.batch_mode:
             parts += [f"submitted {self.submitted}", f"with the model {self.inflight}"]
         parts += [
-            f"dupes {self.dupes}", f"pending {self.pending}",
-            f"reviews {self.reviews} (saved {self.saved}" + (f", waiting for review {self.held})" if self.batch_mode else ")"),
-            f"autocut {self.cut_autocut}", f"pruned {self.cut_prune}",
-            f"reads {fb.get('reads', 0)}", f"stars {fb.get('stars', 0)}", f"rescues {fb.get('rescues', 0)}",
-            *( [f"verdicts {fb['verdicts']}"] if fb.get("verdicts") else [] ),
+            f"dupes {self.dupes}",
+            f"pending {self.pending}",
+            f"reviews {self.reviews} (saved {self.saved}"
+            + (f", waiting for review {self.held})" if self.batch_mode else ")"),
+            f"autocut {self.cut_autocut}",
+            f"pruned {self.cut_prune}",
+            f"reads {fb.get('reads', 0)}",
+            f"stars {fb.get('stars', 0)}",
+            f"rescues {fb.get('rescues', 0)}",
+            *([f"verdicts {fb['verdicts']}"] if fb.get("verdicts") else []),
             f"spend ${self.spend_usd:.2f}",
         ]
         if self.boundary is not None:
@@ -84,7 +89,9 @@ class Context:
     @property
     def client(self) -> BazQuxClient:
         if self._client is None:
-            self._client = BazQuxClient(self.secrets.value("bazqux_email"), self.secrets.value("bazqux_password"))
+            self._client = BazQuxClient(
+                self.secrets.value("bazqux_email"), self.secrets.value("bazqux_password")
+            )
         return self._client
 
     @property
@@ -94,8 +101,13 @@ class Context:
         return self._llm
 
     def judge(self) -> Judge:
-        return Judge(self.cfg, self.llm, self.conn, context=concept_context(self.conn, self.cfg),
-                       expansion_topics=expansion_topics(self.cfg.read_learned()))
+        return Judge(
+            self.cfg,
+            self.llm,
+            self.conn,
+            context=concept_context(self.conn, self.cfg),
+            expansion_topics=expansion_topics(self.cfg.read_learned()),
+        )
 
 
 def folder_map(client: BazQuxClient) -> dict[str, str | None]:
@@ -106,7 +118,9 @@ def protected_ids(ctx: Context) -> set[str] | None:
     """Members of the Must read smart stream and of protected folders, or None when BazQux
     could not say: nothing may then be cut on that answer, and no protection is withdrawn."""
     try:
-        ids: set[str] = set(ctx.client.label_ids(ctx.cfg.protect.must_read_stream, unread_only=True, strict=True))
+        ids: set[str] = set(
+            ctx.client.label_ids(ctx.cfg.protect.must_read_stream, unread_only=True, strict=True)
+        )
         for name, policy in ctx.cfg.folders.items():
             if policy.protected:
                 ids |= set(ctx.client.label_ids(name, unread_only=True, strict=True))
@@ -118,7 +132,9 @@ def protected_ids(ctx: Context) -> set[str] | None:
 
 def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -> int:
     """Fetch text for unread articles we have not seen, in batches."""
-    new_ids = sorted((unread_now - store.known_ids(ctx.conn)) | (set(store.unread_without_text(ctx.conn)) & unread_now))
+    new_ids = sorted(
+        (unread_now - store.known_ids(ctx.conn)) | (set(store.unread_without_text(ctx.conn)) & unread_now)
+    )
     if not new_ids:
         return 0
     # newest first, and written batch by batch, so a timeout on a huge first pile keeps its progress
@@ -126,7 +142,7 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
         new_ids.sort(key=lambda i: -ctx.ref_time.get(i, 0))
     done = 0
     for start in range(0, len(new_ids), INGEST_BATCH):
-        items, _vanished = ctx.client.contents(new_ids[start: start + INGEST_BATCH])
+        items, _vanished = ctx.client.contents(new_ids[start : start + INGEST_BATCH])
         with store.transaction(ctx.conn):  # one fsync per batch of 200, not per article
             for item in items:
                 folder = folders.get(item.feed_stream_id)
@@ -147,25 +163,36 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
     """Mark the unread articles BazQux says are protected (and those in protected folders),
     and clear the rest. With no answer from BazQux (``protected`` is None) a protection is
     never withdrawn: the flags from the last good answer stand."""
-    rows = ctx.conn.execute("SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
-                            "WHERE st.status = 'unread' "
-                            "OR (st.status = 'cut' AND (st.cut_tagged = 0 OR st.read_marked = 0))").fetchall()
-    prot = {r["id"] for r in rows
-            if (protected is not None and r["id"] in protected) or ctx.cfg.is_protected(r["folder"])}
+    rows = ctx.conn.execute(
+        "SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
+        "WHERE st.status = 'unread' "
+        "OR (st.status = 'cut' AND (st.cut_tagged = 0 OR st.read_marked = 0))"
+    ).fetchall()
+    prot = {
+        r["id"]
+        for r in rows
+        if (protected is not None and r["id"] in protected) or ctx.cfg.is_protected(r["folder"])
+    }
     store.set_flags(ctx.conn, prot, protected=1)
     if protected is not None:
         store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in prot], protected=0)
     store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] in starred], starred=1)
 
 
-def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, workers: int | None = None,
-        sync: bool = False, stop_after: float | None = None) -> RunResult:
+def run(
+    ctx: Context,
+    score_limit: int | None = None,
+    enforce: bool = True,
+    workers: int | None = None,
+    sync: bool = False,
+    stop_after: float | None = None,
+) -> RunResult:
     """The timer's job. ``enforce=False`` is scoring-only mode: everything but the cuts.
     ``sync=True`` waits for every model call instead of using the Batches API. No model call
     starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
     run's limit), so the next scheduled run is not skipped because this one overran."""
     cfg, conn = ctx.cfg, ctx.conn
-    cfg.check_about()   # before any network: nothing is fetched or recorded for a student who does not exist
+    cfg.check_about()  # before any network: nothing is fetched or recorded for a student who does not exist
     if stop_after is None:
         stop_after = time.monotonic() + RUN_TIMEOUT_SECONDS - RUN_DEADLINE_MARGIN
     run_id = store.begin_run(conn, "run")
@@ -224,13 +251,22 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             res.pending = judge.pending_count(exclude_inflight=True)
             res.inflight = len(store.inflight_ids(conn, "teacher"))
             if col["scored"] or sub["submitted"]:
-                log.info("judge: judged %d, submitted %d, with the model %d, pending %d",
-                         col["scored"], sub["submitted"], res.inflight, res.pending)
+                log.info(
+                    "judge: judged %d, submitted %d, with the model %d, pending %d",
+                    col["scored"],
+                    sub["submitted"],
+                    res.inflight,
+                    res.pending,
+                )
         else:
             phase("judging")
-            stats = judge.score_pending(run_id, limit=score_limit or cfg.limits.per_run_sync,
-                                          workers=workers or cfg.limits.parallel_calls, on_progress=live,
-                                          stop_after=stop_after)
+            stats = judge.score_pending(
+                run_id,
+                limit=score_limit or cfg.limits.per_run_sync,
+                workers=workers or cfg.limits.parallel_calls,
+                on_progress=live,
+                stop_after=stop_after,
+            )
             if stats["stopped_early"]:
                 res.notes.append("time limit near: the rest waits for the next run")
             res.scored += stats["scored"]
@@ -247,11 +283,14 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
         if enforce:
             phase("autocut")
             if feedback.rescue_rate_week(conn) > cfg.safety.rescue_rate_week:
-                res.notes.append(f"rescues above {cfg.safety.rescue_rate_week:.0%} this week; cut-off lowered to "
-                                 f"{cfg.safety.lowered_cutoff}")
+                res.notes.append(
+                    f"rescues above {cfg.safety.rescue_rate_week:.0%} this week; cut-off lowered to "
+                    f"{cfg.safety.lowered_cutoff}"
+                )
                 cfg.autocut.cutoff = min(cfg.autocut.cutoff, cfg.safety.lowered_cutoff)
-            sel = cutmod.select_autocut(conn, cfg, judge, run_id, newly_scored=newly_scored, client=ctx.client,
-                                      stop_after=stop_after)
+            sel = cutmod.select_autocut(
+                conn, cfg, judge, run_id, newly_scored=newly_scored, client=ctx.client, stop_after=stop_after
+            )
             if sel.blocked:
                 res.notes.append(sel.blocked)
             res.reviews += sel.reviews
@@ -274,14 +313,28 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             if res.feedback.get("prune_requested"):
                 res.notes.append("prune requested by tag; it waits for a run with autocut on")
         if res.feedback.get("suspect_flip"):
-            res.notes.append(f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
-                             "as read until the next run sees the same")
+            res.notes.append(
+                f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
+                "as read until the next run sees the same"
+            )
 
         res.spend_usd = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
-        store.finish_run(conn, run_id, True, unread_upstream=res.unread_upstream, new=res.new, scored=res.scored,
-                         second_looks=res.reviews, cut_autocut=res.cut_autocut, cut_prune=res.cut_prune,
-                         rescues=res.feedback.get("rescues", 0), reads=res.feedback.get("reads", 0),
-                         spend_usd=res.spend_usd, boundary=res.boundary, summary=res.summary())
+        store.finish_run(
+            conn,
+            run_id,
+            True,
+            unread_upstream=res.unread_upstream,
+            new=res.new,
+            scored=res.scored,
+            second_looks=res.reviews,
+            cut_autocut=res.cut_autocut,
+            cut_prune=res.cut_prune,
+            rescues=res.feedback.get("rescues", 0),
+            reads=res.feedback.get("reads", 0),
+            spend_usd=res.spend_usd,
+            boundary=res.boundary,
+            summary=res.summary(),
+        )
         phase("rendering the dashboard")
         render_dashboard(cfg, conn, res)
         progress.set_phase(conn, "")
@@ -315,8 +368,16 @@ def render_dashboard(cfg: Config, conn: sqlite3.Connection, res: RunResult | Non
             res.notes.append("dashboard render failed")
 
 
-def catch_up(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = False, budget: float | None = None,
-          on_progress: Any = None, model: str | None = None, max_seconds: float | None = None) -> dict:
+def catch_up(
+    ctx: Context,
+    workers: int,
+    chunk: int = 1000,
+    all_ages: bool = False,
+    budget: float | None = None,
+    on_progress: Any = None,
+    model: str | None = None,
+    max_seconds: float | None = None,
+) -> dict:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, round after round until nothing is pending. Scores and tags only;
     nothing is cut. Resumable: stop it and run it again. With ``model`` the quick judge (a faster
@@ -336,9 +397,18 @@ def catch_up(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = Fal
         judge.rejudge = None
     ctx.llm.retries(8)
     run_id = store.begin_run(conn, "catch-up")
-    total = {"scored": 0, "dupes": 0, "failed": 0, "rounds": 0, "pending": judge.pending_count(exclude_inflight=True),
-             "budget_stop": False, "started": time.monotonic(), "interrupted": False, "run_id": run_id,
-             "timed_out": False}
+    total = {
+        "scored": 0,
+        "dupes": 0,
+        "failed": 0,
+        "rounds": 0,
+        "pending": judge.pending_count(exclude_inflight=True),
+        "budget_stop": False,
+        "started": time.monotonic(),
+        "interrupted": False,
+        "run_id": run_id,
+        "timed_out": False,
+    }
     deadline = total["started"] + max_seconds if max_seconds else None
     live = progress.live_writer(cfg, conn)
     current: dict = {}
@@ -353,11 +423,16 @@ def catch_up(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = Fal
     idle_rounds = 0
     try:
         while total["pending"] > 0:
-            progress.set_phase(conn, f"catch-up round {total['rounds'] + 1}: judging {min(chunk, total['pending']):,} "
-                                     f"of {total['pending']:,} pending")
+            progress.set_phase(
+                conn,
+                f"catch-up round {total['rounds'] + 1}: judging {min(chunk, total['pending']):,} "
+                f"of {total['pending']:,} pending",
+            )
             progress.write_live(cfg, conn)
             current.clear()
-            stats = judge.score_pending(run_id, limit=chunk, workers=workers, on_progress=tick, stop_after=deadline)
+            stats = judge.score_pending(
+                run_id, limit=chunk, workers=workers, on_progress=tick, stop_after=deadline
+            )
             current.clear()
             total["rounds"] += 1
             total["scored"] += stats["scored"]
@@ -398,30 +473,46 @@ def catch_up(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = Fal
             log.exception("catch-up: tagging failed; the next run finishes it")
         total["elapsed"] = time.monotonic() - total["started"]
         total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
-        summary = (f"catch-up ({cfg.models.judge}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
-                   f"{total['elapsed'] / 60:.1f} min, {total['failed']} failed batches, pending {total['pending']}"
-                   + (", interrupted" if total["interrupted"] else "")
-                   + (", time limit" if total["timed_out"] else "")
-                   + (", budget reached" if total["budget_stop"] else ""))
-        store.finish_run(conn, run_id, not total["interrupted"] and not total.get("error"), scored=total["scored"],
-                         spend_usd=total["spend"], summary=summary, error=total.get("error"))
+        summary = (
+            f"catch-up ({cfg.models.judge}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
+            f"{total['elapsed'] / 60:.1f} min, {total['failed']} failed batches, pending {total['pending']}"
+            + (", interrupted" if total["interrupted"] else "")
+            + (", time limit" if total["timed_out"] else "")
+            + (", budget reached" if total["budget_stop"] else "")
+        )
+        store.finish_run(
+            conn,
+            run_id,
+            not total["interrupted"] and not total.get("error"),
+            scored=total["scored"],
+            spend_usd=total["spend"],
+            summary=summary,
+            error=total.get("error"),
+        )
         render_dashboard(cfg, conn)
         progress.set_phase(conn, "")
         progress.write_live(cfg, conn)
     return total
 
 
-def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
-          below: float | None = None, dry_run: bool = False,
-          confirmed: set[str] | None = None) -> tuple[int, cutmod.Selection]:
+def prune(
+    ctx: Context,
+    keep: int | None = None,
+    fraction: float | None = None,
+    below: float | None = None,
+    dry_run: bool = False,
+    confirmed: set[str] | None = None,
+) -> tuple[int, cutmod.Selection]:
     """The student's cut. Refused while the safety limit is tripped: the scores it would rank by are
     the ones the safety limit declared suspect. ``confirmed`` (the ids shown and agreed to) bounds a
     real prune to them, so a run between the question and the answer cannot widen the cut."""
     cfg, conn = ctx.cfg, ctx.conn
     tripped = cutmod.safety_tripped(conn)
     if tripped:
-        raise cutmod.SafetyTripped(f"the safety limit tripped in run {tripped}: the latest scores may be wrong; "
-                                    "check a few with `bodh why ID`, then `bodh safety reset`")
+        raise cutmod.SafetyTripped(
+            f"the safety limit tripped in run {tripped}: the latest scores may be wrong; "
+            "check a few with `bodh why ID`, then `bodh safety reset`"
+        )
     sel = cutmod.select_prune(conn, cfg, keep=keep, fraction=fraction, below=below)
     if confirmed is not None:
         unconfirmed = [r for r in sel.cut if r["id"] not in confirmed]
@@ -436,12 +527,24 @@ def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
         progress.set_phase(conn, f"prune: cutting {len(sel.cut_ids):,} in BazQux")
         progress.write_live(cfg, conn)
         n = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, run_id, "prune")
-        store.finish_run(conn, run_id, True, cut_prune=n, boundary=sel.boundary,
-                         summary=f"prune: cut {n}, boundary {sel.boundary}")
+        store.finish_run(
+            conn,
+            run_id,
+            True,
+            cut_prune=n,
+            boundary=sel.boundary,
+            summary=f"prune: cut {n}, boundary {sel.boundary}",
+        )
         return n, sel
     except KeyboardInterrupt:
-        store.finish_run(conn, run_id, False, cut_prune=len(sel.cut_ids), boundary=sel.boundary,
-                         error="stopped; the next run finishes the tags and read marks, `bodh undo` reverses it")
+        store.finish_run(
+            conn,
+            run_id,
+            False,
+            cut_prune=len(sel.cut_ids),
+            boundary=sel.boundary,
+            error="stopped; the next run finishes the tags and read marks, `bodh undo` reverses it",
+        )
         raise
     except Exception as exc:
         store.finish_run(conn, run_id, False, error=f"{type(exc).__name__}: {exc}")
@@ -474,15 +577,22 @@ def clear_old(ctx: Context, older_than_days: int, dry_run: bool) -> tuple[int, i
         protected = protected_ids(ctx)
         if protected is None:
             raise BazQuxError(refusal)
-        return cutmod.clear_old(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id=0, dry_run=True)
+        return cutmod.clear_old(
+            ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id=0, dry_run=True
+        )
     run_id = store.begin_run(ctx.conn, "clear-old")
     try:
         protected = protected_ids(ctx)
         if protected is None:
             raise BazQuxError(refusal)
         candidates, done = cutmod.clear_old(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id)
-        store.finish_run(ctx.conn, run_id, True, cut_prune=done,
-                         summary=f"clear-old: {candidates} older than {older_than_days}d, {done} marked read")
+        store.finish_run(
+            ctx.conn,
+            run_id,
+            True,
+            cut_prune=done,
+            summary=f"clear-old: {candidates} older than {older_than_days}d, {done} marked read",
+        )
         return candidates, done
     except Exception as exc:
         store.finish_run(ctx.conn, run_id, False, error=f"{type(exc).__name__}: {exc}")

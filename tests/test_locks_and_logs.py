@@ -109,7 +109,7 @@ def test_pid_file_and_liveness(cfg, monkeypatch):
         pid, kind, started = pid_path.read_text(encoding="utf-8").split()
         assert int(pid) == __import__("os").getpid() and kind == "blast"
         assert locks.run_in_progress(data_dir) and locks.running_process(data_dir)["kind"] == "blast"
-        assert (data_dir / "bodh.lock").stat().st_size == 0   # never truncated, never written
+        assert (data_dir / "bodh.lock").stat().st_size == 0  # never truncated, never written
         with __import__("pytest").raises(locks.AlreadyRunning):
             with locks.run_lock(data_dir, "run"):
                 pass

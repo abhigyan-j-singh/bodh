@@ -62,15 +62,15 @@ def test_config_rejects_typos_bounds_and_timezone():
     import pydantic
 
     for raw in (
-        {"prune": {"kep": 40}},                        # a typo used to load as the default
-        {"autocut": {"max_per_run": -1}},              # cut all but one
-        {"prune": {"keep": -1}},                       # cut everything
+        {"prune": {"kep": 40}},  # a typo used to load as the default
+        {"autocut": {"max_per_run": -1}},  # cut all but one
+        {"prune": {"keep": -1}},  # cut everything
         {"autocut": {"cutoff": 101}},
         {"prune": {"max_share_per_concept": 1.5}},
         {"folders": {"X": {"cutoff": 200}}},
-        {"timezone": "Mars/Olympus"},                  # loaded, then every run failed in budget_left
+        {"timezone": "Mars/Olympus"},  # loaded, then every run failed in budget_left
         {"tags": {"bands": {}}},
-        {"tags": {"cut": "rescue"}},                   # two tags with one name
+        {"tags": {"cut": "rescue"}},  # two tags with one name
         {"tags": {"great": ""}},
         {"models": {"batch_discount": 2}},
         {"models": {"prices_per_mtok": {"m": [1.0]}}},
@@ -95,41 +95,89 @@ def test_old_key_names_map_with_a_warning(tmp_path, caplog):
 
     old = {
         "models": {"teacher": "m1", "second_look": "m2", "learner": "m3", "batch": False},
-        "scoring": {"prompt_version": "teacher.v2", "batch_size": 10, "workers": 2, "max_per_run": 100,
-                    "batch_max_per_run": 200, "max_age_days": 7, "rejudge_min_score": 60, "opening_chars": 500,
-                    "second_look_window": 5, "second_look_chars": 3000, "second_look_max_per_run": 9,
-                    "expansion_bonus": 5, "home_angle": "India", "home_bonus": 7,
-                    "weights": {"quality": 0.5, "learning": 0.5, "fit": 0, "breadth": 0, "relevance": 0}},
-        "cut": {"enforce": True, "target_unread": 30, "default_floor": 25, "max_cuts_per_run": 100, "concept_cap": 0.5,
-                "exploration_share": 0.1, "must_read_stream": "Keep",
-                "folders": {"News": {"auto_cut_below": 70}, "Comics": {"protected": True, "score": False}}},
+        "scoring": {
+            "prompt_version": "teacher.v2",
+            "batch_size": 10,
+            "workers": 2,
+            "max_per_run": 100,
+            "batch_max_per_run": 200,
+            "max_age_days": 7,
+            "rejudge_min_score": 60,
+            "opening_chars": 500,
+            "second_look_window": 5,
+            "second_look_chars": 3000,
+            "second_look_max_per_run": 9,
+            "expansion_bonus": 5,
+            "home_angle": "India",
+            "home_bonus": 7,
+            "weights": {"quality": 0.5, "learning": 0.5, "fit": 0, "breadth": 0, "relevance": 0},
+        },
+        "cut": {
+            "enforce": True,
+            "target_unread": 30,
+            "default_floor": 25,
+            "max_cuts_per_run": 100,
+            "concept_cap": 0.5,
+            "exploration_share": 0.1,
+            "must_read_stream": "Keep",
+            "folders": {"News": {"auto_cut_below": 70}, "Comics": {"protected": True, "score": False}},
+        },
         "tags": {"buckets": {90: "s90", 0: "s0"}, "wrong": "wrong"},
-        "breakers": {"max_cut_share": 0.9, "min_new_for_breaker": 10, "rescue_rate_week": 0.1, "lowered_floor": 20,
-                     "bulk_dismiss_threshold": 15},
+        "breakers": {
+            "max_cut_share": 0.9,
+            "min_new_for_breaker": 10,
+            "rescue_rate_week": 0.1,
+            "lowered_floor": 20,
+            "bulk_dismiss_threshold": 15,
+        },
         "feedback": {"concept_window_days": 30},
     }
     data, moves = modernise_keys(old)
-    assert len(moves) == 36 and "cut.enforce -> autocut.enabled" in moves and "cut.folders -> folders" in moves
+    assert (
+        len(moves) == 36 and "cut.enforce -> autocut.enabled" in moves and "cut.folders -> folders" in moves
+    )
     assert "folders.News.auto_cut_below -> folders.News.cutoff" in moves
     cfg = Config(**data)
     assert cfg.models.judge == "m1" and cfg.models.reviewer == "m2" and cfg.models.profiler == "m3"
-    assert cfg.judge.articles_per_call == 10 and cfg.judge.text_chars == 500 and cfg.judge.home_angle == "India"
+    assert (
+        cfg.judge.articles_per_call == 10 and cfg.judge.text_chars == 500 and cfg.judge.home_angle == "India"
+    )
     assert cfg.review.window == 5 and cfg.review.chars == 3000 and cfg.review.max_per_run == 9
     assert cfg.catch_up.rejudge_at == 60 and cfg.limits.parallel_calls == 2 and cfg.limits.max_age_days == 7
     assert cfg.autocut.enabled is True and cfg.autocut.cutoff == 25 and cfg.autocut.max_per_run == 100
-    assert cfg.prune.keep == 30 and cfg.prune.max_share_per_concept == 0.5 and cfg.protect.must_read_stream == "Keep"
-    assert cfg.folders["News"].cutoff == 70 and cfg.folders["Comics"].judge is False and cfg.cutoff_for("News") == 70
-    assert cfg.tags.bands == {90: "s90", 0: "s0"} and cfg.tags.rescue == "wrong" and cfg.tags.rescue_tags() == ["wrong"]
-    assert cfg.safety.min_judged == 10 and cfg.safety.lowered_cutoff == 20 and cfg.safety.mark_all_read_threshold == 15
+    assert (
+        cfg.prune.keep == 30
+        and cfg.prune.max_share_per_concept == 0.5
+        and cfg.protect.must_read_stream == "Keep"
+    )
+    assert (
+        cfg.folders["News"].cutoff == 70
+        and cfg.folders["Comics"].judge is False
+        and cfg.cutoff_for("News") == 70
+    )
+    assert (
+        cfg.tags.bands == {90: "s90", 0: "s0"}
+        and cfg.tags.rescue == "wrong"
+        and cfg.tags.rescue_tags() == ["wrong"]
+    )
+    assert (
+        cfg.safety.min_judged == 10
+        and cfg.safety.lowered_cutoff == 20
+        and cfg.safety.mark_all_read_threshold == 15
+    )
     assert cfg.profile.concept_window_days == 30
     # a file on disk: the warning, and doctor's list
-    (tmp_path / "config.yaml").write_text("cut:\n  enforce: true\n  target_unread: 30\nbreakers:\n  lowered_floor: 20\n",
-                                           encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        "cut:\n  enforce: true\n  target_unread: 30\nbreakers:\n  lowered_floor: 20\n", encoding="utf-8"
+    )
     with caplog.at_level(logging.WARNING):
         loaded = load_config(tmp_path)
     assert loaded.autocut.enabled is True and loaded.prune.keep == 30 and loaded.safety.lowered_cutoff == 20
     assert "3 old key name(s)" in caplog.text and loaded.old_keys == [
-        "cut.enforce -> autocut.enabled", "cut.target_unread -> prune.keep", "breakers.lowered_floor -> safety.lowered_cutoff"]
+        "cut.enforce -> autocut.enabled",
+        "cut.target_unread -> prune.keep",
+        "breakers.lowered_floor -> safety.lowered_cutoff",
+    ]
     assert Config(**modernise_keys({"tags": {"wrong": "nope"}})[0]).tags.rescue_tags() == ["nope", "wrong"]
     with pytest.raises(ConfigError):
         modernise_keys({"cut": {"enforce": True}, "autocut": {"enabled": False}})
@@ -142,13 +190,23 @@ def test_old_key_names_map_with_a_warning(tmp_path, caplog):
 def test_secrets_never_appear_in_repr_or_str():
     from bodh.config import Secrets
 
-    s = Secrets(bazqux_email="student@example.com", bazqux_password="hunter2", anthropic_api_key="sk-ant-xyz",
-                healthcheck_url="https://hc-ping.com/uuid-secret")
+    s = Secrets(
+        bazqux_email="student@example.com",
+        bazqux_password="hunter2",
+        anthropic_api_key="sk-ant-xyz",
+        healthcheck_url="https://hc-ping.com/uuid-secret",
+    )
     for text in (repr(s), str(s), f"{s!r}", repr(s.bazqux_password), str(s.model_dump())):
         for secret in ("student@example.com", "hunter2", "sk-ant-xyz", "uuid-secret"):
             assert secret not in text
-    assert s.value("bazqux_password") == "hunter2" and s.is_set("anthropic_api_key") and not Secrets().is_set("bazqux_email")
-    assert sorted(s.values()) == sorted(["student@example.com", "hunter2", "sk-ant-xyz", "https://hc-ping.com/uuid-secret"])
+    assert (
+        s.value("bazqux_password") == "hunter2"
+        and s.is_set("anthropic_api_key")
+        and not Secrets().is_set("bazqux_email")
+    )
+    assert sorted(s.values()) == sorted(
+        ["student@example.com", "hunter2", "sk-ant-xyz", "https://hc-ping.com/uuid-secret"]
+    )
 
 
 def test_unknown_model_warns_once(caplog):
@@ -192,12 +250,20 @@ def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
     target.write_bytes(b"TZif2")
     link.symlink_to(target)
     real_path = config.Path
-    monkeypatch.setattr(config, "Path", lambda p="": real_path(str(link)) if p == "/etc/localtime" else real_path(p))
+    monkeypatch.setattr(
+        config, "Path", lambda p="": real_path(str(link)) if p == "/etc/localtime" else real_path(p)
+    )
     assert config._localtime_name() == "Europe/Lisbon"
     # macOS: /var/db/timezone/tz/<version>/zoneinfo/...; the posix/ and right/ trees; $TZ as a path
-    assert config._after_zoneinfo("/private/var/db/timezone/tz/2024a.1.0/zoneinfo/Asia/Kolkata") == "Asia/Kolkata"
+    assert (
+        config._after_zoneinfo("/private/var/db/timezone/tz/2024a.1.0/zoneinfo/Asia/Kolkata")
+        == "Asia/Kolkata"
+    )
     assert config._after_zoneinfo("/usr/share/zoneinfo/posix/Europe/Lisbon") == "Europe/Lisbon"
-    assert config._after_zoneinfo("/usr/share/zoneinfo") is None and config._after_zoneinfo("/etc/localtime") is None
+    assert (
+        config._after_zoneinfo("/usr/share/zoneinfo") is None
+        and config._after_zoneinfo("/etc/localtime") is None
+    )
     monkeypatch.setenv("TZ", ":/usr/share/zoneinfo/Europe/Lisbon")
     assert config.system_timezone() == "Europe/Lisbon"
 
@@ -232,7 +298,9 @@ def test_the_example_about_is_recognised_and_refused(tmp_path, cfg, conn):
     assert cfg.about_is_example()
     with pytest.raises(ConfigError, match="still the worked example"):
         Judge(cfg, None, conn)  # type: ignore[arg-type]
-    own = re.sub(r"<!--.*?-->", "", example, flags=re.S).replace("Ines, a marine biologist", "Someone else, a geologist")
+    own = re.sub(r"<!--.*?-->", "", example, flags=re.S).replace(
+        "Ines, a marine biologist", "Someone else, a geologist"
+    )
     cfg.about_path.write_text(own, encoding="utf-8")
     assert not cfg.about_is_example() and "geologist" in cfg.read_about()
     Judge(cfg, None, conn)  # type: ignore[arg-type]

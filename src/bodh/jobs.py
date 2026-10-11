@@ -32,10 +32,16 @@ JOBS = {
     "console": "bodh.console",
 }
 # the labels an install from before the rename used; the installer boots them out
-OLD_JOBS = ["com.antriksh.triage", "com.antriksh.triage.weekly", "com.antriksh.triage.report", "com.antriksh.triage.panel"]
+OLD_JOBS = [
+    "com.antriksh.triage",
+    "com.antriksh.triage.weekly",
+    "com.antriksh.triage.report",
+    "com.antriksh.triage.panel",
+]
 
 
 # -- launchd ------------------------------------------------------------------
+
 
 def launchctl_available() -> bool:
     return shutil.which("launchctl") is not None
@@ -59,8 +65,17 @@ def _domain(mode: str) -> str:
 def job_state(label: str) -> dict:
     """installed, loaded, state ('running', 'waiting', 'not loaded', 'not installed', 'unknown'),
     last exit code, pid, next fire interval, as launchctl reports them."""
-    out = {"label": label, "installed": False, "loaded": False, "state": "not installed", "last_exit": None,
-           "pid": None, "mode": "", "plist": None, "interval": None}
+    out = {
+        "label": label,
+        "installed": False,
+        "loaded": False,
+        "state": "not installed",
+        "last_exit": None,
+        "pid": None,
+        "mode": "",
+        "plist": None,
+        "interval": None,
+    }
     path, mode = _plist_path(label)
     if path is None:
         return out
@@ -69,8 +84,9 @@ def job_state(label: str) -> dict:
         out["state"] = "unknown (no launchctl here)"
         return out
     try:
-        res = subprocess.run(["launchctl", "print", f"{_domain(mode)}/{label}"], capture_output=True, text=True,
-                             timeout=10)
+        res = subprocess.run(
+            ["launchctl", "print", f"{_domain(mode)}/{label}"], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         out["state"] = f"unknown ({exc})"
         return out
@@ -103,8 +119,10 @@ def schedule(action: str, which: str = "all", data_dir: Path | None = None) -> s
         if data_dir is not None and which == "run":
             proc = locks.running_process(data_dir)
             if proc is not None:
-                return (f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `bodh stop` "
-                        "it first")
+                return (
+                    f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `bodh stop` "
+                    "it first"
+                )
     names = list(JOBS) if which == "all" else [which]
     lines = [_schedule_one(action, name) for name in names]
     if action == "pause" and which == "all":
@@ -123,18 +141,37 @@ def _schedule_one(action: str, which: str) -> str:
         return f"{label} runs as a daemon; pause it with: sudo launchctl bootout system/{label}"
     dom = _domain(mode)
     if action == "pause":
-        res = subprocess.run(["launchctl", "bootout", f"{dom}/{label}"], capture_output=True, text=True, timeout=20)
-        return f"paused {label}" if res.returncode == 0 else f"{label} already paused ({res.stderr.strip() or 'not loaded'})"
+        res = subprocess.run(
+            ["launchctl", "bootout", f"{dom}/{label}"], capture_output=True, text=True, timeout=20
+        )
+        return (
+            f"paused {label}"
+            if res.returncode == 0
+            else f"{label} already paused ({res.stderr.strip() or 'not loaded'})"
+        )
     if action == "resume":
-        res = subprocess.run(["launchctl", "bootstrap", dom, str(path)], capture_output=True, text=True, timeout=20)
-        return f"resumed {label}" if res.returncode == 0 else f"could not load {label}: {res.stderr.strip() or res.stdout.strip()}"
+        res = subprocess.run(
+            ["launchctl", "bootstrap", dom, str(path)], capture_output=True, text=True, timeout=20
+        )
+        return (
+            f"resumed {label}"
+            if res.returncode == 0
+            else f"could not load {label}: {res.stderr.strip() or res.stdout.strip()}"
+        )
     if action == "kick":
-        res = subprocess.run(["launchctl", "kickstart", "-k", f"{dom}/{label}"], capture_output=True, text=True, timeout=20)
-        return f"started {label} now" if res.returncode == 0 else f"could not start {label}: {res.stderr.strip()}"
+        res = subprocess.run(
+            ["launchctl", "kickstart", "-k", f"{dom}/{label}"], capture_output=True, text=True, timeout=20
+        )
+        return (
+            f"started {label} now"
+            if res.returncode == 0
+            else f"could not start {label}: {res.stderr.strip()}"
+        )
     return f"unknown action {action}"
 
 
 # -- the console's own state ------------------------------------------------
+
 
 def console_state(cfg: Config) -> dict:
     """Is the console answering? From data/console.json (written by `bodh console`) and a
@@ -165,7 +202,9 @@ def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
     console …), except this one. Anchored to the checkout's path: a stop --all from one checkout must
     not end another's console, or an editor whose arguments mention the path."""
     try:
-        res = subprocess.run(["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10)
+        res = subprocess.run(
+            ["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.SubprocessError):
         return []
     out = []
@@ -182,8 +221,10 @@ def stray_pattern(root: Path | None) -> str:
     # a console script runs as `<venv>/bin/python <venv>/bin/bodh …` (its shebang), so the
     # interpreter may come first
     if root is not None:
-        return (rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/(bodh|triage)( |$)"
-                r"|^\S*python\S* -m bodh\.cli( |$)")
+        return (
+            rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/(bodh|triage)( |$)"
+            r"|^\S*python\S* -m bodh\.cli( |$)"
+        )
     return r"^(\S+/python\S* )?\S*/\.venv/bin/(bodh|triage)( |$)|^\S*python\S* -m bodh\.cli( |$)"
 
 
@@ -217,6 +258,7 @@ def stop_all(cfg: Config) -> list[str]:
 
 # -- config levers --------------------------------------------------------------
 
+
 def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
     """Flip `autocut.enabled` in config.yaml in place, keeping every other line (and every
     comment) as it is. The key is found under its section whatever its spelling (true, True,
@@ -234,7 +276,7 @@ def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
         return False, "config.yaml does not hold a mapping of sections; edit it by hand"
     section, key = "autocut", "enabled"
     if "autocut" not in before and isinstance(before.get("cut"), dict) and "enforce" in before["cut"]:
-        section, key = "cut", "enforce"   # the layout before October 2026, read for one release
+        section, key = "cut", "enforce"  # the layout before October 2026, read for one release
     new_text = _edit_flag(text, section, key, on)
     try:
         after = yaml.safe_load(new_text) or {}
@@ -251,15 +293,20 @@ def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
         path.write_text(new_text, encoding="utf-8")
     except OSError as exc:
         return False, f"config.yaml could not be written: {exc}"
-    return True, (f"{section}.{key} is now "
-                  + ("true: autocut cuts below the cut-off from the next run" if on
-                     else "false: scoring-only mode, nothing is cut"))
+    return True, (
+        f"{section}.{key} is now "
+        + (
+            "true: autocut cuts below the cut-off from the next run"
+            if on
+            else "false: scoring-only mode, nothing is cut"
+        )
+    )
 
 
-set_enforce = set_autocut   # the name before October 2026
+set_enforce = set_autocut  # the name before October 2026
 
 
-_SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")                      # a top-level `name:` line
+_SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")  # a top-level `name:` line
 
 
 def _edit_flag(text: str, section: str, key: str, on: bool) -> str:
@@ -276,7 +323,9 @@ def _edit_flag(text: str, section: str, key: str, on: bool) -> str:
             section_at = i
             break
         if line.startswith(f"{section}:"):
-            return text  # `section: { ... }` on one line: not a shape to edit blind; the caller's check refuses
+            return (
+                text  # `section: { ... }` on one line: not a shape to edit blind; the caller's check refuses
+            )
     if section_at is None:
         tail = "" if not text or text.endswith("\n") else "\n"
         return text + f"{tail}\n{section}:\n  {key}: {value}\n"
@@ -310,6 +359,7 @@ def _edit_flag(text: str, section: str, key: str, on: bool) -> str:
 
 # -- the whole picture ------------------------------------------------------------
 
+
 def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> dict:
     """The whole picture. ``jobs`` lets a caller pass launchd's answers from a cache."""
     data_dir = cfg.root / cfg.data_dir
@@ -326,7 +376,9 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> d
     next_run = None
     if proc is None and jobs["run"]["loaded"] and jobs["run"]["state"] != "running":
         interval = jobs["run"]["interval"] or 1800
-        last_timer_run = next((r for r in runs if r["kind"] == "run"), None)  # a prune or an undo is not the timer
+        last_timer_run = next(
+            (r for r in runs if r["kind"] == "run"), None
+        )  # a prune or an undo is not the timer
         last_start = _parse_ts(last_timer_run["started_at"]) if last_timer_run else None
         if last_start:
             next_run = max(0.0, interval - (now - last_start))
@@ -336,24 +388,42 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> d
         "mode": "autocut" if cfg.autocut.enabled else "scoring-only",
         "safety_tripped": store.kv_get(conn, store.SAFETY_KEY),
         "batch_mode": cfg.models.batch,
-        "running": None if proc is None else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
+        "running": None
+        if proc is None
+        else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
         "jobs": jobs,
         "launchctl": launchctl_available(),
         "next_run_in": next_run,
         "config": {
-            "judge": cfg.models.judge, "reviewer": cfg.models.reviewer, "profiler": cfg.models.profiler,
-            "budget": cfg.models.daily_budget_usd, "target": cfg.prune.keep, "floor": cfg.autocut.cutoff,
-            "max_age_days": cfg.limits.max_age_days, "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
-            "root": str(cfg.root), "heartbeat": bool(os.environ.get("HEALTHCHECK_URL")),
+            "judge": cfg.models.judge,
+            "reviewer": cfg.models.reviewer,
+            "profiler": cfg.models.profiler,
+            "budget": cfg.models.daily_budget_usd,
+            "target": cfg.prune.keep,
+            "floor": cfg.autocut.cutoff,
+            "max_age_days": cfg.limits.max_age_days,
+            "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
+            "root": str(cfg.root),
+            "heartbeat": bool(os.environ.get("HEALTHCHECK_URL")),
         },
         "pile": {
-            "unread": snap["unread"], "judged": snap["judged_unread"], "pending": snap["pending"],
-            "inflight": snap["inflight"], "too_old": snap["too_old"], "stand_in": snap.get("stand_in", 0),
-            "rejudge": snap.get("rejudge", 0), "low_conf": snap["low_conf"],
+            "unread": snap["unread"],
+            "judged": snap["judged_unread"],
+            "pending": snap["pending"],
+            "inflight": snap["inflight"],
+            "too_old": snap["too_old"],
+            "stand_in": snap.get("stand_in", 0),
+            "rejudge": snap.get("rejudge", 0),
+            "low_conf": snap["low_conf"],
         },
         "cuts_pending": {"untagged": len(untagged), "unmarked": len(unmarked)},
-        "spend": {"today": spend_today, "week": snap["week"]["spend"], "all": snap["all_time"]["spend"],
-                  "per_1000": snap["per_1000"], "cache_hit": snap["cache_hit"]},
+        "spend": {
+            "today": spend_today,
+            "week": snap["week"]["spend"],
+            "all": snap["all_time"]["spend"],
+            "per_1000": snap["per_1000"],
+            "cache_hit": snap["cache_hit"],
+        },
         "today": snap["today"],
         "rate_per_min": snap.get("rate_per_min", 0.0),
         "eta_min": snap.get("eta_min"),
@@ -384,52 +454,78 @@ def render_status_text(st: dict) -> str:
     lines = []
     r = st["running"]
     if r:
-        lines.append(f"● {r['kind']} RUNNING for {r['elapsed'] / 60:.1f} min (pid {r['pid']}) · {r['phase'] or 'working'}")
+        lines.append(
+            f"● {r['kind']} RUNNING for {r['elapsed'] / 60:.1f} min (pid {r['pid']}) · {r['phase'] or 'working'}"
+        )
     else:
         nxt = st["next_run_in"]
-        when = f"next scheduled run in about {nxt / 60:.0f} min" if nxt is not None else "no scheduled run pending"
+        when = (
+            f"next scheduled run in about {nxt / 60:.0f} min"
+            if nxt is not None
+            else "no scheduled run pending"
+        )
         lines.append(f"○ idle · {when}")
-    lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'scoring-only' else ' (autocut cuts below the cut-off)'} · "
-                 f"{'batch' if st['batch_mode'] else 'synchronous'} judging · judge {st['config']['judge']}")
+    lines.append(
+        f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'scoring-only' else ' (autocut cuts below the cut-off)'} · "
+        f"{'batch' if st['batch_mode'] else 'synchronous'} judging · judge {st['config']['judge']}"
+    )
     if st.get("safety_tripped"):
-        lines.append(f"SAFETY LIMIT TRIPPED in run {st['safety_tripped']}: autocut cuts nothing until `bodh safety reset`")
+        lines.append(
+            f"SAFETY LIMIT TRIPPED in run {st['safety_tripped']}: autocut cuts nothing until `bodh safety reset`"
+        )
     j = st["jobs"]
+
     def jstate(name: str) -> str:
         s = j[name]
         if not s["installed"]:
             return "not installed"
         extra = f", last exit {s['last_exit']}" if s["last_exit"] not in (None, 0) else ""
         return f"{s['state']}{extra}"
-    lines.append(f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · console {jstate('console')}")
+
+    lines.append(
+        f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · console {jstate('console')}"
+    )
     pn = st.get("panel") or {}
     if pn.get("up"):
         lines.append(f"console: up at {pn['url']}")
     else:
         why = f" · last: {pn['note']}" if pn.get("note") else ""
-        lines.append(f"console: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
-                     "start it with `bodh console` (foreground) or ./install-launchd.sh")
+        lines.append(
+            f"console: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
+            "start it with `bodh console` (foreground) or ./install-launchd.sh"
+        )
     p = st["pile"]
-    lines.append(f"unread {p['unread']:,} · judged {p['judged']:,} · with the model {p['inflight']:,} · pending {p['pending']:,}"
-                 + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")
-                 + (f" · {p['rejudge']:,} await the judge's second reading" if p["rejudge"] else "")
-                 + f" · prune keeps {st['config']['target']} · cut-off {st['config']['floor']}")
+    lines.append(
+        f"unread {p['unread']:,} · judged {p['judged']:,} · with the model {p['inflight']:,} · pending {p['pending']:,}"
+        + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")
+        + (f" · {p['rejudge']:,} await the judge's second reading" if p["rejudge"] else "")
+        + f" · prune keeps {st['config']['target']} · cut-off {st['config']['floor']}"
+    )
     c = st["cuts_pending"]
     if c["untagged"] or c["unmarked"]:
-        lines.append(f"cuts not yet written to BazQux: {c['untagged']:,} to tag, {c['unmarked']:,} to mark read "
-                     "(the next run finishes them)")
+        lines.append(
+            f"cuts not yet written to BazQux: {c['untagged']:,} to tag, {c['unmarked']:,} to mark read "
+            "(the next run finishes them)"
+        )
     s = st["spend"]
     per = f"${s['per_1000']:.2f}/1,000" if s["per_1000"] is not None else "–"
     cache = f"{s['cache_hit']:.0%}" if s["cache_hit"] is not None else "–"
-    lines.append(f"spend: today ${s['today']:.2f} of ${st['config']['budget']:.2f} · 7 days ${s['week']:.2f} · "
-                 f"all time ${s['all']:.2f} · {per} · cache hits {cache}")
+    lines.append(
+        f"spend: today ${s['today']:.2f} of ${st['config']['budget']:.2f} · 7 days ${s['week']:.2f} · "
+        f"all time ${s['all']:.2f} · {per} · cache hits {cache}"
+    )
     t = st["today"]
     lines.append(f"today: arrived {t['arrived']:,} · judged {t['judged']:,} · cut {t['cut']:,}")
     if st["last_error"]:
         e = st["last_error"]
-        lines.append(f"last problem: {(e['started_at'] or '')[:16]} {e['kind']}: {(e['error'] or e['summary'] or '')[:140]}")
+        lines.append(
+            f"last problem: {(e['started_at'] or '')[:16]} {e['kind']}: {(e['error'] or e['summary'] or '')[:140]}"
+        )
     lines.append("")
     lines.append("last runs:")
     for r in st["runs"][:10]:
         ok = "ok " if r["ok"] else ("…  " if not r["finished_at"] else "ERR")
-        lines.append(f"  {(r['started_at'] or '')[:16]} {ok} {store.run_kind_name(r['kind']):<10} {(r['summary'] or r['error'] or '')[:150]}")
+        lines.append(
+            f"  {(r['started_at'] or '')[:16]} {ok} {store.run_kind_name(r['kind']):<10} {(r['summary'] or r['error'] or '')[:150]}"
+        )
     return "\n".join(lines)

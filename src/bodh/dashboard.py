@@ -37,6 +37,7 @@ def _local_day(iso: str | None, tz: ZoneInfo) -> str | None:
 
 # -- data ---------------------------------------------------------------------
 
+
 def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
     since = store.days_ago_iso(days)
     per: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -48,7 +49,9 @@ def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
         d = _local_day(r[0], tz)
         if d:
             per[d]["cut by autocut" if r[1] in ("autocut", "floor") else "cut by prune"] += 1
-    for r in conn.execute("SELECT at, kind FROM feedback WHERE at >= ? AND kind IN ('read','star')", (since,)):
+    for r in conn.execute(
+        "SELECT at, kind FROM feedback WHERE at >= ? AND kind IN ('read','star')", (since,)
+    ):
         d = _local_day(r[0], tz)
         if d:
             per[d]["read" if r[1] == "read" else "starred"] += 1
@@ -83,9 +86,14 @@ def calibration(conn: sqlite3.Connection) -> list[dict]:
     out = []
     for _, name in BANDS:
         a = agg[name]
-        out.append({"band": name, "n": a["n"],
-                    "read_share": (a["read"] / a["n"]) if a["n"] else None,
-                    "star_share": (a["starred"] / a["n"]) if a["n"] else None})
+        out.append(
+            {
+                "band": name,
+                "n": a["n"],
+                "read_share": (a["read"] / a["n"]) if a["n"] else None,
+                "star_share": (a["starred"] / a["n"]) if a["n"] else None,
+            }
+        )
     return out
 
 
@@ -191,11 +199,19 @@ def health(conn: sqlite3.Connection, cfg: Config) -> dict:
         "SELECT s.bucket, COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
         "WHERE st.status = 'unread' GROUP BY s.bucket"
     ).fetchall()
-    return {"runs": runs, "spend_today": today, "spend_week": week, "last_ok": last_ok, "last_error": last_err,
-            "unread": unread, "by_band": {r[0]: r[1] for r in by_band}}
+    return {
+        "runs": runs,
+        "spend_today": today,
+        "spend_week": week,
+        "last_ok": last_ok,
+        "last_error": last_err,
+        "unread": unread,
+        "by_band": {r[0]: r[1] for r in by_band},
+    }
 
 
 # -- rendering ------------------------------------------------------------------
+
 
 def _e(s: Any) -> str:
     return html.escape(str(s if s is not None else ""))
@@ -225,15 +241,21 @@ def _bars_svg(rows: list[dict], keys: list[str], colors: list[str]) -> str:
         for j, k in enumerate(keys):
             v = r[k]
             bh = (h - 2 * pad) * v / maxv
-            parts.append(f"<rect x='{x0 + j * bw:.1f}' y='{h - pad - bh:.1f}' width='{bw * 0.9:.1f}' height='{bh:.1f}' "
-                         f"fill='{colors[j]}'><title>{_e(r['day'])} {k}: {v}</title></rect>")
-        parts.append(f"<text x='{x0 + gw / 2:.1f}' y='{h - pad + 14}' font-size='10' text-anchor='middle' fill='#666'>"
-                     f"{_e(r['day'][5:])}</text>")
+            parts.append(
+                f"<rect x='{x0 + j * bw:.1f}' y='{h - pad - bh:.1f}' width='{bw * 0.9:.1f}' height='{bh:.1f}' "
+                f"fill='{colors[j]}'><title>{_e(r['day'])} {k}: {v}</title></rect>"
+            )
+        parts.append(
+            f"<text x='{x0 + gw / 2:.1f}' y='{h - pad + 14}' font-size='10' text-anchor='middle' fill='#666'>"
+            f"{_e(r['day'][5:])}</text>"
+        )
     parts.append(f"<text x='{pad}' y='{pad - 10}' font-size='11' fill='#666'>max {maxv}</text>")
     legend_x = pad
     for j, k in enumerate(keys):
-        parts.append(f"<rect x='{legend_x}' y='{h - 12}' width='10' height='10' fill='{colors[j]}'/>"
-                     f"<text x='{legend_x + 14}' y='{h - 3}' font-size='11' fill='#444'>{_e(k)}</text>")
+        parts.append(
+            f"<rect x='{legend_x}' y='{h - 12}' width='10' height='10' fill='{colors[j]}'/>"
+            f"<text x='{legend_x + 14}' y='{h - 3}' font-size='11' fill='#444'>{_e(k)}</text>"
+        )
         legend_x += 14 + 7 * len(k) + 16
     parts.append("</svg>")
     return "".join(parts)
@@ -267,24 +289,36 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     learned_diff = ""
     if len(versions) == 2:
         from .profiler import diff
+
         learned_diff = diff(versions[1]["text"], versions[0]["text"])
 
     from . import progress
 
-    parts = [f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-             f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
-             f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
-             f"unread {hl['unread']} · prune keeps {cfg.prune.keep} · cut-off {cfg.autocut.cutoff}</div>"]
+    parts = [
+        f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
+        f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
+        f"unread {hl['unread']} · prune keeps {cfg.prune.keep} · cut-off {cfg.autocut.cutoff}</div>",
+    ]
 
     # KPIs
     last_ok = hl["last_ok"]
-    status = f"<span class='ok'>alive</span> last good run {_e(last_ok['finished_at'][:16])}" if last_ok else "<span class='bad'>no successful run yet</span>"
-    parts.append("<div class='kpis'>"
-                 f"<div class='kpi'><span class='muted'>unread now</span><b>{hl['unread']}</b></div>"
-                 + "".join(f"<div class='kpi'><span class='muted'>{_e(b)}</span><b>{n}</b></div>" for b, n in sorted(hl['by_band'].items(), reverse=True))
-                 + f"<div class='kpi'><span class='muted'>spend today</span><b>${hl['spend_today']:.2f}</b></div>"
-                 f"<div class='kpi'><span class='muted'>spend 7 days</span><b>${hl['spend_week']:.2f}</b></div>"
-                 f"<div class='kpi'><span class='muted'>runner</span><div>{status}</div></div></div>")
+    status = (
+        f"<span class='ok'>alive</span> last good run {_e(last_ok['finished_at'][:16])}"
+        if last_ok
+        else "<span class='bad'>no successful run yet</span>"
+    )
+    parts.append(
+        "<div class='kpis'>"
+        f"<div class='kpi'><span class='muted'>unread now</span><b>{hl['unread']}</b></div>"
+        + "".join(
+            f"<div class='kpi'><span class='muted'>{_e(b)}</span><b>{n}</b></div>"
+            for b, n in sorted(hl["by_band"].items(), reverse=True)
+        )
+        + f"<div class='kpi'><span class='muted'>spend today</span><b>${hl['spend_today']:.2f}</b></div>"
+        f"<div class='kpi'><span class='muted'>spend 7 days</span><b>${hl['spend_week']:.2f}</b></div>"
+        f"<div class='kpi'><span class='muted'>runner</span><div>{status}</div></div></div>"
+    )
 
     try:
         parts.append(progress.render_html(progress.snapshot(conn, cfg)))
@@ -292,58 +326,93 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
         parts.append("<p class='bad'>the progress section failed to render</p>")
 
     parts.append("<h2>Flow, last 14 days</h2>")
-    parts.append(_bars_svg(fl, ["arrived", "cut by autocut", "cut by prune", "read", "starred"],
-                           ["#bbb", "#e39b5d", "#c9664a", "#4a90c9", "#e0b800"]))
-    parts.append("<p class='muted'>Read and starred are inferred from BazQux read state; a burst of more than "
-                 f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading.</p>")
+    parts.append(
+        _bars_svg(
+            fl,
+            ["arrived", "cut by autocut", "cut by prune", "read", "starred"],
+            ["#bbb", "#e39b5d", "#c9664a", "#4a90c9", "#e0b800"],
+        )
+    )
+    parts.append(
+        "<p class='muted'>Read and starred are inferred from BazQux read state; a burst of more than "
+        f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading.</p>"
+    )
 
-    parts.append("<h2>Calibration: how often each band gets read</h2><table><tr><th>Band</th><th class='num'>Left unread</th>"
-                 "<th class='num'>Read</th><th class='num'>Starred</th></tr>")
+    parts.append(
+        "<h2>Calibration: how often each band gets read</h2><table><tr><th>Band</th><th class='num'>Left unread</th>"
+        "<th class='num'>Read</th><th class='num'>Starred</th></tr>"
+    )
     for c in cal:
-        parts.append(f"<tr><td>{_e(c['band'])}</td><td class='num'>{c['n']}</td><td class='num'>{_pct(c['read_share'])}</td>"
-                     f"<td class='num'>{_pct(c['star_share'])}</td></tr>")
-    parts.append("</table><p class='muted'>Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
-                 "the mix of sub-scores in config.yaml is wrong.</p>")
+        parts.append(
+            f"<tr><td>{_e(c['band'])}</td><td class='num'>{c['n']}</td><td class='num'>{_pct(c['read_share'])}</td>"
+            f"<td class='num'>{_pct(c['star_share'])}</td></tr>"
+        )
+    parts.append(
+        "</table><p class='muted'>Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
+        "the mix of sub-scores in config.yaml is wrong.</p>"
+    )
 
     parts.append("<h2>Your verdicts, last 30 days</h2>")
     if any(r["n"] for r in verd):
-        parts.append("<table><tr><th>The judge's band</th><th class='num'>great</th><th class='num'>good</th>"
-                     "<th class='num'>meh</th><th class='num'>bad</th></tr>")
+        parts.append(
+            "<table><tr><th>The judge's band</th><th class='num'>great</th><th class='num'>good</th>"
+            "<th class='num'>meh</th><th class='num'>bad</th></tr>"
+        )
         for r in verd:
-            parts.append(f"<tr><td>{_e(r['band'])}</td><td class='num'>{r['great']}</td><td class='num'>{r['good']}</td>"
-                         f"<td class='num'>{r['meh']}</td><td class='num'>{r['bad']}</td></tr>")
+            parts.append(
+                f"<tr><td>{_e(r['band'])}</td><td class='num'>{r['great']}</td><td class='num'>{r['good']}</td>"
+                f"<td class='num'>{r['meh']}</td><td class='num'>{r['bad']}</td></tr>"
+            )
         parts.append("</table>")
         if disagree:
-            parts.append("<p>Where you and the judge disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
-                         "<th>Article</th><th>Concept</th></tr>")
+            parts.append(
+                "<p>Where you and the judge disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
+                "<th>Article</th><th>Concept</th></tr>"
+            )
             for r in disagree:
-                parts.append(f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
-                             f"<td><a href='{_href(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
-                             f"<td>{_e(r['concept'] or '')}</td></tr>")
+                parts.append(
+                    f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
+                    f"<td><a href='{_href(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
+                    f"<td>{_e(r['concept'] or '')}</td></tr>"
+                )
             parts.append("</table>")
-        parts.append("<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
-                     "missed; more or less to steer the judge by this article's concept. The Sunday rewrite reads them all; "
-                     "disagreements are what it learns from most.</p>")
+        parts.append(
+            "<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
+            "missed; more or less to steer the judge by this article's concept. The Sunday rewrite reads them all; "
+            "disagreements are what it learns from most.</p>"
+        )
     else:
-        parts.append("<p class='muted'>No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
-                     "when the level missed; more or less to steer the judge by its concept.</p>")
+        parts.append(
+            "<p class='muted'>No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
+            "when the level missed; more or less to steer the judge by its concept.</p>"
+        )
 
-    parts.append("<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
-                 "<th>Lesson</th><th>Concept</th></tr>")
+    parts.append(
+        "<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
+        "<th>Lesson</th><th>Concept</th></tr>"
+    )
     for r in misses:
-        parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
-                     f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div></td>"
-                     f"<td>{_e(r['lesson'])}</td><td>{_e(r['concept'])}</td></tr>")
-    parts.append("</table><p class='muted'>To rescue one, mark it unread in BazQux or your reader; the next run records the rescue.</p>")
+        parts.append(
+            f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
+            f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div></td>"
+            f"<td>{_e(r['lesson'])}</td><td>{_e(r['concept'])}</td></tr>"
+        )
+    parts.append(
+        "</table><p class='muted'>To rescue one, mark it unread in BazQux or your reader; the next run records the rescue.</p>"
+    )
 
-    parts.append("<h2>Feeds, last 30 days</h2><table><tr><th>Feed</th><th>Folder</th><th class='num'>Articles</th>"
-                 "<th class='num'>Mean score</th><th class='num'>Cut</th><th class='num'>Read</th><th class='num'>Starred</th>"
-                 "<th class='num'>Rescued</th></tr>")
+    parts.append(
+        "<h2>Feeds, last 30 days</h2><table><tr><th>Feed</th><th>Folder</th><th class='num'>Articles</th>"
+        "<th class='num'>Mean score</th><th class='num'>Cut</th><th class='num'>Read</th><th class='num'>Starred</th>"
+        "<th class='num'>Rescued</th></tr>"
+    )
     for r in fd:
         ms = f"{r['mean_score']:.0f}" if r["mean_score"] is not None else "–"
-        parts.append(f"<tr><td>{_e(r['feed_title'][:40])}</td><td>{_e(r['folder'] or '')}</td><td class='num'>{r['n']}</td>"
-                     f"<td class='num'>{ms}</td><td class='num'>{_pct(r['cut_share'])}</td><td class='num'>{_pct(r['read_share'])}</td>"
-                     f"<td class='num'>{_pct(r['star_share'])}</td><td class='num'>{_pct(r['rescue_share'])}</td></tr>")
+        parts.append(
+            f"<tr><td>{_e(r['feed_title'][:40])}</td><td>{_e(r['folder'] or '')}</td><td class='num'>{r['n']}</td>"
+            f"<td class='num'>{ms}</td><td class='num'>{_pct(r['cut_share'])}</td><td class='num'>{_pct(r['read_share'])}</td>"
+            f"<td class='num'>{_pct(r['star_share'])}</td><td class='num'>{_pct(r['rescue_share'])}</td></tr>"
+        )
     parts.append("</table>")
 
     parts.append("<h2>Learnings this week</h2>")
@@ -362,27 +431,44 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
         parts.append("<p class='muted'>Nothing recorded yet.</p>")
     parts.append("<h3>Frontier: high-scoring arrivals in fields you have not been reading</h3><table>")
     for r in frontier:
-        parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td>{_e(r['concept'])}</td>"
-                     f"<td><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>")
+        parts.append(
+            f"<tr><td class='num'>{r['score']:.0f}</td><td>{_e(r['concept'])}</td>"
+            f"<td><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>"
+        )
     parts.append("</table>")
 
     parts.append("<h2>Learned profile</h2><pre>" + _e(learned_text) + "</pre>")
     if learned_diff:
         parts.append("<h3>Change from the previous version</h3><pre>" + _e(learned_diff) + "</pre>")
 
-    parts.append("<h2>Health: last 20 runs</h2><table><tr><th>Started</th><th>Kind</th><th>OK</th><th>Summary</th></tr>")
+    parts.append(
+        "<h2>Health: last 20 runs</h2><table><tr><th>Started</th><th>Kind</th><th>OK</th><th>Summary</th></tr>"
+    )
     for r in hl["runs"]:
         ok = "<span class='ok'>yes</span>" if r["ok"] else "<span class='bad'>no</span>"
-        parts.append(f"<tr><td>{_e((r['started_at'] or '')[:16])}</td><td>{_e(r['kind'])}</td><td>{ok}</td>"
-                     f"<td>{_e(r['summary'] or r['error'] or '')}</td></tr>")
+        parts.append(
+            f"<tr><td>{_e((r['started_at'] or '')[:16])}</td><td>{_e(r['kind'])}</td><td>{ok}</td>"
+            f"<td>{_e(r['summary'] or r['error'] or '')}</td></tr>"
+        )
     parts.append("</table></body></html>")
 
-    out_dir = (cfg.root / cfg.dashboard_dir)
+    out_dir = cfg.root / cfg.dashboard_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "index.html"
     path.write_text("\n".join(parts), encoding="utf-8")
-    (out_dir / "data.json").write_text(json.dumps({"flow": fl, "calibration": cal, "verdicts": verd, "unread": hl["unread"],
-                                                   "spend_today": hl["spend_today"]}, indent=1), encoding="utf-8")
+    (out_dir / "data.json").write_text(
+        json.dumps(
+            {
+                "flow": fl,
+                "calibration": cal,
+                "verdicts": verd,
+                "unread": hl["unread"],
+                "spend_today": hl["spend_today"],
+            },
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
     progress.write_live(cfg, conn)
     return path
 
@@ -396,8 +482,12 @@ def weekly_note(cfg: Config, conn: sqlite3.Connection, learned_result: dict | No
     covered, frontier = concept_map(conn, cfg)
     misses = near_misses(conn)
     hl = health(conn, cfg)
-    lines = [f"# Bodh weekly · {now.strftime('%d %b %Y')}", "",
-             f"Unread now: {hl['unread']} (target {cfg.prune.keep}). Spend last 7 days: ${hl['spend_week']:.2f}.", ""]
+    lines = [
+        f"# Bodh weekly · {now.strftime('%d %b %Y')}",
+        "",
+        f"Unread now: {hl['unread']} (target {cfg.prune.keep}). Spend last 7 days: ${hl['spend_week']:.2f}.",
+        "",
+    ]
     lines.append("## Learnings this week")
     if not lessons:
         lines.append("No reads recorded this week.")
@@ -406,9 +496,13 @@ def weekly_note(cfg: Config, conn: sqlite3.Connection, learned_result: dict | No
         lines += [f"- [{r['title'][:80]}]({r['url']}): {r['lesson']}" for r in rows]
     lines += ["", "## Map, last 90 days", ", ".join(f"{c} ({n})" for c, n in covered) or "nothing yet", ""]
     lines.append("## Frontier: fields you have not been reading")
-    lines += [f"- {r['score']:.0f} · {r['concept']} · [{r['title'][:80]}]({r['url']})" for r in frontier] or ["nothing yet"]
+    lines += [f"- {r['score']:.0f} · {r['concept']} · [{r['title'][:80]}]({r['url']})" for r in frontier] or [
+        "nothing yet"
+    ]
     lines += ["", "## Near misses: the best of what was cut"]
-    lines += [f"- {r['score']:.0f} · [{r['title'][:80]}]({r['url']}) · {r['lesson']}" for r in misses] or ["nothing cut this week"]
+    lines += [f"- {r['score']:.0f} · [{r['title'][:80]}]({r['url']}) · {r['lesson']}" for r in misses] or [
+        "nothing cut this week"
+    ]
     if learned_result:
         lines += ["", "## Learned profile", learned_result.get("reason", "")]
         if learned_result.get("diff"):

@@ -35,9 +35,16 @@ FROM articles WHERE title IS NOT NULL AND title != '' ORDER BY RANDOM() LIMIT ?
 
 def _row(raw: sqlite3.Row) -> dict:
     return {
-        "id": raw["id"], "feed_title": raw["feed"], "folder": None, "title": raw["title"], "url": raw["url"],
-        "author": "", "published": None, "text": store.html_to_text(raw["summary"] or ""),
-        "old_decision": raw["decision"], "old_quality": raw["old_quality"],
+        "id": raw["id"],
+        "feed_title": raw["feed"],
+        "folder": None,
+        "title": raw["title"],
+        "url": raw["url"],
+        "author": "",
+        "published": None,
+        "text": store.html_to_text(raw["summary"] or ""),
+        "old_decision": raw["decision"],
+        "old_quality": raw["old_quality"],
     }
 
 
@@ -55,8 +62,15 @@ def starred_from_golden(golden_path: Path) -> set[str]:
     return ids
 
 
-def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, golden: Path | None,
-           sample: int = 500, workers: int = 3) -> dict:
+def replay(
+    cfg: Config,
+    llm: LLM,
+    conn: sqlite3.Connection,
+    archive_db: Path,
+    golden: Path | None,
+    sample: int = 500,
+    workers: int = 3,
+) -> dict:
     src = sqlite3.connect(f"file:{archive_db}?mode=ro", uri=True)
     src.row_factory = sqlite3.Row
     rows = [_row(r) for r in src.execute(ARCHIVE_QUERY, (sample,))]
@@ -74,7 +88,9 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
     results: list[dict] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    batches = [rows[i: i + cfg.judge.articles_per_call] for i in range(0, len(rows), cfg.judge.articles_per_call)]
+    batches = [
+        rows[i : i + cfg.judge.articles_per_call] for i in range(0, len(rows), cfg.judge.articles_per_call)
+    ]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {pool.submit(judge.judge_batch, b, run_id): b for b in batches}
         for fut in as_completed(futures):
@@ -88,10 +104,19 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
                 v = verdicts.get(r["id"])
                 if v is None:
                     continue
-                results.append({"id": r["id"], "feed": r["feed_title"], "title": r["title"],
-                                "score": compose(v, cfg), "confidence": v.confidence, "concept": v.concept,
-                                "lesson": v.lesson, "old_decision": r["old_decision"],
-                                "starred": r["id"] in starred_ids})
+                results.append(
+                    {
+                        "id": r["id"],
+                        "feed": r["feed_title"],
+                        "title": r["title"],
+                        "score": compose(v, cfg),
+                        "confidence": v.confidence,
+                        "concept": v.concept,
+                        "lesson": v.lesson,
+                        "old_decision": r["old_decision"],
+                        "starred": r["id"] in starred_ids,
+                    }
+                )
     scored = [r for r in results if "score" in r]
     cutoff = cfg.autocut.cutoff
     below_cutoff = [r for r in scored if r["score"] < cutoff and r["confidence"] != "low"]
@@ -102,21 +127,40 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
         by_feed[r["feed"]].append(r["score"])
     bands = defaultdict(int)
     for r in scored:
-        bands[next(name for lo, name in [(90, "90+"), (70, "70-89"), (50, "50-69"), (30, "30-49"), (0, "0-29")] if r["score"] >= lo)] += 1
+        bands[
+            next(
+                name
+                for lo, name in [(90, "90+"), (70, "70-89"), (50, "50-69"), (30, "30-49"), (0, "0-29")]
+                if r["score"] >= lo
+            )
+        ] += 1
     report = {
-        "sampled": len(rows), "scored": len(scored), "failed": sum(r.get("n", 0) for r in results if "error" in r),
-        "cutoff": cutoff, "would_cut_share": (len(below_cutoff) / len(scored)) if scored else None,
+        "sampled": len(rows),
+        "scored": len(scored),
+        "failed": sum(r.get("n", 0) for r in results if "error" in r),
+        "cutoff": cutoff,
+        "would_cut_share": (len(below_cutoff) / len(scored)) if scored else None,
         "bands": dict(bands),
-        "starred_checked": len(starred_scored), "starred_below_cutoff": [r["title"] for r in starred_below],
+        "starred_checked": len(starred_scored),
+        "starred_below_cutoff": [r["title"] for r in starred_below],
         "gate_passed": not starred_below,
-        "feeds": sorted(({"feed": f, "n": len(s), "mean": sum(s) / len(s)} for f, s in by_feed.items()),
-                        key=lambda x: -x["n"])[:25],
+        "feeds": sorted(
+            ({"feed": f, "n": len(s), "mean": sum(s) / len(s)} for f, s in by_feed.items()),
+            key=lambda x: -x["n"],
+        )[:25],
         "old_keep_now_below_cutoff": sum(1 for r in below_cutoff if r["old_decision"] == "keep"),
         "old_junk_now_above_70": sum(1 for r in scored if r["old_decision"] == "junk" and r["score"] >= 70),
         "spend_usd": store.spent_since(conn, store.local_midnight_iso(cfg.timezone)),
-        "sample": sorted(scored, key=lambda r: -r["score"])[:15] + sorted(scored, key=lambda r: r["score"])[:15],
+        "sample": sorted(scored, key=lambda r: -r["score"])[:15]
+        + sorted(scored, key=lambda r: r["score"])[:15],
     }
-    store.finish_run(conn, run_id, True, scored=len(scored), summary=f"replay: {len(scored)} scored, gate {'passed' if report['gate_passed'] else 'FAILED'}")
+    store.finish_run(
+        conn,
+        run_id,
+        True,
+        scored=len(scored),
+        summary=f"replay: {len(scored)} scored, gate {'passed' if report['gate_passed'] else 'FAILED'}",
+    )
     out = cfg.root / cfg.data_dir / "replay.json"
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     report["path"] = str(out)
@@ -136,18 +180,32 @@ def main() -> None:
     secrets = load_secrets(cfg.root)
     conn = store.connect(cfg.db_path)
     llm = LLM(cfg, secrets, conn)
-    rep = replay(cfg, llm, conn, args.archive, args.golden, sample=args.sample, workers=args.workers or cfg.limits.parallel_calls)
+    rep = replay(
+        cfg,
+        llm,
+        conn,
+        args.archive,
+        args.golden,
+        sample=args.sample,
+        workers=args.workers or cfg.limits.parallel_calls,
+    )
     if rep["would_cut_share"] is None:
         print("nothing scored")
     else:
-        print(f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); cut-off {rep['cutoff']}; "
-              f"would cut {rep['would_cut_share']:.0%}")
+        print(
+            f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); cut-off {rep['cutoff']}; "
+            f"would cut {rep['would_cut_share']:.0%}"
+        )
     print(f"bands: {rep['bands']}")
-    print(f"starred checked {rep['starred_checked']}; below the cut-off: {len(rep['starred_below_cutoff'])} "
-          f"-> gate {'PASSED' if rep['gate_passed'] else 'FAILED'}")
+    print(
+        f"starred checked {rep['starred_checked']}; below the cut-off: {len(rep['starred_below_cutoff'])} "
+        f"-> gate {'PASSED' if rep['gate_passed'] else 'FAILED'}"
+    )
     for t in rep["starred_below_cutoff"][:10]:
         print(f"   below the cut-off: {t[:80]}")
-    print(f"archive kept, now below the cut-off: {rep['old_keep_now_below_cutoff']}; archive junked, now 70+: {rep['old_junk_now_above_70']}")
+    print(
+        f"archive kept, now below the cut-off: {rep['old_keep_now_below_cutoff']}; archive junked, now 70+: {rep['old_junk_now_above_70']}"
+    )
     print(f"full report: {rep['path']}")
 
 

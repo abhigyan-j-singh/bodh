@@ -51,20 +51,28 @@ def _age(iso: str | None) -> str:
 
 # -- activity: how fast is it moving ------------------------------------------
 
+
 def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
     """Judged per minute (last 2 minutes, else last 10), a 3-hour series in 5-minute
     bins, the phase a run is in, and whether a run holds the lock right now."""
     now = store.utcnow()
-    two = _count(conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'",
-                 ((now - timedelta(minutes=2)).isoformat(),))
-    ten = _count(conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'",
-                 ((now - timedelta(minutes=10)).isoformat(),))
+    two = _count(
+        conn,
+        "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'",
+        ((now - timedelta(minutes=2)).isoformat(),),
+    )
+    ten = _count(
+        conn,
+        "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'",
+        ((now - timedelta(minutes=10)).isoformat(),),
+    )
     rate = two / 2.0 if two else ten / 10.0
     bins = SERIES_HOURS * 60 // SERIES_BIN_MINUTES
     start = now - timedelta(minutes=bins * SERIES_BIN_MINUTES)
     counts = [0] * bins
-    for (iso,) in conn.execute("SELECT scored_at FROM scores WHERE scored_at >= ? AND model != 'dedup'",
-                               (start.isoformat(),)):
+    for (iso,) in conn.execute(
+        "SELECT scored_at FROM scores WHERE scored_at >= ? AND model != 'dedup'", (start.isoformat(),)
+    ):
         t = _parse(iso)
         if t is None:
             continue
@@ -72,16 +80,22 @@ def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
         if 0 <= i < bins:
             counts[i] += 1
     data_dir = cfg.root / cfg.data_dir
-    proc = locks.running_process(data_dir)   # the pid file is the one source of "since when"
+    proc = locks.running_process(data_dir)  # the pid file is the one source of "since when"
     running = proc is not None
     run_started = datetime.fromtimestamp(proc["started"], tz=timezone.utc).isoformat() if proc else None
     phase = store.kv_get(conn, store.PHASE_KEY) if running else None
     # no log tail here: this dict is written to progress.json and the dashboard, which may be
     # published; the terminal and the console fetch the log on their own (log_tail)
     return {
-        "rate_per_min": rate, "judged_2min": two, "judged_10min": ten,
-        "series": counts, "series_bin_minutes": SERIES_BIN_MINUTES, "series_start": start.isoformat(),
-        "running": running, "run_started": run_started, "phase": phase or "",
+        "rate_per_min": rate,
+        "judged_2min": two,
+        "judged_10min": ten,
+        "series": counts,
+        "series_bin_minutes": SERIES_BIN_MINUTES,
+        "series_start": start.isoformat(),
+        "running": running,
+        "run_started": run_started,
+        "phase": phase or "",
     }
 
 
@@ -104,6 +118,7 @@ def log_tail(path: Path, n: int = 10) -> list[str]:
 
 # -- the snapshot -------------------------------------------------------------
 
+
 def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     """Everything the progress views show, as plain numbers."""
     version = cfg.judge.prompt_version
@@ -113,34 +128,73 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     month = store.days_ago_iso(30)
 
     unread = _count(conn, "SELECT COUNT(*) FROM state WHERE status = 'unread'")
-    judged_unread = _count(conn, "SELECT COUNT(*) FROM state st JOIN scores s ON s.article_id = st.article_id "
-                                 "WHERE st.status = 'unread' AND s.prompt_version = ?", (version,))
-    pending_rows = store.unscored_unread_folders(conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True)
+    judged_unread = _count(
+        conn,
+        "SELECT COUNT(*) FROM state st JOIN scores s ON s.article_id = st.article_id "
+        "WHERE st.status = 'unread' AND s.prompt_version = ?",
+        (version,),
+    )
+    pending_rows = store.unscored_unread_folders(
+        conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True
+    )
     pending = len(pending_rows)
     unscored_all = store.unscored_unread_count(conn, version)  # leaves out what the judge gave up on
     given_up = store.given_up(conn)
     inflight_judge = store.inflight_ids(conn, "teacher")
     inflight_second = store.inflight_ids(conn, "second_look")
-    skipped = _count(conn, f"SELECT COUNT(*) FROM articles a JOIN state st ON st.article_id = a.id "
-                           f"WHERE st.status = 'unread' AND a.folder IN ({','.join('?' * len(skip))})",
-                     tuple(skip)) if skip else 0
+    skipped = (
+        _count(
+            conn,
+            f"SELECT COUNT(*) FROM articles a JOIN state st ON st.article_id = a.id "
+            f"WHERE st.status = 'unread' AND a.folder IN ({','.join('?' * len(skip))})",
+            tuple(skip),
+        )
+        if skip
+        else 0
+    )
     too_old = max(0, unscored_all - pending - len(inflight_judge) - skipped)
-    low_conf = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-                            "WHERE st.status = 'unread' AND s.confidence = 'low'")
-    stand_in = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-                            "WHERE st.status = 'unread' AND s.model != ? AND s.model != 'dedup'", (cfg.models.judge,))
-    rejudge_rule = None if cfg.catch_up.rejudge_at is None else (cfg.models.judge, float(cfg.catch_up.rejudge_at))
-    rejudge = (store.unscored_unread_count(conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True,
-                                           rejudge=rejudge_rule) - pending) if rejudge_rule and stand_in else 0
-    held = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-                        "WHERE st.status = 'unread' AND s.second_look_model = 'failed'")
+    low_conf = _count(
+        conn,
+        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
+        "WHERE st.status = 'unread' AND s.confidence = 'low'",
+    )
+    stand_in = _count(
+        conn,
+        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
+        "WHERE st.status = 'unread' AND s.model != ? AND s.model != 'dedup'",
+        (cfg.models.judge,),
+    )
+    rejudge_rule = (
+        None if cfg.catch_up.rejudge_at is None else (cfg.models.judge, float(cfg.catch_up.rejudge_at))
+    )
+    rejudge = (
+        (
+            store.unscored_unread_count(
+                conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True, rejudge=rejudge_rule
+            )
+            - pending
+        )
+        if rejudge_rule and stand_in
+        else 0
+    )
+    held = _count(
+        conn,
+        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
+        "WHERE st.status = 'unread' AND s.second_look_model = 'failed'",
+    )
 
     def period(since: str) -> dict:
         return {
             "arrived": _count(conn, "SELECT COUNT(*) FROM articles WHERE fetched_at >= ?", (since,)),
-            "judged": _count(conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'", (since,)),
-            "dupes": _count(conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model = 'dedup'", (since,)),
-            "second_looks": _count(conn, "SELECT COUNT(*) FROM costs WHERE created_at >= ? AND purpose = 'second_look'", (since,)),
+            "judged": _count(
+                conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'", (since,)
+            ),
+            "dupes": _count(
+                conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model = 'dedup'", (since,)
+            ),
+            "second_looks": _count(
+                conn, "SELECT COUNT(*) FROM costs WHERE created_at >= ? AND purpose = 'second_look'", (since,)
+            ),
             "cut": _count(conn, "SELECT COUNT(*) FROM state WHERE cut_at >= ?", (since,)),
             "spend": store.spent_since(conn, since),
         }
@@ -154,7 +208,9 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     }
     tokens = conn.execute(
         "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0), "
-        "COALESCE(SUM(output_tokens),0) FROM costs WHERE created_at >= ? AND purpose = 'teacher'", (week,)).fetchone()
+        "COALESCE(SUM(output_tokens),0) FROM costs WHERE created_at >= ? AND purpose = 'teacher'",
+        (week,),
+    ).fetchone()
     prompt_total = tokens[0] + tokens[1] + tokens[2]
     cache_hit = (tokens[1] / prompt_total) if prompt_total else None
     per_1000 = (seven["spend"] / seven["judged"] * 1000) if seven["judged"] else None
@@ -167,20 +223,33 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
                   SUM(st.status = 'unread' AND s.score >= 70) good,
                   SUM(st.status = 'cut') cut
            FROM articles a JOIN state st ON st.article_id = a.id LEFT JOIN scores s ON s.article_id = a.id
-           GROUP BY a.folder ORDER BY unread DESC""", (version,)
+           GROUP BY a.folder ORDER BY unread DESC""",
+        (version,),
     ):
-        folders.append({"folder": r["folder"] or "(no folder)", "unread": int(r["unread"] or 0),
-                        "judged": int(r["judged"] or 0), "good": int(r["good"] or 0), "cut": int(r["cut"] or 0),
-                        "pending": 0, "inflight": 0, "floor": cfg.cutoff_for(r["folder"]),
-                        "scored": (r["folder"] or "") not in skip})
+        folders.append(
+            {
+                "folder": r["folder"] or "(no folder)",
+                "unread": int(r["unread"] or 0),
+                "judged": int(r["judged"] or 0),
+                "good": int(r["good"] or 0),
+                "cut": int(r["cut"] or 0),
+                "pending": 0,
+                "inflight": 0,
+                "floor": cfg.cutoff_for(r["folder"]),
+                "scored": (r["folder"] or "") not in skip,
+            }
+        )
     by_name = {f["folder"]: f for f in folders}
     for row in pending_rows:
         f = by_name.get(row["folder"] or "(no folder)")
         if f:
             f["pending"] += 1
     if inflight_judge:
-        for r in store.fetch_in(conn, "SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
-                                inflight_judge):
+        for r in store.fetch_in(
+            conn,
+            "SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
+            inflight_judge,
+        ):
             f = by_name.get(r["folder"] or "(no folder)")
             if f:
                 f["inflight"] += int(r["n"])
@@ -195,14 +264,30 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         "now": datetime.now(ZoneInfo(cfg.timezone)),
         "batch_mode": cfg.models.batch,
         "max_age_days": cfg.limits.max_age_days,
-        "unread": unread, "judged_unread": judged_unread, "pending": pending,
-        "inflight": len(inflight_judge), "inflight_second": len(inflight_second),
-        "too_old": too_old, "skipped": skipped, "skip_folders": skip, "low_conf": low_conf, "held": held,
+        "unread": unread,
+        "judged_unread": judged_unread,
+        "pending": pending,
+        "inflight": len(inflight_judge),
+        "inflight_second": len(inflight_second),
+        "too_old": too_old,
+        "skipped": skipped,
+        "skip_folders": skip,
+        "low_conf": low_conf,
+        "held": held,
         "given_up": given_up,
-        "stand_in": stand_in, "rejudge": max(0, rejudge), "teacher": cfg.models.judge,
-        "today": today, "week": seven, "month": thirty, "all_time": all_time,
-        "cache_hit": cache_hit, "per_1000": per_1000, "output_tokens_week": tokens[3],
-        "folders": folders, "batches": batches, "runs": [dict(r) for r in runs],
+        "stand_in": stand_in,
+        "rejudge": max(0, rejudge),
+        "teacher": cfg.models.judge,
+        "today": today,
+        "week": seven,
+        "month": thirty,
+        "all_time": all_time,
+        "cache_hit": cache_hit,
+        "per_1000": per_1000,
+        "output_tokens_week": tokens[3],
+        "folders": folders,
+        "batches": batches,
+        "runs": [dict(r) for r in runs],
         "budget": cfg.models.daily_budget_usd,
     }
     if live:
@@ -229,7 +314,9 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         out_dir = cfg.root / cfg.dashboard_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / LIVE_FILE
-        tmp = out_dir / f".{LIVE_FILE}.{os.getpid()}.tmp"  # a console child beside a run: two writers, two files
+        tmp = (
+            out_dir / f".{LIVE_FILE}.{os.getpid()}.tmp"
+        )  # a console child beside a run: two writers, two files
         tmp.write_text(json.dumps(snap, default=str), encoding="utf-8")
         os.replace(tmp, path)
         _last_live_write = now
@@ -248,6 +335,7 @@ def live_writer(cfg: Config, conn: sqlite3.Connection, min_interval: float = 2.0
 
 
 # -- terminal -----------------------------------------------------------------
+
 
 def _bar(share: float, width: int = 30) -> str:
     share = max(0.0, min(1.0, share))
@@ -277,8 +365,10 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     if "running" in snap:
         if snap["running"]:
             since = f" for {_age(snap['run_started'])}" if snap.get("run_started") else ""
-            lines.append(f"● RUN IN PROGRESS{since} · {snap.get('phase') or 'working'} · "
-                         f"{snap['rate_per_min']:.0f} judged/min · ETA for pending {_eta(snap.get('eta_min'))}")
+            lines.append(
+                f"● RUN IN PROGRESS{since} · {snap.get('phase') or 'working'} · "
+                f"{snap['rate_per_min']:.0f} judged/min · ETA for pending {_eta(snap.get('eta_min'))}"
+            )
         else:
             lines.append(f"○ idle · last 10 min: {_n(snap['judged_10min'])} judged")
     lines.append("")
@@ -288,19 +378,25 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     lines.append(f"Unread known to bodh {_n(snap['unread']):>10}")
     lines.append(f"  judged               {_n(judged):>10}  {_bar(judged / unread)} {judged / unread:4.0%}")
     if inflight:
-        lines.append(f"  with the model       {_n(inflight):>10}  {_bar(inflight / unread)} waiting for the batch to finish")
+        lines.append(
+            f"  with the model       {_n(inflight):>10}  {_bar(inflight / unread)} waiting for the batch to finish"
+        )
     window = f"(≤{snap['max_age_days']} days)" if snap["max_age_days"] else "(any age)"
     lines.append(f"  pending {window:<13}{_n(pending):>10}  {_bar(pending / unread)}")
     if snap["too_old"]:
-        lines.append(f"  older than {snap['max_age_days']} days  {_n(snap['too_old']):>10}  never judged; "
-                     f"`bodh clear-old --days {snap['max_age_days']}` clears them")
+        lines.append(
+            f"  older than {snap['max_age_days']} days  {_n(snap['too_old']):>10}  never judged; "
+            f"`bodh clear-old --days {snap['max_age_days']}` clears them"
+        )
     if snap["skipped"]:
         lines.append(f"  not judged (folders) {_n(snap['skipped']):>10}  {', '.join(snap['skip_folders'])}")
     if in_window:
         lines.append(f"  of the current window: {judged / in_window:.0%} judged")
     notes = []
     if snap.get("stand_in"):
-        notes.append(f"{_n(snap['stand_in'])} judged by the quick judge; the judge re-judges {_n(snap['rejudge'])} of them (50+)")
+        notes.append(
+            f"{_n(snap['stand_in'])} judged by the quick judge; the judge re-judges {_n(snap['rejudge'])} of them (50+)"
+        )
     if snap["low_conf"]:
         notes.append(f"{_n(snap['low_conf'])} judged with low confidence (left alone)")
     if snap["inflight_second"]:
@@ -314,27 +410,45 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     lines.append("")
 
     t, w, a = snap["today"], snap["week"], snap["all_time"]
-    lines.append(f"Today     arrived {_n(t['arrived'])} · judged {_n(t['judged'])} (+{_n(t['dupes'])} dupes) · "
-                 f"reviews {_n(t['second_looks'])} · cut {_n(t['cut'])}")
-    lines.append(f"7 days    arrived {_n(w['arrived'])} · judged {_n(w['judged'])} · reviews {_n(w['second_looks'])}"
-                 f" · cut {_n(w['cut'])}")
+    lines.append(
+        f"Today     arrived {_n(t['arrived'])} · judged {_n(t['judged'])} (+{_n(t['dupes'])} dupes) · "
+        f"reviews {_n(t['second_looks'])} · cut {_n(t['cut'])}"
+    )
+    lines.append(
+        f"7 days    arrived {_n(w['arrived'])} · judged {_n(w['judged'])} · reviews {_n(w['second_looks'])}"
+        f" · cut {_n(w['cut'])}"
+    )
     lines.append(f"All time  judged {_n(a['judged'])} (+{_n(a['dupes'])} dupes) · cut {_n(a['cut'])}")
     per = f"${snap['per_1000']:.2f} per 1,000 judged" if snap["per_1000"] is not None else "no spend yet"
-    cache = f"cache hits {snap['cache_hit']:.0%} of prompt tokens" if snap["cache_hit"] is not None else "no cache data yet"
-    lines.append(f"Spend     today ${t['spend']:.2f} of ${snap['budget']:.2f} · 7 days ${w['spend']:.2f} · "
-                 f"all time ${a['spend']:.2f} · {per} · {cache}")
+    cache = (
+        f"cache hits {snap['cache_hit']:.0%} of prompt tokens"
+        if snap["cache_hit"] is not None
+        else "no cache data yet"
+    )
+    lines.append(
+        f"Spend     today ${t['spend']:.2f} of ${snap['budget']:.2f} · 7 days ${w['spend']:.2f} · "
+        f"all time ${a['spend']:.2f} · {per} · {cache}"
+    )
     if snap.get("series"):
-        lines.append("Last 3 h  " + _sparkline(snap["series"]) + f"  (judged per {snap['series_bin_minutes']} min, max "
-                     f"{max(snap['series'])})")
+        lines.append(
+            "Last 3 h  "
+            + _sparkline(snap["series"])
+            + f"  (judged per {snap['series_bin_minutes']} min, max "
+            f"{max(snap['series'])})"
+        )
     lines.append("")
 
-    lines.append(f"{'By folder':<32}{'unread':>8}{'judged':>8}{'pending':>9}{'model':>8}{'≥70':>6}{'cut':>7}  cut-off")
+    lines.append(
+        f"{'By folder':<32}{'unread':>8}{'judged':>8}{'pending':>9}{'model':>8}{'≥70':>6}{'cut':>7}  cut-off"
+    )
     for f in snap["folders"][:30]:
         if not f["unread"] and not f["cut"]:
             continue
         cutoff = "never" if f["floor"] is None else (f"{f['floor']}" if f["scored"] else "not judged")
-        lines.append(f"  {f['folder'][:29]:<30}{_n(f['unread']):>8}{_n(f['judged']):>8}{_n(f['pending']):>9}"
-                     f"{_n(f['inflight']):>8}{_n(f['good']):>6}{_n(f['cut']):>7}  {cutoff}")
+        lines.append(
+            f"  {f['folder'][:29]:<30}{_n(f['unread']):>8}{_n(f['judged']):>8}{_n(f['pending']):>9}"
+            f"{_n(f['inflight']):>8}{_n(f['good']):>6}{_n(f['cut']):>7}  {cutoff}"
+        )
     lines.append("")
 
     if snap["batches"]:
@@ -345,8 +459,10 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
                 state = f"in progress, {b['age']} ago"
             elif b.get("took"):
                 state = f"{state}, finished {b['took']} ago"
-            lines.append(f"  {b['id'][:22]:<24}{b['purpose']:<12}{_n(b['n_articles']):>6} articles in "
-                         f"{_n(b['n_requests']):>3} requests  {state}")
+            lines.append(
+                f"  {b['id'][:22]:<24}{b['purpose']:<12}{_n(b['n_articles']):>6} articles in "
+                f"{_n(b['n_requests']):>3} requests  {state}"
+            )
             if b.get("note"):
                 lines.append(f"{'':<26}{b['note']}")
         lines.append("")
@@ -360,7 +476,9 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
         lines.append("Last runs")
         for r in snap["runs"]:
             ok = "ok " if r["ok"] else "ERR"
-            lines.append(f"  {(r['started_at'] or '')[:16]} {ok} {r['kind']:<10} {(r['summary'] or r['error'] or '')}")
+            lines.append(
+                f"  {(r['started_at'] or '')[:16]} {ok} {r['kind']:<10} {(r['summary'] or r['error'] or '')}"
+            )
     return "\n".join(lines)
 
 
@@ -371,6 +489,7 @@ def _sparkline(series: list[int]) -> str:
 
 
 # -- dashboard ----------------------------------------------------------------
+
 
 def render_html(snap: dict) -> str:
     """The progress section of the dashboard: numbers now, and a script that keeps them moving by polling
@@ -387,7 +506,11 @@ def render_html(snap: dict) -> str:
     per = f"${snap['per_1000']:.2f}" if snap["per_1000"] is not None else "–"
     cache = f"{snap['cache_hit']:.0%}" if snap["cache_hit"] is not None else "–"
     rate = snap.get("rate_per_min", 0.0)
-    old_note = (f" · {snap['too_old']:,} older than {snap['max_age_days']} days are never judged" if snap["too_old"] else "")
+    old_note = (
+        f" · {snap['too_old']:,} older than {snap['max_age_days']} days are never judged"
+        if snap["too_old"]
+        else ""
+    )
     parts = [
         "<h2>Progress: what the judge has processed</h2>",
         "<div class='live'>"
@@ -406,7 +529,11 @@ def render_html(snap: dict) -> str:
         f"<b style='color:#999'>pending <span id='p-pending'>{pending:,}</span></b> of <span id='p-unread'>{snap['unread']:,}</span> unread"
         f"<span id='p-old'>{e(old_note)}</span>"
         + (f" · {snap['skipped']:,} in folders that are not judged" if snap["skipped"] else "")
-        + (f" · {snap['stand_in']:,} judged by the quick judge, {snap['rejudge']:,} of them await the judge" if snap.get("stand_in") else "")
+        + (
+            f" · {snap['stand_in']:,} judged by the quick judge, {snap['rejudge']:,} of them await the judge"
+            if snap.get("stand_in")
+            else ""
+        )
         + "</p>",
         "<div class='kpis'>"
         f"<div class='kpi'><span class='muted'>judged today</span><b id='k-judged-today'>{t['judged']:,}</b></div>"
@@ -424,8 +551,10 @@ def render_html(snap: dict) -> str:
     ]
     parts.append(_folder_rows(snap["folders"], e))
     parts.append("</tbody></table>")
-    parts.append("<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
-                 f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>")
+    parts.append(
+        "<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
+        f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>"
+    )
     parts.append(LIVE_SCRIPT)
     return "\n".join(parts)
 
@@ -436,9 +565,11 @@ def _folder_rows(folders: list[dict], e) -> str:
         if not f["unread"] and not f["cut"]:
             continue
         cutoff = "never" if f["floor"] is None else (str(f["floor"]) if f["scored"] else "not judged")
-        rows.append(f"<tr><td>{e(f['folder'])}</td><td class='num'>{f['unread']:,}</td><td class='num'>{f['judged']:,}</td>"
-                    f"<td class='num'>{f['pending']:,}</td><td class='num'>{f['inflight']:,}</td><td class='num'>{f['good']:,}</td>"
-                    f"<td class='num'>{f['cut']:,}</td><td>{e(cutoff)}</td></tr>")
+        rows.append(
+            f"<tr><td>{e(f['folder'])}</td><td class='num'>{f['unread']:,}</td><td class='num'>{f['judged']:,}</td>"
+            f"<td class='num'>{f['pending']:,}</td><td class='num'>{f['inflight']:,}</td><td class='num'>{f['good']:,}</td>"
+            f"<td class='num'>{f['cut']:,}</td><td>{e(cutoff)}</td></tr>"
+        )
     return "".join(rows)
 
 
@@ -450,8 +581,10 @@ def _batch_rows(batches: list[dict], e) -> str:
         state = f"in progress, submitted {b['age']} ago" if b["status"] == "submitted" else b["status"]
         if b.get("note"):
             state += f" · {b['note']}"
-        rows.append(f"<tr><td>{e(b['id'][:22])}</td><td>{e(b['purpose'])}</td><td class='num'>{b['n_articles']:,}</td>"
-                    f"<td>{e(state)}</td></tr>")
+        rows.append(
+            f"<tr><td>{e(b['id'][:22])}</td><td>{e(b['purpose'])}</td><td class='num'>{b['n_articles']:,}</td>"
+            f"<td>{e(state)}</td></tr>"
+        )
     return "".join(rows)
 
 
@@ -463,8 +596,10 @@ def _spark_svg(series: list[int]) -> str:
     pts = [(i * 360 / max(1, n - 1), 46 - v / top * 44) for i, v in enumerate(series)]
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     area = f"0,48 {line} 360,48"
-    return (f"<polygon points='{area}' fill='#2a7' fill-opacity='0.15'/>"
-            f"<polyline points='{line}' fill='none' stroke='#2a7' stroke-width='1.5'/>")
+    return (
+        f"<polygon points='{area}' fill='#2a7' fill-opacity='0.15'/>"
+        f"<polyline points='{line}' fill='none' stroke='#2a7' stroke-width='1.5'/>"
+    )
 
 
 PROGRESS_CSS = """

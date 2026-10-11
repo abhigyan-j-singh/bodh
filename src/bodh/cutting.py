@@ -24,7 +24,9 @@ from .readers.bazqux import BazQuxClient
 log = logging.getLogger(__name__)
 
 BAND = 20  # one scoring band; the concept cap never displaces an article by more than this
-SAFETY_KEY = store.SAFETY_KEY  # kv: the run whose autocut tripped the safety limit; set until `bodh safety reset`
+SAFETY_KEY = (
+    store.SAFETY_KEY
+)  # kv: the run whose autocut tripped the safety limit; set until `bodh safety reset`
 
 
 class SafetyTripped(Exception):
@@ -40,7 +42,9 @@ class Selection:
     saved_by_review: int = 0
     reserved_for_new_ground: int = 0
     reviews: int = 0
-    kept_after_failed_look: int = 0  # earlier runs' failed looks: they stay unread, and are not this run's saves
+    kept_after_failed_look: int = (
+        0  # earlier runs' failed looks: they stay unread, and are not this run's saves
+    )
     blocked: str = ""  # why autocut cut nothing this run (the safety limit is tripped), else empty
 
     @property
@@ -60,15 +64,22 @@ def safety_tripped(conn: sqlite3.Connection) -> str | None:
 
 
 def reset_safety(conn: sqlite3.Connection) -> bool:
-    store.kv_delete(conn, store.LEGACY_SAFETY_KEY)   # kept in step for a rollback (see store._migrate_4)
+    store.kv_delete(conn, store.LEGACY_SAFETY_KEY)  # kept in step for a rollback (see store._migrate_4)
     return store.kv_delete(conn, SAFETY_KEY)
 
 
 # -- autocut ------------------------------------------------------
 
-def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, run_id: int | None,
-                 newly_scored: set[str] | None = None, client: BazQuxClient | None = None,
-                 stop_after: float | None = None) -> Selection:
+
+def select_autocut(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    judge: Judge | None,
+    run_id: int | None,
+    newly_scored: set[str] | None = None,
+    client: BazQuxClient | None = None,
+    stop_after: float | None = None,
+) -> Selection:
     """Everything unread, scored with medium or high confidence, below its folder's cut-off,
     minus the review's saves, minus the new-ground quota, capped per run. Exempt as
     well: what an undo restored (``exempt``), until a prune takes it."""
@@ -77,8 +88,7 @@ def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, r
     tripped = safety_tripped(conn)
     if tripped:
         # a trip stands until someone has looked: the same scores would trip it again next run
-        sel.blocked = (f"safety limit tripped in run {tripped}; autocut cuts nothing until "
-                       "`bodh safety reset`")
+        sel.blocked = f"safety limit tripped in run {tripped}; autocut cuts nothing until `bodh safety reset`"
         log.warning("cut: %s", sel.blocked)
         sel.survivors = list(pool)
         sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
@@ -86,8 +96,13 @@ def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, r
     candidates: list[sqlite3.Row] = []
     for row in pool:
         floor = cfg.cutoff_for(row["folder"])
-        if (floor is None or not eligible(row) or row["exploration"] or row["exempt"]
-                or row["confidence"] == "low"):
+        if (
+            floor is None
+            or not eligible(row)
+            or row["exploration"]
+            or row["exempt"]
+            or row["confidence"] == "low"
+        ):
             sel.survivors.append(row)
             continue
         if row["score"] < floor:
@@ -112,8 +127,8 @@ def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, r
     # model, once; the higher score stands. In batch mode the look arrives on the next run,
     # so the article is held (unread) until then.
     if judge is not None:
-        saved: list[sqlite3.Row] = []       # this run's review cleared them, or never got to them
-        kept: list[sqlite3.Row] = []        # an earlier run's look failed: kept, but not a save of this run
+        saved: list[sqlite3.Row] = []  # this run's review cleared them, or never got to them
+        kept: list[sqlite3.Row] = []  # an earlier run's look failed: kept, but not a save of this run
         remaining: list[sqlite3.Row] = []
         to_look: list[sqlite3.Row] = []
         for row in candidates:
@@ -155,9 +170,13 @@ def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, r
     if quota > 0 and candidates:
         since = store.days_ago_iso(cfg.profile.concept_window_days)
         known = {c for c, _ in store.concept_counts(conn, ["star", "read", "rescue"], since, limit=500)}
-        novel = [r for r in sorted(candidates, key=lambda r: -float(r["score"]))
-                 if (r["quality"] or 0) >= 60 and (r["concept"] or "").strip().lower() not in known
-                 and not r["dupe_of"]]
+        novel = [
+            r
+            for r in sorted(candidates, key=lambda r: -float(r["score"]))
+            if (r["quality"] or 0) >= 60
+            and (r["concept"] or "").strip().lower() not in known
+            and not r["dupe_of"]
+        ]
         reserved = novel[:quota]
         if reserved:
             store.set_flags(conn, [r["id"] for r in reserved], exploration=1)
@@ -168,15 +187,21 @@ def select_autocut(conn: sqlite3.Connection, cfg: Config, judge: Judge | None, r
 
     candidates.sort(key=lambda r: (float(r["score"]), r["crawled_msec"] or 0))
     sel.cut = candidates[: cfg.autocut.max_per_run]
-    sel.survivors.extend(candidates[cfg.autocut.max_per_run:])
+    sel.survivors.extend(candidates[cfg.autocut.max_per_run :])
     sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
     return sel
 
 
 # -- the manual prune ---------------------------------------------------------
 
-def select_prune(conn: sqlite3.Connection, cfg: Config, keep: int | None = None,
-                 fraction: float | None = None, below: float | None = None) -> Selection:
+
+def select_prune(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    keep: int | None = None,
+    fraction: float | None = None,
+    below: float | None = None,
+) -> Selection:
     """Your decision: cut to a count, by a fraction, or below a score. Protected and starred
     articles never move. ``keep`` ranks with a concept cap so the survivors span topics."""
     pool = [r for r in store.unread_scored(conn)]
@@ -191,7 +216,7 @@ def select_prune(conn: sqlite3.Connection, cfg: Config, keep: int | None = None,
     elif fraction is not None:
         n_cut = math.ceil(max(0.0, min(1.0, fraction)) * len(by_score_desc))
         sel.survivors = by_score_desc[: len(by_score_desc) - n_cut] + fixed
-        sel.cut = by_score_desc[len(by_score_desc) - n_cut:]
+        sel.cut = by_score_desc[len(by_score_desc) - n_cut :]
     else:
         target = cfg.prune.keep if keep is None else keep
         cap = max(1, math.ceil(cfg.prune.max_share_per_concept * target))
@@ -201,7 +226,11 @@ def select_prune(conn: sqlite3.Connection, cfg: Config, keep: int | None = None,
         for row in by_score_desc:
             # a deferred article more than a band better than this one wins its seat back:
             # diversity spreads topics, it never trades a 90 for a 55
-            if deferred and len(survivors) < target and float(deferred[0]["score"]) - float(row["score"]) > BAND:
+            if (
+                deferred
+                and len(survivors) < target
+                and float(deferred[0]["score"]) - float(row["score"]) > BAND
+            ):
                 survivors.append(deferred.pop(0))
             if len(survivors) >= target:
                 deferred.append(row)
@@ -224,8 +253,10 @@ def select_prune(conn: sqlite3.Connection, cfg: Config, keep: int | None = None,
 
 # -- writing to BazQux --------------------------------------------------------
 
-def apply_cut(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, ids: Iterable[str],
-              run_id: int, mode: str) -> int:
+
+def apply_cut(
+    client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, ids: Iterable[str], run_id: int, mode: str
+) -> int:
     ids = list(ids)
     if not ids:
         return 0
@@ -292,8 +323,15 @@ def undo(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, run_id: in
     return len(ids)
 
 
-def clear_old(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, older_than_days: int,
-               protected_ids: set[str], run_id: int, dry_run: bool = False) -> tuple[int, int]:
+def clear_old(
+    client: BazQuxClient,
+    conn: sqlite3.Connection,
+    cfg: Config,
+    older_than_days: int,
+    protected_ids: set[str],
+    run_id: int,
+    dry_run: bool = False,
+) -> tuple[int, int]:
     """Mark read every unread article older than the cutoff, stars, protections and the
     student's rescues exempt. Returns (candidates, done)."""
     import time
@@ -309,10 +347,14 @@ def clear_old(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, older
     known = store.known_ids(conn)
     unknown = [aid for aid in ids if aid not in known]
     with store.transaction(conn):
-        conn.executemany("INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)",
-                         [(aid, "(clear-old: not fetched)", now) for aid in unknown])
-        conn.executemany("INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)",
-                         [(aid, now) for aid in unknown])
+        conn.executemany(
+            "INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)",
+            [(aid, "(clear-old: not fetched)", now) for aid in unknown],
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)",
+            [(aid, now) for aid in unknown],
+        )
         store.mark_cut(conn, ids, run_id, "clear-old")
     finish_pending_cuts(client, conn, cfg)
     return len(ids), len(ids)

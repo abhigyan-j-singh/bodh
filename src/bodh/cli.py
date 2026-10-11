@@ -1,20 +1,20 @@
 """bodh: keeps your BazQux unread list worth reading.
 
-    bodh doctor [--live]      check config, secrets, prompts; --live also logs in and calls the models
-    bodh run [--shadow]       the timer's job: feedback, new articles, judgments, tags, autocut, dashboard, heartbeat
-    bodh catch-up             one pass over everything pending with the quick judge; cuts nothing
-    bodh progress [--watch]   judged, with the model, pending, rate, ETA, by folder; batches; the log
-    bodh prune                cut to prune.keep (default 40); or --fraction 0.3; or --below 65
-    bodh undo                 reverse the last cut
-    bodh clear-old --days N   mark everything older than N days read, stars and protections exempt
-    bodh status | why ID      the whole system at a glance; why one article got its score
-    bodh console              the console in the browser: status, run, stop, prune, undo, log
-    bodh stop [--all]         stop what is running; --all stops everything incl. the schedule and the console
-    bodh schedule             show, pause, resume or kick the launchd jobs
-    bodh autocut on|off       the automatic cut below the cut-off, or scoring-only mode
-    bodh mark ID great|…      your verdict on an article; `rescue` brings a cut one back
-    bodh steer more|less "x"  more or less of a concept, from the next run
-    bodh weekly | report      Sunday's profile rewrite and note; the monthly feed report
+bodh doctor [--live]      check config, secrets, prompts; --live also logs in and calls the models
+bodh run [--shadow]       the timer's job: feedback, new articles, judgments, tags, autocut, dashboard, heartbeat
+bodh catch-up             one pass over everything pending with the quick judge; cuts nothing
+bodh progress [--watch]   judged, with the model, pending, rate, ETA, by folder; batches; the log
+bodh prune                cut to prune.keep (default 40); or --fraction 0.3; or --below 65
+bodh undo                 reverse the last cut
+bodh clear-old --days N   mark everything older than N days read, stars and protections exempt
+bodh status | why ID      the whole system at a glance; why one article got its score
+bodh console              the console in the browser: status, run, stop, prune, undo, log
+bodh stop [--all]         stop what is running; --all stops everything incl. the schedule and the console
+bodh schedule             show, pause, resume or kick the launchd jobs
+bodh autocut on|off       the automatic cut below the cut-off, or scoring-only mode
+bodh mark ID great|…      your verdict on an article; `rescue` brings a cut one back
+bodh steer more|less "x"  more or less of a concept, from the next run
+bodh weekly | report      Sunday's profile rewrite and note; the monthly feed report
 """
 
 from __future__ import annotations
@@ -72,8 +72,10 @@ def version() -> None:
 
 
 @app.command()
-def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
-           verbose: bool = VERBOSE) -> None:
+def doctor(
+    live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
+    verbose: bool = VERBOSE,
+) -> None:
     """Connectivity and configuration checks. Run after every update. Exits 1 when a check
     fails, so an installer stops on a broken install."""
     cfg = _config()
@@ -86,28 +88,52 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
 
     typer.echo(f"root: {cfg.root}")
     typer.echo(f"timezone: {cfg.timezone} (from {cfg.timezone_source})")
-    typer.echo(f"models: judge={cfg.models.judge} reviewer={cfg.models.reviewer} profiler={cfg.models.profiler}"
-               f" quick judge={cfg.catch_up.model} budget=${cfg.models.daily_budget_usd}/day")
-    mode = ("batch (half price; judgments arrive on the next run)" if cfg.models.batch
-            else f"synchronous ({cfg.limits.parallel_calls} calls at once)")
-    typer.echo(f"mode: {mode} · prompt {cfg.judge.prompt_version} · {cfg.judge.articles_per_call} articles per call"
-               f" · articles older than {cfg.limits.max_age_days} days are never judged")
-    typer.echo(f"autocut: {'on' if cfg.autocut.enabled else 'off (scoring-only mode)'}, cut-off {cfg.autocut.cutoff}, "
-               f"at most {cfg.autocut.max_per_run}/run · prune keeps {cfg.prune.keep} · folders {list(cfg.folders) or 'none'}")
-    typer.echo(f"home angle: {cfg.judge.home_angle!r} (+{cfg.judge.home_bonus})" if cfg.judge.home_angle
-               else "home angle: none (judge.home_angle)")
+    typer.echo(
+        f"models: judge={cfg.models.judge} reviewer={cfg.models.reviewer} profiler={cfg.models.profiler}"
+        f" quick judge={cfg.catch_up.model} budget=${cfg.models.daily_budget_usd}/day"
+    )
+    mode = (
+        "batch (half price; judgments arrive on the next run)"
+        if cfg.models.batch
+        else f"synchronous ({cfg.limits.parallel_calls} calls at once)"
+    )
+    typer.echo(
+        f"mode: {mode} · prompt {cfg.judge.prompt_version} · {cfg.judge.articles_per_call} articles per call"
+        f" · articles older than {cfg.limits.max_age_days} days are never judged"
+    )
+    typer.echo(
+        f"autocut: {'on' if cfg.autocut.enabled else 'off (scoring-only mode)'}, cut-off {cfg.autocut.cutoff}, "
+        f"at most {cfg.autocut.max_per_run}/run · prune keeps {cfg.prune.keep} · folders {list(cfg.folders) or 'none'}"
+    )
+    typer.echo(
+        f"home angle: {cfg.judge.home_angle!r} (+{cfg.judge.home_bonus})"
+        if cfg.judge.home_angle
+        else "home angle: none (judge.home_angle)"
+    )
     if cfg.old_keys:
-        typer.echo(f"config.yaml: {len(cfg.old_keys)} old key name(s), still read for one release; rename them:")
+        typer.echo(
+            f"config.yaml: {len(cfg.old_keys)} old key name(s), still read for one release; rename them:"
+        )
         for move in cfg.old_keys:
             typer.echo(f"   {move}")
     if cfg.about_is_example():
-        problem("about: STILL THE EXAMPLE (profile/about.md describes an invented student): replace every paragraph "
-                "with your own and delete the comment at the top")
+        problem(
+            "about: STILL THE EXAMPLE (profile/about.md describes an invented student): replace every paragraph "
+            "with your own and delete the comment at the top"
+        )
     elif cfg.read_about():
-        typer.echo("about: found" + (" (as profile/seed.md, the old name; install.sh renames it)"
-                                     if cfg.about_path.name == "seed.md" else ""))
+        typer.echo(
+            "about: found"
+            + (
+                " (as profile/seed.md, the old name; install.sh renames it)"
+                if cfg.about_path.name == "seed.md"
+                else ""
+            )
+        )
     else:
-        problem("about: MISSING (profile/about.md): the judge cannot judge for a student it knows nothing about")
+        problem(
+            "about: MISSING (profile/about.md): the judge cannot judge for a student it knows nothing about"
+        )
     typer.echo(f"learned profile: {'found' if cfg.read_learned() else 'missing (will start empty)'}")
     from .judge import PROMPTS_DIR, load_prompt
 
@@ -128,8 +154,10 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
     hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
     conn = store.connect(cfg.db_path)
-    typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles, "
-               f"schema v{store.schema_version(conn)})")
+    typer.echo(
+        f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles, "
+        f"schema v{store.schema_version(conn)})"
+    )
     if live and not problems:
         _doctor_live(cfg, secrets, conn, problem)
     elif live:
@@ -156,8 +184,10 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
         if want in tags:
             typer.echo(f"must-read stream '{cfg.protect.must_read_stream}': present")
         else:
-            problem(f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
-                    "cut.must_read_stream)")
+            problem(
+                f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
+                "cut.must_read_stream)"
+            )
         unknown = [f for f in cfg.folders if f not in folders]
         if unknown:
             problem(f"config folders not in BazQux: {unknown}")
@@ -171,13 +201,22 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
         from .judge import Judge, concept_context
 
         judge = Judge(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
-        probe = {"id": "probe", "feed_title": "doctor", "folder": None, "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
-                 "url": "https://example.com/probe", "author": "doctor", "published": None,
-                 "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once."}
+        probe = {
+            "id": "probe",
+            "feed_title": "doctor",
+            "folder": None,
+            "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
+            "url": "https://example.com/probe",
+            "author": "doctor",
+            "published": None,
+            "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once.",
+        }
         verdicts = judge.judge_batch([probe], None)  # type: ignore[list-item]
         v = verdicts.get("probe")
         if v:
-            typer.echo(f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}")
+            typer.echo(
+                f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}"
+            )
         else:
             problem(f"judge ({cfg.models.judge}): call ok, no judgment parsed")
         second = judge.review(probe, None)  # type: ignore[arg-type]
@@ -185,27 +224,48 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
             typer.echo(f"review ({cfg.models.reviewer}): ok")
         else:
             problem(f"review ({cfg.models.reviewer}): FAILED")
-        typer.echo(f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}")
+        typer.echo(
+            f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
+        )
     except Exception as exc:  # noqa: BLE001
         problem(f"models: FAILED ({exc})")
 
 
 @app.command()
-def run(shadow: bool = typer.Option(False, "--shadow", help="Judge and tag, cut nothing: scoring-only mode for this run."),
-        limit: int | None = typer.Option(None, "--limit", help="Score (or submit) at most this many articles this run."),
-        sync: bool = typer.Option(False, "--sync", help="Wait for every model call instead of using the Batches API."),
-        workers: int | None = typer.Option(None, "--workers", help="Model calls running at once (--sync); default from config."),
-        verbose: bool = VERBOSE) -> None:
+def run(
+    shadow: bool = typer.Option(
+        False, "--shadow", help="Judge and tag, cut nothing: scoring-only mode for this run."
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", help="Score (or submit) at most this many articles this run."
+    ),
+    sync: bool = typer.Option(
+        False, "--sync", help="Wait for every model call instead of using the Batches API."
+    ),
+    workers: int | None = typer.Option(
+        None, "--workers", help="Model calls running at once (--sync); default from config."
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
     """One full pass. This is what launchd runs every 30 minutes."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), graceful_sigterm(), time_limit(runmod.RUN_TIMEOUT_SECONDS):
-            res = runmod.run(ctx, score_limit=limit, enforce=(ctx.cfg.autocut.enabled and not shadow),
-                               workers=workers, sync=sync)
+        with (
+            run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"),
+            graceful_sigterm(),
+            time_limit(runmod.RUN_TIMEOUT_SECONDS),
+        ):
+            res = runmod.run(
+                ctx,
+                score_limit=limit,
+                enforce=(ctx.cfg.autocut.enabled and not shadow),
+                workers=workers,
+                sync=sync,
+            )
     except AlreadyRunning:
         typer.echo("another run is in progress; skipping")
         raise typer.Exit(0) from None
-    except ConfigError as exc:   # about.md is still the worked example
+    except ConfigError as exc:  # about.md is still the worked example
         _fail(str(exc), EXIT_CONFIG)
         return
     except RunTimeout as exc:
@@ -222,21 +282,29 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Judge and tag, cut 
 
 def _renamed(old: str, new: str) -> None:
     """The one line an old command name prints before running the new one (one release)."""
-    typer.echo(f"note: `bodh {old}` is now `bodh {new}`; the old name goes away in the next release", err=True)
+    typer.echo(
+        f"note: `bodh {old}` is now `bodh {new}`; the old name goes away in the next release", err=True
+    )
 
 
 @app.command(hidden=True)
-def score(limit: int | None = typer.Option(None, "--limit"), sync: bool = typer.Option(False, "--sync"),
-          workers: int | None = typer.Option(None, "--workers"), verbose: bool = VERBOSE) -> None:
+def score(
+    limit: int | None = typer.Option(None, "--limit"),
+    sync: bool = typer.Option(False, "--sync"),
+    workers: int | None = typer.Option(None, "--workers"),
+    verbose: bool = VERBOSE,
+) -> None:
     """The name before October 2026 of `run --shadow`."""
     _renamed("score", "run --shadow")
     run(shadow=True, limit=limit, sync=sync, workers=workers, verbose=verbose)
 
 
 @app.command()
-def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
-             every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
-             verbose: bool = VERBOSE) -> None:
+def progress(
+    watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
+    every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
+    verbose: bool = VERBOSE,
+) -> None:
     """How far the judge has got: judged, with the model, pending, by folder; rate and ETA while a
     run is going; batches; spend; the log."""
     import time
@@ -262,15 +330,27 @@ def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --e
 
 
 @app.command("catch-up")
-def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
-             chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
-             all_ages: bool = typer.Option(False, "--all-ages", help="Also the unread articles older than limits.max_age_days."),
-             model: str | None = typer.Option(None, "--model", help="The model to use; default catch_up.model, the quick "
-                                              "judge. Name the judge itself for a full-price pass."),
-             budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars for the catch-up."),
-             max_seconds: float | None = typer.Option(None, "--max-seconds", help="Start no new call after this long; run again to continue."),
-             yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-             verbose: bool = VERBOSE) -> None:
+def catch_up(
+    workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
+    chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
+    all_ages: bool = typer.Option(
+        False, "--all-ages", help="Also the unread articles older than limits.max_age_days."
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="The model to use; default catch_up.model, the quick "
+        "judge. Name the judge itself for a full-price pass.",
+    ),
+    budget: float | None = typer.Option(
+        None, "--budget", help="Raise today's budget to this many dollars for the catch-up."
+    ),
+    max_seconds: float | None = typer.Option(
+        None, "--max-seconds", help="Start no new call after this long; run again to continue."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous, many
     calls at once, with the quick judge unless --model says otherwise. Judges and tags; cuts
     nothing; the judge reads again what the quick judge rates highly (catch_up.rejudge_at). Stop
@@ -294,23 +374,38 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls runni
     judge = model or cfg.catch_up.model
     quick = judge != cfg.models.judge
     rejudge = None if quick else Judge.rejudge_rule(cfg)
-    pending = store.unscored_unread_count(ctx.conn, cfg.judge.prompt_version, cfg.limits.max_age_days,
-                                          cfg.unjudged_folders(), exclude_inflight=True, rejudge=rejudge)
+    pending = store.unscored_unread_count(
+        ctx.conn,
+        cfg.judge.prompt_version,
+        cfg.limits.max_age_days,
+        cfg.unjudged_folders(),
+        exclude_inflight=True,
+        rejudge=rejudge,
+    )
     if pending == 0:
-        typer.echo("nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)"))
+        typer.echo(
+            "nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)")
+        )
         return
     if not cfg.models.has_price(judge):
         _fail(f"no price for {judge} in models.prices_per_mtok; add it to config.yaml first")
     p_in, p_out = cfg.models.price(judge)
-    est = pending * (450 * p_in + 65 * p_out) / 1_000_000 * 1.1   # synchronous, prefix cached
+    est = pending * (450 * p_in + 65 * p_out) / 1_000_000 * 1.1  # synchronous, prefix cached
     left = cfg.models.daily_budget_usd - store.spent_since(ctx.conn, store.local_midnight_iso(cfg.timezone))
     need = max(cfg.models.daily_budget_usd, cfg.models.daily_budget_usd - left + est + 1)
-    again = (f" The judge reads again what it rates {cfg.catch_up.rejudge_at:.0f} or more, on the next runs."
-             if quick and cfg.catch_up.rejudge_at is not None else "")
-    typer.echo(f"{pending:,} articles pending{' (any age)' if all_ages else ''}; about ${est:.2f} with {judge}, "
-               f"{workers} calls at once.{again}")
+    again = (
+        f" The judge reads again what it rates {cfg.catch_up.rejudge_at:.0f} or more, on the next runs."
+        if quick and cfg.catch_up.rejudge_at is not None
+        else ""
+    )
+    typer.echo(
+        f"{pending:,} articles pending{' (any age)' if all_ages else ''}; about ${est:.2f} with {judge}, "
+        f"{workers} calls at once.{again}"
+    )
     if est > left and budget is None:
-        typer.echo(f"today's budget has ${left:.2f} left; pass --budget {need:.0f} to let the catch-up finish")
+        typer.echo(
+            f"today's budget has ${left:.2f} left; pass --budget {need:.0f} to let the catch-up finish"
+        )
     if not yes and not typer.confirm("Start the catch-up?"):
         raise typer.Exit(0)
     started = time.monotonic()
@@ -322,22 +417,34 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls runni
         rate = done / mins
         left_n = max(0, pending - done)
         eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
-        line = (f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
-                f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   ")
+        line = (
+            f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
+            f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   "
+        )
         typer.echo(line, nl=False)
         last_line["n"] = done
 
     try:
         with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
-            total = runmod.catch_up(ctx, workers=workers, chunk=chunk, all_ages=all_ages, budget=budget,
-                                   on_progress=show, model=judge, max_seconds=max_seconds)
+            total = runmod.catch_up(
+                ctx,
+                workers=workers,
+                chunk=chunk,
+                all_ages=all_ages,
+                budget=budget,
+                on_progress=show,
+                model=judge,
+                max_seconds=max_seconds,
+            )
     except AlreadyRunning:
         _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again")
         return
     typer.echo("")
-    typer.echo(f"judged {total['scored']:,} (+{total['dupes']:,} dupes) in {total['elapsed'] / 60:.1f} min over "
-               f"{total['rounds']} rounds; {total['failed']} failed batches; pending {total['pending']:,}; "
-               f"spend today ${total['spend']:.2f}")
+    typer.echo(
+        f"judged {total['scored']:,} (+{total['dupes']:,} dupes) in {total['elapsed'] / 60:.1f} min over "
+        f"{total['rounds']} rounds; {total['failed']} failed batches; pending {total['pending']:,}; "
+        f"spend today ${total['spend']:.2f}"
+    )
     if total["interrupted"]:
         typer.echo("stopped; what was judged stays. Run `bodh catch-up` again to continue.")
     if total["timed_out"]:
@@ -349,23 +456,39 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls runni
 
 
 @app.command(hidden=True)
-def blast(workers: int = typer.Option(8, "--workers"), chunk: int = typer.Option(1000, "--chunk"),
-          all_ages: bool = typer.Option(False, "--all-ages"), model: str | None = typer.Option(None, "--model"),
-          budget: float | None = typer.Option(None, "--budget"), max_seconds: float | None = typer.Option(None, "--max-seconds"),
-          yes: bool = typer.Option(False, "--yes"), verbose: bool = VERBOSE) -> None:
+def blast(
+    workers: int = typer.Option(8, "--workers"),
+    chunk: int = typer.Option(1000, "--chunk"),
+    all_ages: bool = typer.Option(False, "--all-ages"),
+    model: str | None = typer.Option(None, "--model"),
+    budget: float | None = typer.Option(None, "--budget"),
+    max_seconds: float | None = typer.Option(None, "--max-seconds"),
+    yes: bool = typer.Option(False, "--yes"),
+    verbose: bool = VERBOSE,
+) -> None:
     """The name before October 2026 of `catch-up`."""
     _renamed("blast", "catch-up")
-    catch_up(workers=workers, chunk=chunk, all_ages=all_ages, model=model, budget=budget, max_seconds=max_seconds,
-             yes=yes, verbose=verbose)
+    catch_up(
+        workers=workers,
+        chunk=chunk,
+        all_ages=all_ages,
+        model=model,
+        budget=budget,
+        max_seconds=max_seconds,
+        yes=yes,
+        verbose=verbose,
+    )
 
 
 @app.command()
-def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many unread (default: prune.keep)."),
-          fraction: float | None = typer.Option(None, "--fraction", help="Cut this share of what is unread."),
-          below: float | None = typer.Option(None, "--below", help="Cut everything scoring under this."),
-          dry_run: bool = typer.Option(False, "--dry-run", help="Show the cut without making it."),
-          yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-          verbose: bool = VERBOSE) -> None:
+def prune(
+    keep: int | None = typer.Option(None, "--keep", help="Keep this many unread (default: prune.keep)."),
+    fraction: float | None = typer.Option(None, "--fraction", help="Cut this share of what is unread."),
+    below: float | None = typer.Option(None, "--below", help="Cut everything scoring under this."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the cut without making it."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
     """Cut the worst of what is still unread. Default keeps prune.keep (40). Run again to cut
     deeper. Shows what would go and asks first, unless --yes or not in a terminal."""
     if sum(x is not None for x in (keep, fraction, below)) > 1:
@@ -411,8 +534,11 @@ def _interactive() -> bool:
 def _show_prune(sel: Any, dry_run: bool) -> None:
     unread_scored = len(sel.cut) + len(sel.survivors)
     verb = "would cut" if dry_run else "cut"
-    typer.echo(f"{verb} {len(sel.cut)} of {unread_scored} scored unread articles; boundary "
-               f"{sel.boundary:.0f}" if sel.boundary is not None else f"{verb} {len(sel.cut)} articles")
+    typer.echo(
+        f"{verb} {len(sel.cut)} of {unread_scored} scored unread articles; boundary {sel.boundary:.0f}"
+        if sel.boundary is not None
+        else f"{verb} {len(sel.cut)} articles"
+    )
     if sel.cut:
         best = sorted(sel.cut, key=lambda r: -float(r["score"]))[:10]
         typer.echo("the best of what goes (this is the boundary you are choosing):")
@@ -437,10 +563,12 @@ def undo(verbose: bool = VERBOSE) -> None:
 
 
 @app.command("clear-old")
-def clear_old(days: int = typer.Option(14, "--days", help="Everything unread older than this many days goes."),
-              yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-              dry_run: bool = typer.Option(False, "--dry-run", help="Count, change nothing."),
-              verbose: bool = VERBOSE) -> None:
+def clear_old(
+    days: int = typer.Option(14, "--days", help="Everything unread older than this many days goes."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count, change nothing."),
+    verbose: bool = VERBOSE,
+) -> None:
     """Mark every unread article older than N days read and tag it `cut`. Stars, the must-read
     stream, protected folders and rescued articles are exempt. Reversible with `bodh undo`."""
     ctx = _ctx(verbose)
@@ -460,8 +588,12 @@ def clear_old(days: int = typer.Option(14, "--days", help="Everything unread old
 
 
 @app.command(hidden=True)
-def bankruptcy(older_than: int = typer.Option(14, "--older-than"), yes: bool = typer.Option(False, "--yes"),
-               dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VERBOSE) -> None:
+def bankruptcy(
+    older_than: int = typer.Option(14, "--older-than"),
+    yes: bool = typer.Option(False, "--yes"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    verbose: bool = VERBOSE,
+) -> None:
     """The name before October 2026 of `clear-old --days N`."""
     _renamed("bankruptcy --older-than N", "clear-old --days N")
     clear_old(days=older_than, yes=yes, dry_run=dry_run, verbose=verbose)
@@ -478,9 +610,14 @@ def status(verbose: bool = VERBOSE) -> None:
 
 
 @app.command()
-def stop(everything: bool = typer.Option(False, "--all", help="Also pause every scheduled job and end the console; "
-                                         "`bodh schedule resume` brings them back."),
-         verbose: bool = VERBOSE) -> None:
+def stop(
+    everything: bool = typer.Option(
+        False,
+        "--all",
+        help="Also pause every scheduled job and end the console; `bodh schedule resume` brings them back.",
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
     """Stop the run, prune or catch-up in progress (the same as Ctrl-C in its terminal). With
     --all, stop everything: the run, the schedule and the console."""
     from . import jobs
@@ -495,13 +632,15 @@ def stop(everything: bool = typer.Option(False, "--all", help="Also pause every 
 
 
 @app.command()
-def schedule(action: str = typer.Argument("status", help="status, pause, resume or kick (a run now, via launchd)"),
-             job: str = typer.Option("all", "--job", help="run, weekly, report, console or all"),
-             verbose: bool = VERBOSE) -> None:
+def schedule(
+    action: str = typer.Argument("status", help="status, pause, resume or kick (a run now, via launchd)"),
+    job: str = typer.Option("all", "--job", help="run, weekly, report, console or all"),
+    verbose: bool = VERBOSE,
+) -> None:
     """The launchd jobs: show them, pause them all (nothing fires until resume), resume, or kick a run."""
     from . import jobs
 
-    if job == "panel":   # the console's name before October 2026
+    if job == "panel":  # the console's name before October 2026
         job = "console"
     if action == "status":
         for name, label in jobs.JOBS.items():
@@ -536,21 +675,30 @@ def safety(action: str = typer.Argument("status", help="status, or reset"), verb
     given_up = store.given_up(ctx.conn)
     if action == "reset":
         if cutmod.reset_safety(ctx.conn):
-            typer.echo(f"safety limit reset (it tripped in run {tripped}); autocut cuts again from the next run")
+            typer.echo(
+                f"safety limit reset (it tripped in run {tripped}); autocut cuts again from the next run"
+            )
         else:
             typer.echo("the safety limit is not tripped")
         n = store.reset_judge_failures(ctx.conn)
-        typer.echo(f"{given_up} articles the judge had given up on are pending again" if given_up
-                   else f"no articles were given up on ({n} failure counts cleared)")
+        typer.echo(
+            f"{given_up} articles the judge had given up on are pending again"
+            if given_up
+            else f"no articles were given up on ({n} failure counts cleared)"
+        )
         return
     if tripped:
-        typer.echo(f"safety limit TRIPPED in run {tripped}: autocut cuts nothing. Check the prompt and the model "
-                   "(`bodh why ID` on a few newly judged articles), then `bodh safety reset`")
+        typer.echo(
+            f"safety limit TRIPPED in run {tripped}: autocut cuts nothing. Check the prompt and the model "
+            "(`bodh why ID` on a few newly judged articles), then `bodh safety reset`"
+        )
     else:
         typer.echo("safety limit clear: autocut cuts as configured")
     if given_up:
-        typer.echo(f"{given_up} unread articles given up on after {store.MAX_JUDGE_FAILURES} answers with no judgment; "
-                   "they stay unread and unjudged until `bodh safety reset`")
+        typer.echo(
+            f"{given_up} unread articles given up on after {store.MAX_JUDGE_FAILURES} answers with no judgment; "
+            "they stay unread and unjudged until `bodh safety reset`"
+        )
     else:
         typer.echo("no article has been given up on")
 
@@ -578,9 +726,15 @@ def enforce(state: str = typer.Argument(..., help="on or off"), verbose: bool = 
 
 
 @app.command()
-def console(port: int = typer.Option(8766, "--port"), host: str = typer.Option("127.0.0.1", "--host",
-            help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`."),
-            verbose: bool = VERBOSE) -> None:
+def console(
+    port: int = typer.Option(8766, "--port"),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`.",
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
     """The console: status, run, stop, schedule, prune, undo, catch-up, log, dashboard, in one page."""
     import traceback
 
@@ -593,13 +747,18 @@ def console(port: int = typer.Option(8766, "--port"), host: str = typer.Option("
     except KeyboardInterrupt:
         raise typer.Exit(0) from None
     except Exception as exc:  # noqa: BLE001 — leave the reason where `bodh status` can show it
-        console_log(ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        console_log(
+            ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+        )
         _fail(f"console failed: {exc}")
 
 
 @app.command(hidden=True)
-def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("127.0.0.1", "--host"),
-          verbose: bool = VERBOSE) -> None:
+def panel(
+    port: int = typer.Option(8766, "--port"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    verbose: bool = VERBOSE,
+) -> None:
     """The name before October 2026 of `console`."""
     _renamed("panel", "console")
     console(port=port, host=host, verbose=verbose)
@@ -621,33 +780,46 @@ def why(article_id: str, verbose: bool = VERBOSE) -> None:
     if row["score"] is None:
         typer.echo("not scored yet")
     else:
-        typer.echo(f"score {row['score']:.1f} (base {row['base_score']:.1f}"
-                   + (f", review {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "") + ")")
+        typer.echo(
+            f"score {row['score']:.1f} (base {row['base_score']:.1f}"
+            + (f", review {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "")
+            + ")"
+        )
         from .judge import normalize_flags
 
         try:
             flags = normalize_flags(json.loads(row["flags"] or "[]"))
         except (TypeError, ValueError):
             flags = [str(row["flags"])]
-        typer.echo(f"quality {row['quality']} · learning {row['learning']} · fit {row['fit']} · breadth {row['breadth']}"
-                   f" · relevance {row['relevance']} · confidence {row['confidence']} · kind {row['kind']} · flags "
-                   f"{', '.join(flags) or 'none'} · judged by {row['model']} ({row['prompt_version']})")
+        typer.echo(
+            f"quality {row['quality']} · learning {row['learning']} · fit {row['fit']} · breadth {row['breadth']}"
+            f" · relevance {row['relevance']} · confidence {row['confidence']} · kind {row['kind']} · flags "
+            f"{', '.join(flags) or 'none'} · judged by {row['model']} ({row['prompt_version']})"
+        )
         typer.echo(f"concept: {row['concept']}\nlesson: {row['lesson']}")
-    typer.echo(f"state: {row['status']}" + (f" ({store.cut_mode_name(row['cut_mode'])} at {row['cut_at']})"
-                                            if row["cut_mode"] else "")
-               + (" · starred" if row["starred"] else "") + (" · protected" if row["protected"] else "")
-               + (" · new ground" if row["exploration"] else ""))
+    typer.echo(
+        f"state: {row['status']}"
+        + (f" ({store.cut_mode_name(row['cut_mode'])} at {row['cut_at']})" if row["cut_mode"] else "")
+        + (" · starred" if row["starred"] else "")
+        + (" · protected" if row["protected"] else "")
+        + (" · new ground" if row["exploration"] else "")
+    )
     marks = store.feedback_for(ctx.conn, aid)
     if marks:
-        typer.echo("your record: " + ", ".join(f"{store.feedback_kind_name(kind)} ({at[:10]})" for kind, at in marks))
+        typer.echo(
+            "your record: " + ", ".join(f"{store.feedback_kind_name(kind)} ({at[:10]})" for kind, at in marks)
+        )
 
 
 MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "rescue")
 
 
 @app.command()
-def mark(article_id: str, verdict: str = typer.Argument(..., help="great, good, meh, bad, basic, heavy, more, less or rescue"),
-         verbose: bool = VERBOSE) -> None:
+def mark(
+    article_id: str,
+    verdict: str = typer.Argument(..., help="great, good, meh, bad, basic, heavy, more, less or rescue"),
+    verbose: bool = VERBOSE,
+) -> None:
     """Your verdict on an article from the terminal, the same as its tag in BazQux: a grade
     (great, good, meh, bad), the level missed (basic, heavy), a steer by its concept (more, less),
     or `rescue`, which brings a cut article back unread and keeps it from every cut."""
@@ -681,7 +853,9 @@ def mark(article_id: str, verdict: str = typer.Argument(..., help="great, good, 
 
 
 @app.command(hidden=True)
-def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE) -> None:
+def label(
+    article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE
+) -> None:
     """The name before October 2026 of `mark ID great|bad`."""
     if judgment not in ("star", "junk"):
         _fail("judgment must be star or junk")
@@ -690,8 +864,11 @@ def label(article_id: str, judgment: str = typer.Argument(..., help="star or jun
 
 
 @app.command()
-def steer(direction: str = typer.Argument(..., help="more or less"), phrase: str = typer.Argument(..., help="the concept"),
-          verbose: bool = VERBOSE) -> None:
+def steer(
+    direction: str = typer.Argument(..., help="more or less"),
+    phrase: str = typer.Argument(..., help="the concept"),
+    verbose: bool = VERBOSE,
+) -> None:
     """Tell the judge now that you want more, or less, of a concept: a dated line in the learned
     profile that it reads from the next run (the `more` and `less` tags do the same by article)."""
     if direction not in ("more", "less"):
@@ -716,7 +893,10 @@ def meh(phrase: str, verbose: bool = VERBOSE) -> None:
 def _steer(kind: str, phrase: str, verbose: bool) -> None:
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "steer"), graceful_sigterm():   # learned.md is written: not under a run
+        with (
+            run_lock(ctx.cfg.root / ctx.cfg.data_dir, "steer"),
+            graceful_sigterm(),
+        ):  # learned.md is written: not under a run
             typer.echo(profiler.steer(ctx.cfg, ctx.conn, kind, phrase))
     except AlreadyRunning:
         _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
@@ -748,7 +928,10 @@ def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VER
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"), graceful_sigterm():
             _weekly(ctx, dry_run)
     except AlreadyRunning:
-        _fail("a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later", 5)
+        _fail(
+            "a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later",
+            5,
+        )
 
 
 def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
@@ -764,7 +947,9 @@ def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
         note = dashboard.weekly_note(ctx.cfg, ctx.conn, result)
         typer.echo(f"weekly note: {note}")
         dashboard.render(ctx.cfg, ctx.conn)
-        store.finish_run(ctx.conn, run_id, True, summary=f"weekly: {result['reason']}" + (f"; {drift}" if drift else ""))
+        store.finish_run(
+            ctx.conn, run_id, True, summary=f"weekly: {result['reason']}" + (f"; {drift}" if drift else "")
+        )
         if not result["applied"] and result.get("gate") and not result["gate"]["passed"]:
             ctx.heartbeat.fail(f"weekly profile rewrite rejected: {result['reason']}")
     except Exception as exc:  # noqa: BLE001
@@ -788,7 +973,7 @@ def _drift_check(ctx: runmod.Context, run_id: int) -> str:
 
     diffs = []
     for i in range(0, len(rows), cfg.judge.articles_per_call):
-        batch = rows[i: i + cfg.judge.articles_per_call]
+        batch = rows[i : i + cfg.judge.articles_per_call]
         verdicts = judge.judge_batch(batch, run_id)
         for r in batch:
             v = verdicts.get(r["id"])

@@ -12,7 +12,9 @@ from bodh.readers.bazqux import READ, BazQuxClient, _parse_item, label
 
 def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
     cfg.safety.mark_all_read_threshold = 3
-    ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 4}", crawled_msec=None) for i in range(1, 8)])
+    ids = seed_scored(
+        conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 4}", crawled_msec=None) for i in range(1, 8)]
+    )
     # the student read two of them (no longer unread upstream), two others got cut by us earlier
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[5:7], run_id, "floor")
@@ -34,7 +36,9 @@ def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
 
 def test_bulk_dismiss(conn, cfg):
     cfg.safety.mark_all_read_threshold = 3
-    ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 3}", crawled_msec=None) for i in range(1, 6)])
+    ids = seed_scored(
+        conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 3}", crawled_msec=None) for i in range(1, 6)]
+    )
     client = FakeClient()
     stats = feedback.collect(client, conn, cfg, unread_now=set(), starred_now=set())
     assert stats["dismissed"] == 5 and stats["reads"] == 0
@@ -42,11 +46,18 @@ def test_bulk_dismiss(conn, cfg):
 
 
 def test_parse_item_shapes():
-    raw = {"id": "tag:google.com,2005:reader/item/000000a00000ecc3", "title": "T", "published": 1700000000,
-           "crawlTimeMsec": "1700000000123", "alternate": [{"href": "https://x.test/a"}], "canonical": {"href": "https://x.test/c"},
-           "summary": {"content": "<p>short</p>"}, "content": {"content": "<p>much longer content here</p>"},
-           "origin": {"streamId": "feed/https://x.test/rss", "title": "X", "htmlUrl": "https://x.test"},
-           "categories": ["user/1/state/com.google/reading-list", "user/1/label/Folder"]}
+    raw = {
+        "id": "tag:google.com,2005:reader/item/000000a00000ecc3",
+        "title": "T",
+        "published": 1700000000,
+        "crawlTimeMsec": "1700000000123",
+        "alternate": [{"href": "https://x.test/a"}],
+        "canonical": {"href": "https://x.test/c"},
+        "summary": {"content": "<p>short</p>"},
+        "content": {"content": "<p>much longer content here</p>"},
+        "origin": {"streamId": "feed/https://x.test/rss", "title": "X", "htmlUrl": "https://x.test"},
+        "categories": ["user/1/state/com.google/reading-list", "user/1/label/Folder"],
+    }
     item = _parse_item(raw)
     assert item.url == "https://x.test/c" and item.html.startswith("<p>much longer")
     assert item.feed_title == "X" and item.crawled_msec == 1700000000123 and item.published == 1700000000
@@ -67,7 +78,10 @@ def _mock_transport(state: dict):
         if path == "/reader/api/0/stream/items/ids":
             page = request.url.params.get("c")
             if page is None:
-                return httpx.Response(200, json={"itemRefs": [{"id": "1", "timestampUsec": "5"}, {"id": "2"}], "continuation": "p2"})
+                return httpx.Response(
+                    200,
+                    json={"itemRefs": [{"id": "1", "timestampUsec": "5"}, {"id": "2"}], "continuation": "p2"},
+                )
             return httpx.Response(200, json={"itemRefs": [{"id": "-3"}]})
         if path == "/reader/api/0/edit-tag":
             return httpx.Response(200, text="OK")
@@ -75,7 +89,9 @@ def _mock_transport(state: dict):
             from urllib.parse import parse_qs
 
             ids = parse_qs(request.content.decode()).get("i", [])
-            items = [{"id": i, "title": f"t{i[-4:]}", "origin": {"streamId": "feed/x", "title": "X"}} for i in ids]
+            items = [
+                {"id": i, "title": f"t{i[-4:]}", "origin": {"streamId": "feed/x", "title": "X"}} for i in ids
+            ]
             return httpx.Response(200, json={"items": items})
         return httpx.Response(404)
 
@@ -106,8 +122,19 @@ def test_client_pagination_relogin_and_edit_batches(monkeypatch):
 def test_store_rebuild_marks_and_scores(conn, cfg):
     item = make_item(1)
     store.upsert_article(conn, item, "Core")
-    verdict = {"quality": 70, "learning": 70, "fit": 70, "breadth": 70, "relevance": 70, "lesson": "l", "concept": "c",
-               "kind": "reporting", "flags": [], "dupe_of": None, "confidence": "high"}
+    verdict = {
+        "quality": 70,
+        "learning": 70,
+        "fit": 70,
+        "breadth": 70,
+        "relevance": 70,
+        "lesson": "l",
+        "concept": "c",
+        "kind": "reporting",
+        "flags": [],
+        "dupe_of": None,
+        "confidence": "high",
+    }
     store.record_score(conn, item.id, verdict, 70.0, 70.0, "score-70", "teacher.v1", "m")
     assert store.untagged_bands(conn) == {"score-70": [item.id]}
     store.mark_band_tagged(conn, [item.id])
@@ -135,13 +162,34 @@ def test_costs_can_be_recorded_from_worker_threads(conn):
 def test_duplicate_index(conn, cfg):
     from bodh.judge import DupIndex
 
-    seed_scored(conn, cfg, [dict(n=1, score=50, title="A long enough title to be matched exactly", url="https://a.test/x?utm_source=rss")])
+    seed_scored(
+        conn,
+        cfg,
+        [
+            dict(
+                n=1,
+                score=50,
+                title="A long enough title to be matched exactly",
+                url="https://a.test/x?utm_source=rss",
+            )
+        ],
+    )
     index = DupIndex(conn)
     twin = {"id": short_to_long(2), "url": "https://a.test/x", "title": "different", "feed_title": "Other"}
     assert index.find(twin)["id"] == short_to_long(1)
-    same_title = {"id": short_to_long(3), "url": "https://b.test/y", "title": "A long enough title to be matched exactly", "feed_title": "Other"}
+    same_title = {
+        "id": short_to_long(3),
+        "url": "https://b.test/y",
+        "title": "A long enough title to be matched exactly",
+        "feed_title": "Other",
+    }
     assert index.find(same_title)["id"] == short_to_long(1)
-    same_feed = {"id": short_to_long(4), "url": "https://b.test/z", "title": "A long enough title to be matched exactly", "feed_title": "Feed A"}
+    same_feed = {
+        "id": short_to_long(4),
+        "url": "https://b.test/z",
+        "title": "A long enough title to be matched exactly",
+        "feed_title": "Feed A",
+    }
     assert index.find(same_feed) is None
 
 
@@ -150,12 +198,21 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     (tmp_path / "profile").mkdir(exist_ok=True)
     # an install from before October 2026 still has learner.md: it is read and written in place
     (tmp_path / "profile" / "learned.md").unlink()
-    (tmp_path / "profile" / "learner.md").write_text("## What the student has been learning\nnothing yet\n", encoding="utf-8")
+    (tmp_path / "profile" / "learner.md").write_text(
+        "## What the student has been learning\nnothing yet\n", encoding="utf-8"
+    )
     assert cfg.learned_path.name == "learner.md"
     monkeypatch.setattr("bodh.profiler.git_commit", lambda *a, **k: True)
     ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 7)])
-    labels = {cfg.tags.great: [ids[0]], cfg.tags.good: [ids[1], ids[2]], cfg.tags.bad: [ids[2]],
-              cfg.tags.basic: [ids[3]], cfg.tags.more: [ids[4]], cfg.tags.less: [ids[5]], cfg.tags.meh: []}
+    labels = {
+        cfg.tags.great: [ids[0]],
+        cfg.tags.good: [ids[1], ids[2]],
+        cfg.tags.bad: [ids[2]],
+        cfg.tags.basic: [ids[3]],
+        cfg.tags.more: [ids[4]],
+        cfg.tags.less: [ids[5]],
+        cfg.tags.meh: [],
+    }
     client = FakeClient(labels=labels)
     stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
     # one grade per article, the harsher present tag wins; levels and steers each recorded once

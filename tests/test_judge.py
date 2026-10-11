@@ -48,7 +48,9 @@ class CountingLLM:
 
 def _pending(conn, n: int) -> None:
     for i in range(1, n + 1):
-        store.upsert_article(conn, make_item(i, title=f"article {i}", crawled_msec=1_800_000_000_000 + i), None)
+        store.upsert_article(
+            conn, make_item(i, title=f"article {i}", crawled_msec=1_800_000_000_000 + i), None
+        )
 
 
 def test_score_pending_at_most_workers_in_flight_and_deadline_starts_no_new_call(cfg, conn):
@@ -117,7 +119,7 @@ def test_second_looks_record_each_result_as_it_lands(cfg, conn):
     teacher = Judge(cfg, CountingLLM(delay=0.0), conn)  # type: ignore[arg-type]
     rows = [r for r in store.unread_scored(conn) if r["second_look_score"] is None]
     results = teacher.reviews(rows, None, max_looks=1)
-    assert len(results) == 1 and list(results.values()) == [True]   # 60 clears the floor of 35
+    assert len(results) == 1 and list(results.values()) == [True]  # 60 clears the floor of 35
     assert len([r for r in store.unread_scored(conn) if r["second_look_score"] is None]) == 1
 
 

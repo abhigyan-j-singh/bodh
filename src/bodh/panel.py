@@ -5,5 +5,8 @@ import warnings
 
 from .console import *  # noqa: E402,F401,F403
 
-warnings.warn("bodh.panel is bodh.console since October 2026; the old name goes away in the next release",
-              DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "bodh.panel is bodh.console since October 2026; the old name goes away in the next release",
+    DeprecationWarning,
+    stacklevel=2,
+)

@@ -57,9 +57,11 @@ def steers(cfg: Config, conn: sqlite3.Connection, items: list[tuple[str, str]]) 
     """Several steers (the `more` and `less` tags of one run, say) in one version."""
     text = cfg.read_learned()
     stamp = store.utcnow().strftime("%Y-%m-%d")
-    lines = [f"- {stamp}: the student {'wants more on' if kind == 'want' else 'wants less of'} {phrase.strip()}"
-             for kind, phrase in items]
-    if "## Steers" not in text and "## Nudges" not in text:   # "Nudges": the heading before October 2026
+    lines = [
+        f"- {stamp}: the student {'wants more on' if kind == 'want' else 'wants less of'} {phrase.strip()}"
+        for kind, phrase in items
+    ]
+    if "## Steers" not in text and "## Nudges" not in text:  # "Nudges": the heading before October 2026
         text = text.rstrip() + "\n\n## Steers\n"
     text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
     reason = "; ".join(f"{kind} {phrase.strip()[:40]}" for kind, phrase in items)
@@ -87,14 +89,21 @@ def git_commit(repo_dir: Path, message: str) -> bool:
     try:
         if not (repo_dir / ".git").exists():
             subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "add", "-A", "--", "."], cwd=repo_dir, check=True, capture_output=True, text=True)
-        identity = subprocess.run(["git", "config", "user.email"], cwd=repo_dir, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "add", "-A", "--", "."], cwd=repo_dir, check=True, capture_output=True, text=True
+        )
+        identity = subprocess.run(
+            ["git", "config", "user.email"], cwd=repo_dir, capture_output=True, text=True
+        )
         extra = [] if identity.returncode == 0 and identity.stdout.strip() else GIT_IDENTITY
-        result = subprocess.run(["git", *extra, "commit", "-q", "-m", message], cwd=repo_dir,
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            ["git", *extra, "commit", "-q", "-m", message], cwd=repo_dir, capture_output=True, text=True
+        )
         if result.returncode == 0 or "nothing to commit" in (result.stdout + result.stderr):
             return True
-        log.warning("profile: git commit in %s failed: %s", repo_dir, (result.stderr or result.stdout).strip()[:300])
+        log.warning(
+            "profile: git commit in %s failed: %s", repo_dir, (result.stderr or result.stdout).strip()[:300]
+        )
         return False
     except (OSError, subprocess.SubprocessError) as exc:
         log.warning("profile: git commit skipped (%s)", exc)
@@ -111,13 +120,17 @@ def revert(cfg: Config, conn: sqlite3.Connection) -> int | None:
 
 
 def diff(old: str, new: str) -> str:
-    return "\n".join(difflib.unified_diff(old.splitlines(), new.splitlines(), "last week", "this week", lineterm="", n=1))
+    return "\n".join(
+        difflib.unified_diff(old.splitlines(), new.splitlines(), "last week", "this week", lineterm="", n=1)
+    )
 
 
 # -- the weekly rewrite ---------------------------------------------------------
 
-def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None,
-                   dry_run: bool = False) -> dict:
+
+def weekly_rewrite(
+    cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, dry_run: bool = False
+) -> dict:
     """Rewrite profile/learned.md from the week's evidence; keep it only if the eval gate passes."""
     result = {"applied": False, "reason": "", "diff": "", "words": 0}
     since = store.days_ago_iso(7)
@@ -145,8 +158,14 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
         f"# About the student\n{about}\n\n# Current learned profile\n{current}\n\n# This week's evidence\n"
         + "\n".join(evidence)
     )
-    new_text = llm.complete(cfg.models.profiler, load_prompt("profiler.v1", cfg.root), user_text, run_id, "learner_rewrite",
-                            max_tokens=1500)
+    new_text = llm.complete(
+        cfg.models.profiler,
+        load_prompt("profiler.v1", cfg.root),
+        user_text,
+        run_id,
+        "learner_rewrite",
+        max_tokens=1500,
+    )
     new_text = _strip_fences(new_text)
     words = len(new_text.split())
     result["words"] = words
@@ -183,13 +202,15 @@ def repeats_about(new_text: str, about: str) -> bool:
     return any(len(line) >= 40 and line in low for line in (ln.strip().lower() for ln in about.splitlines()))
 
 
-repeats_seed = repeats_about   # the name before October 2026
+repeats_seed = repeats_about  # the name before October 2026
 
 
 def _evidence_line(r: sqlite3.Row) -> str:
     score = f"{r['score']:.0f}" if r["score"] is not None else "?"
-    return (f"- [{r['kind']}] {(r['title'] or '')[:90]} ({(r['feed_title'] or '?')[:30]}; score {score}; "
-            f"concept: {r['concept'] or '?'}) — {r['lesson'] or ''}")
+    return (
+        f"- [{r['kind']}] {(r['title'] or '')[:90]} ({(r['feed_title'] or '?')[:30]}; score {score}; "
+        f"concept: {r['concept'] or '?'}) — {r['lesson'] or ''}"
+    )
 
 
 def _strip_fences(text: str) -> str:
@@ -214,11 +235,17 @@ def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | No
         return {"passed": True, "detail": "no starred articles to check against", "checked": 0, "below": []}
     # the proposed profile is handed to the judge in memory: learned.md is not touched, so a
     # kill or an overlapping run during the check cannot leave the ungated text as the live model
-    judge = Judge(cfg, llm, conn, context=concept_context(conn, cfg), expansion_topics=expansion_topics(new_learner),
-                      learned_text=new_learner)
+    judge = Judge(
+        cfg,
+        llm,
+        conn,
+        context=concept_context(conn, cfg),
+        expansion_topics=expansion_topics(new_learner),
+        learned_text=new_learner,
+    )
     below: list[str] = []
     for i in range(0, len(rows), cfg.judge.articles_per_call):
-        batch = rows[i: i + cfg.judge.articles_per_call]
+        batch = rows[i : i + cfg.judge.articles_per_call]
         verdicts = judge.judge_batch(batch, run_id)
         for row in batch:
             v = verdicts.get(row["id"])
@@ -228,5 +255,9 @@ def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | No
             if compose(v, cfg, judge.expansion_topics) < floor:
                 below.append(row["title"][:80])
     passed = not below
-    detail = "all starred articles stay above the cut-off" if passed else f"{len(below)} starred below the cut-off: " + "; ".join(below[:5])
+    detail = (
+        "all starred articles stay above the cut-off"
+        if passed
+        else f"{len(below)} starred below the cut-off: " + "; ".join(below[:5])
+    )
     return {"passed": passed, "detail": detail, "checked": len(rows), "below": below}

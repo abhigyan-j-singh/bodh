@@ -14,7 +14,9 @@ def test_empty_upstream_unread_list_is_not_a_bulk_dismiss(conn, cfg):
     """One empty (or truncated) answer from BazQux used to flip the whole pool to dismissed, a
     negative that taught the profile the pool was disliked. It takes two runs in a row now."""
     cfg.safety.mark_all_read_threshold = 30
-    ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 5}", crawled_msec=None) for i in range(1, 41)])
+    ids = seed_scored(
+        conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 5}", crawled_msec=None) for i in range(1, 41)]
+    )
     client = FakeClient()
     stats = feedback.collect(client, conn, cfg, unread_now=set(), starred_now=set())
     assert stats["dismissed"] == 0 and stats["reads"] == 0 and stats["suspect_flip"] == 40
@@ -36,7 +38,9 @@ def test_small_flips_are_believed_at_once(conn, cfg):
 
 
 def test_read_dismissed_expired_marked_unread_again_return_to_unread(conn, cfg):
-    ids = seed_scored(conn, cfg, [dict(n=1, score=60), dict(n=2, score=60), dict(n=3, score=60), dict(n=4, score=60)])
+    ids = seed_scored(
+        conn, cfg, [dict(n=1, score=60), dict(n=2, score=60), dict(n=3, score=60), dict(n=4, score=60)]
+    )
     store.set_flags(conn, ids[:1], status="read", read_at="x")
     store.add_feedback(conn, ids[0], "read")
     store.set_flags(conn, ids[1:2], status="dismissed")
@@ -61,8 +65,10 @@ def test_flip_larger_than_param_limit(conn, cfg):
         pytest.skip("sqlite3.Connection.setlimit needs Python 3.11")
     now = store.utcnow_iso()
     ids = [make_item(n).id for n in range(1, 5001)]
-    conn.executemany("INSERT INTO articles (id, title, feed_title, fetched_at) VALUES (?, 'a', 'f', ?)",
-                     [(i, now) for i in ids])
+    conn.executemany(
+        "INSERT INTO articles (id, title, feed_title, fetched_at) VALUES (?, 'a', 'f', ?)",
+        [(i, now) for i in ids],
+    )
     conn.executemany("INSERT INTO state (article_id, status) VALUES (?, 'unread')", [(i,) for i in ids])
     conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
     stats = feedback.collect(FakeClient(), conn, cfg, unread_now=set(ids[2000:]), starred_now=set())
@@ -89,9 +95,9 @@ def test_rescue_rate_needs_minimum_cuts_and_ignores_bankruptcy(conn, cfg):
     store.set_flags(conn, ids[:10], cut_tagged=1, read_marked=1)
     store.restore_unread(conn, ids[:1], rescued=True)
     store.add_feedback(conn, ids[0], "rescue")
-    assert feedback.rescue_rate_week(conn) == 0.0          # 10 cuts: too few to mean anything
+    assert feedback.rescue_rate_week(conn) == 0.0  # 10 cuts: too few to mean anything
     assert feedback.rescue_rate_week(conn, min_cuts=1) == 0.1
-    store.mark_cut(conn, ids[10:], run_id, "bankruptcy")   # 20 bankruptcy cuts do not count
+    store.mark_cut(conn, ids[10:], run_id, "bankruptcy")  # 20 bankruptcy cuts do not count
     assert feedback.rescue_rate_week(conn) == 0.0
     store.mark_cut(conn, ids[10:], run_id, "prune")
     assert feedback.rescue_rate_week(conn) == pytest.approx(1 / 30)
@@ -102,8 +108,10 @@ def test_expired_filter_is_linear(conn, cfg):
 
     now = store.utcnow_iso()
     ids = [make_item(n).id for n in range(1, 6001)]
-    conn.executemany("INSERT INTO articles (id, title, feed_title, crawled_msec, fetched_at) VALUES (?, 'a', 'f', 1, ?)",
-                     [(i, now) for i in ids])
+    conn.executemany(
+        "INSERT INTO articles (id, title, feed_title, crawled_msec, fetched_at) VALUES (?, 'a', 'f', 1, ?)",
+        [(i, now) for i in ids],
+    )
     conn.executemany("INSERT INTO state (article_id, status) VALUES (?, 'unread')", [(i,) for i in ids])
     t0 = _t.monotonic()
     stats = feedback.collect(FakeClient(), conn, cfg, unread_now=set(ids[4000:]), starred_now=set())

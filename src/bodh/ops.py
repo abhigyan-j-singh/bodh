@@ -8,5 +8,9 @@ from .heartbeat import *  # noqa: F401,F403
 from .locks import *  # noqa: F401,F403
 from .logs import *  # noqa: F401,F403
 
-warnings.warn("bodh.ops is bodh.locks, bodh.logs and bodh.heartbeat since October 2026; the old name goes away "
-              "in the next release", DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "bodh.ops is bodh.locks, bodh.logs and bodh.heartbeat since October 2026; the old name goes away "
+    "in the next release",
+    DeprecationWarning,
+    stacklevel=2,
+)

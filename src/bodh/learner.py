@@ -5,5 +5,8 @@ import warnings
 
 from .profiler import *  # noqa: E402,F401,F403
 
-warnings.warn("bodh.learner is bodh.profiler since October 2026; the old name goes away in the next release",
-              DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "bodh.learner is bodh.profiler since October 2026; the old name goes away in the next release",
+    DeprecationWarning,
+    stacklevel=2,
+)

@@ -27,20 +27,20 @@ class Strict(BaseModel):
 
 
 class FolderPolicy(Strict):
-    protected: bool = False                                  # never cut
-    cutoff: int | None = Field(default=None, ge=0, le=100)   # this folder's own cut-off; None: autocut.cutoff
-    judge: bool = True                                       # false: never sent to the judge, never cut (comics, say)
+    protected: bool = False  # never cut
+    cutoff: int | None = Field(default=None, ge=0, le=100)  # this folder's own cut-off; None: autocut.cutoff
+    judge: bool = True  # false: never sent to the judge, never cut (comics, say)
 
 
 class Models(Strict):
-    judge: str = "claude-sonnet-5-5"        # reads every article once
-    reviewer: str = "claude-opus-5-5"       # re-reads close calls with the full text; can only save an article
-    profiler: str = "claude-opus-5-5"       # rewrites the learned profile on Sundays
-    batch: bool = True              # Message Batches API: half price; judgments arrive on the next run
+    judge: str = "claude-sonnet-5-5"  # reads every article once
+    reviewer: str = "claude-opus-5-5"  # re-reads close calls with the full text; can only save an article
+    profiler: str = "claude-opus-5-5"  # rewrites the learned profile on Sundays
+    batch: bool = True  # Message Batches API: half price; judgments arrive on the next run
     batch_discount: float = Field(default=0.5, ge=0.0, le=1.0)
-    cache_ttl: str = "1h"           # "5m" or "1h": how long the judge's cached prefix stays warm between runs
+    cache_ttl: str = "1h"  # "5m" or "1h": how long the judge's cached prefix stays warm between runs
     daily_budget_usd: float = Field(default=8.0, ge=0.0)
-    est_usd_per_article: float = Field(default=0.001, ge=0.0)   # the budget check before a batch is submitted
+    est_usd_per_article: float = Field(default=0.001, ge=0.0)  # the budget check before a batch is submitted
     prices_per_mtok: dict[str, list[float]] = Field(
         default_factory=lambda: {
             "claude-sonnet-5-5": [2.0, 10.0, 0.10],
@@ -62,8 +62,10 @@ class Models(Strict):
     def _prices(cls, v: dict[str, list[float]]) -> dict[str, list[float]]:
         for model, val in v.items():
             if len(val) not in (2, 3) or any(x < 0 for x in val):
-                raise ValueError(f"models.prices_per_mtok.{model} must be [input, output] or [input, output, cache read], "
-                                 "USD per million tokens")
+                raise ValueError(
+                    f"models.prices_per_mtok.{model} must be [input, output] or [input, output, cache read], "
+                    "USD per million tokens"
+                )
         return v
 
     def _entry(self, model: str) -> list[float] | None:
@@ -86,8 +88,12 @@ class Models(Strict):
         dearest = max(self.prices_per_mtok.values(), key=lambda val: (val[0], val[1]))
         if model not in _warned_models:
             _warned_models.add(model)
-            log.warning("models: no price for %r in models.prices_per_mtok; charging it as the most expensive known "
-                        "model (%s) until one is added", model, dearest)
+            log.warning(
+                "models: no price for %r in models.prices_per_mtok; charging it as the most expensive known "
+                "model (%s) until one is added",
+                model,
+                dearest,
+            )
         return dearest
 
     def price(self, model: str) -> tuple[float, float]:
@@ -108,21 +114,29 @@ _warned_models: set[str] = set()
 class Judge(Strict):
     """What the judge reads and how its judgment becomes a score."""
 
-    prompt_version: str = "teacher.v2"                         # the prompt file in src/bodh/prompts/ (./prompts/ overrides)
+    prompt_version: str = "teacher.v2"  # the prompt file in src/bodh/prompts/ (./prompts/ overrides)
     weights: dict[str, float] = Field(
-        default_factory=lambda: {"quality": 0.30, "learning": 0.30, "fit": 0.15, "breadth": 0.15, "relevance": 0.10}
+        default_factory=lambda: {
+            "quality": 0.30,
+            "learning": 0.30,
+            "fit": 0.15,
+            "breadth": 0.15,
+            "relevance": 0.10,
+        }
     )
-    expansion_bonus: int = Field(default=10, ge=0, le=100)     # points for an article on one of this week's expansion topics
-    home_angle: str = ""                                       # the student's home ground ("India", say): an article
-                                                               # with that angle gets home_bonus; empty turns the flag off
+    expansion_bonus: int = Field(
+        default=10, ge=0, le=100
+    )  # points for an article on one of this week's expansion topics
+    home_angle: str = ""  # the student's home ground ("India", say): an article
+    # with that angle gets home_bonus; empty turns the flag off
     home_bonus: int = Field(default=10, ge=0, le=100)
-    articles_per_call: int = Field(default=20, ge=1, le=100)   # articles in one judge call
-    text_chars: int = Field(default=1200, ge=100)              # the opening the judge sees on the first pass
+    articles_per_call: int = Field(default=20, ge=1, le=100)  # articles in one judge call
+    text_chars: int = Field(default=1200, ge=100)  # the opening the judge sees on the first pass
 
     @field_validator("home_angle")
     @classmethod
     def _home_angle(cls, v: str) -> str:
-        return v.strip()   # "  " is off, like ""
+        return v.strip()  # "  " is off, like ""
 
     @field_validator("weights")
     @classmethod
@@ -136,45 +150,55 @@ class Judge(Strict):
 class Review(Strict):
     """The second reading of a close call by the reviewer, with the full text."""
 
-    window: int = Field(default=10, ge=0, le=100)      # a candidate within this many points of the cut-off is reviewed
-    chars: int = Field(default=6000, ge=100)            # the text the reviewer sees
-    max_per_run: int = Field(default=50, ge=0)          # synchronous runs: reviews per run, so a backlog of close
-                                                        # calls cannot eat the run's fifteen minutes
+    window: int = Field(
+        default=10, ge=0, le=100
+    )  # a candidate within this many points of the cut-off is reviewed
+    chars: int = Field(default=6000, ge=100)  # the text the reviewer sees
+    max_per_run: int = Field(default=50, ge=0)  # synchronous runs: reviews per run, so a backlog of close
+    # calls cannot eat the run's fifteen minutes
 
 
 class CatchUp(Strict):
     """One deliberate pass over everything pending, usually with the quick judge."""
 
-    model: str = "claude-haiku-5-5"                                  # the quick judge `bodh catch-up` uses by default
-    rejudge_at: float | None = Field(default=50.0, ge=0, le=100)     # what the quick judge rates at or above this,
-                                                                     # the judge reads again; null turns it off
+    model: str = "claude-haiku-5-5"  # the quick judge `bodh catch-up` uses by default
+    rejudge_at: float | None = Field(
+        default=50.0, ge=0, le=100
+    )  # what the quick judge rates at or above this,
+    # the judge reads again; null turns it off
 
 
 class Limits(Strict):
-    per_run_sync: int = Field(default=400, ge=0)          # synchronous runs: articles judged per run
-    per_run_batch: int = Field(default=1200, ge=0)        # batch runs: articles submitted per run
-    parallel_calls: int = Field(default=4, ge=1, le=64)   # synchronous runs: model calls running at once
-    max_age_days: int | None = Field(default=14, ge=0)    # older unread articles are never judged; clear-old is for them
+    per_run_sync: int = Field(default=400, ge=0)  # synchronous runs: articles judged per run
+    per_run_batch: int = Field(default=1200, ge=0)  # batch runs: articles submitted per run
+    parallel_calls: int = Field(default=4, ge=1, le=64)  # synchronous runs: model calls running at once
+    max_age_days: int | None = Field(
+        default=14, ge=0
+    )  # older unread articles are never judged; clear-old is for them
 
 
 class Autocut(Strict):
     """The automatic cut every run makes below the cut-off, when it is enabled."""
 
-    enabled: bool = False                                        # false = scoring-only mode: judge and tag, cut nothing
-    cutoff: int = Field(default=35, ge=0, le=100)                # the cut-off for folders without their own
-    max_per_run: int = Field(default=500, ge=0)                  # a broken prompt costs one undo, not a library
-    new_ground_share: float = Field(default=0.20, ge=0.0, le=1.0)  # share of what autocut leaves kept for new ground
+    enabled: bool = False  # false = scoring-only mode: judge and tag, cut nothing
+    cutoff: int = Field(default=35, ge=0, le=100)  # the cut-off for folders without their own
+    max_per_run: int = Field(default=500, ge=0)  # a broken prompt costs one undo, not a library
+    new_ground_share: float = Field(
+        default=0.20, ge=0.0, le=1.0
+    )  # share of what autocut leaves kept for new ground
 
 
 class Prune(Strict):
     """The student's own cut."""
 
-    keep: int = Field(default=40, ge=0)                                  # `bodh prune` with no arguments keeps this many
-    max_share_per_concept: float = Field(default=0.25, ge=0.0, le=1.0)  # no concept may hold more of the survivors
+    keep: int = Field(default=40, ge=0)  # `bodh prune` with no arguments keeps this many
+    max_share_per_concept: float = Field(
+        default=0.25, ge=0.0, le=1.0
+    )  # no concept may hold more of the survivors
 
 
 class Protect(Strict):
-    must_read_stream: str = Field(default="Must read", min_length=1)   # the BazQux smart stream never cut
+    must_read_stream: str = Field(default="Must read", min_length=1)  # the BazQux smart stream never cut
 
 
 class Tags(Strict):
@@ -183,17 +207,19 @@ class Tags(Strict):
     )
     cut: str = "cut"
     # commands: the run acts on them and removes them
-    rescue: str = "rescue"           # a cut article you wanted: back to unread, never cut again (was `wrong`, still read)
-    prune: str = "prune"             # on any article: the next run with autocut prunes to prune.keep
+    rescue: str = (
+        "rescue"  # a cut article you wanted: back to unread, never cut again (was `wrong`, still read)
+    )
+    prune: str = "prune"  # on any article: the next run with autocut prunes to prune.keep
     # verdicts: your opinion of an article, left on it as your record, recorded once
-    great: str = "great"             # the best kind: more like this, and the eval gate protects it
-    good: str = "good"               # worth the time
-    meh: str = "meh"                 # not worth it
-    bad: str = "bad"                 # junk; the judge was wrong to keep it
-    basic: str = "basic"             # too elementary for you
-    heavy: str = "heavy"             # too dense or too specialist for you now
-    more: str = "more"               # more of this article's concept, from the next run
-    less: str = "less"               # less of it
+    great: str = "great"  # the best kind: more like this, and the eval gate protects it
+    good: str = "good"  # worth the time
+    meh: str = "meh"  # not worth it
+    bad: str = "bad"  # junk; the judge was wrong to keep it
+    basic: str = "basic"  # too elementary for you
+    heavy: str = "heavy"  # too dense or too specialist for you now
+    more: str = "more"  # more of this article's concept, from the next run
+    less: str = "less"  # less of it
 
     @model_validator(mode="after")
     def _distinct(self) -> Tags:
@@ -209,7 +235,9 @@ class Tags(Strict):
 
     def verdict_tags(self) -> dict[str, str]:
         """feedback kind -> tag name, for the tags that carry an opinion."""
-        return {k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")}
+        return {
+            k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")
+        }
 
     def band_for(self, score: float) -> str:
         for threshold in sorted(self.bands, reverse=True):
@@ -222,22 +250,28 @@ class Tags(Strict):
         return [self.rescue] + ([LEGACY_RESCUE_TAG] if self.rescue != LEGACY_RESCUE_TAG else [])
 
 
-LEGACY_RESCUE_TAG = "wrong"   # the rescue tag's name before October 2026; read forever, written never
+LEGACY_RESCUE_TAG = "wrong"  # the rescue tag's name before October 2026; read forever, written never
 
 
 class Safety(Strict):
     """The limits that stop a broken judge from cutting."""
 
-    max_cut_share: float = Field(default=0.95, ge=0.0, le=1.0)   # a run that would cut more than this share of...
-    min_judged: int = Field(default=50, ge=1)                    # ...at least this many newly judged articles stops
-    rescue_rate_week: float = Field(default=0.05, ge=0.0, le=1.0)  # rescues above this share of a week's cuts...
-    lowered_cutoff: int = Field(default=25, ge=0, le=100)        # ...lower the cut-off to this until they fall
-    mark_all_read_threshold: int = Field(default=30, ge=1)       # this many kept articles going read in one run is
-                                                                 # mark-all-as-read, not that many reads
+    max_cut_share: float = Field(
+        default=0.95, ge=0.0, le=1.0
+    )  # a run that would cut more than this share of...
+    min_judged: int = Field(default=50, ge=1)  # ...at least this many newly judged articles stops
+    rescue_rate_week: float = Field(
+        default=0.05, ge=0.0, le=1.0
+    )  # rescues above this share of a week's cuts...
+    lowered_cutoff: int = Field(default=25, ge=0, le=100)  # ...lower the cut-off to this until they fall
+    mark_all_read_threshold: int = Field(default=30, ge=1)  # this many kept articles going read in one run is
+    # mark-all-as-read, not that many reads
 
 
 class Profile(Strict):
-    concept_window_days: int = Field(default=90, ge=1)   # how far back stars, reads and verdicts count as what you know
+    concept_window_days: int = Field(
+        default=90, ge=1
+    )  # how far back stars, reads and verdicts count as what you know
 
 
 def _zone_name_ok(name: str | None) -> bool:
@@ -255,7 +289,7 @@ def _after_zoneinfo(path: str) -> str | None:
     parts = Path(path).parts
     if "zoneinfo" not in parts:
         return None
-    tail = list(parts[len(parts) - 1 - parts[::-1].index("zoneinfo") + 1:])
+    tail = list(parts[len(parts) - 1 - parts[::-1].index("zoneinfo") + 1 :])
     if tail and tail[0] in ("posix", "right"):
         tail = tail[1:]
     return "/".join(tail) or None
@@ -270,7 +304,7 @@ def _localtime_name() -> str | None:
             return name
         text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
         return text or None
-    except (OSError, ValueError, RuntimeError):   # missing, unreadable, not text, a link loop
+    except (OSError, ValueError, RuntimeError):  # missing, unreadable, not text, a link loop
         return None
 
 
@@ -288,7 +322,7 @@ def system_timezone() -> str:
 
 
 class Config(Strict):
-    timezone: str = Field(default_factory=system_timezone)   # the day boundary for the budget and the counts
+    timezone: str = Field(default_factory=system_timezone)  # the day boundary for the budget and the counts
     data_dir: Path = Path("./data")
     profile_dir: Path = Path("./profile")
     dashboard_dir: Path = Path("./dashboard")
@@ -301,7 +335,9 @@ class Config(Strict):
     autocut: Autocut = Field(default_factory=Autocut)
     prune: Prune = Field(default_factory=Prune)
     protect: Protect = Field(default_factory=Protect)
-    folders: dict[str, FolderPolicy] = Field(default_factory=dict)   # your BazQux folders, by their exact names
+    folders: dict[str, FolderPolicy] = Field(
+        default_factory=dict
+    )  # your BazQux folders, by their exact names
     safety: Safety = Field(default_factory=Safety)
     tags: Tags = Field(default_factory=Tags)
     profile: Profile = Field(default_factory=Profile)
@@ -338,10 +374,12 @@ class Config(Strict):
     def _zone(cls, v: str) -> str:
         v = v.strip()
         if not v:
-            return system_timezone()   # "" in the file means this computer's zone, like no line at all
+            return system_timezone()  # "" in the file means this computer's zone, like no line at all
         if not _zone_name_ok(v):
-            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Europe/Lisbon' say; empty for "
-                             "this computer's zone)")
+            raise ValueError(
+                f"timezone {v!r} is not a known zone (IANA names, 'Europe/Lisbon' say; empty for "
+                "this computer's zone)"
+            )
         return v
 
     @property
@@ -385,8 +423,10 @@ class Config(Strict):
     def check_about(self) -> None:
         """Before any work for the student: an about file that is still the worked example is refused."""
         if self.about_is_example():
-            raise ConfigError("profile/about.md is still the worked example: the judge will not judge for an "
-                              "invented student. Replace it with your own (`bodh doctor` explains)")
+            raise ConfigError(
+                "profile/about.md is still the worked example: the judge will not judge for an "
+                "invented student. Replace it with your own (`bodh doctor` explains)"
+            )
 
     def about_is_example(self) -> bool:
         """profile.example/about.md describes an invented student and says so in a comment at the
@@ -415,15 +455,21 @@ class Secrets(BaseModel):
 
     def values(self) -> list[str]:
         """The non-empty values, for the log redactor; never for printing."""
-        return [v for v in (self.value(n) for n in ("bazqux_email", "bazqux_password", "anthropic_api_key",
-                                                    "healthcheck_url")) if v]
+        return [
+            v
+            for v in (
+                self.value(n)
+                for n in ("bazqux_email", "bazqux_password", "anthropic_api_key", "healthcheck_url")
+            )
+            if v
+        ]
 
 
 class ConfigError(Exception):
     """No usable config.yaml: nothing runs, nothing is created."""
 
 
-DEFAULT_HOME = "~/bodh"   # tried last, when nothing above the working directory holds a config.yaml
+DEFAULT_HOME = "~/bodh"  # tried last, when nothing above the working directory holds a config.yaml
 
 
 def find_root(start: Path | None = None) -> Path:
@@ -433,7 +479,9 @@ def find_root(start: Path | None = None) -> Path:
     env_root = os.environ.get("BODH_HOME")
     if not env_root and os.environ.get("TRIAGE_HOME"):
         env_root = os.environ["TRIAGE_HOME"]
-        log.warning("TRIAGE_HOME is the old name; set BODH_HOME instead (TRIAGE_HOME stops working in the next release)")
+        log.warning(
+            "TRIAGE_HOME is the old name; set BODH_HOME instead (TRIAGE_HOME stops working in the next release)"
+        )
     if env_root:
         root = Path(env_root).expanduser().resolve()
         if not (root / "config.yaml").exists():
@@ -446,8 +494,10 @@ def find_root(start: Path | None = None) -> Path:
     default = Path(DEFAULT_HOME).expanduser()
     if (default / "config.yaml").exists():
         return default.resolve()
-    raise ConfigError(f"no config.yaml in {here} or above it, and none in {DEFAULT_HOME}; "
-                      "run from the bodh folder, or set BODH_HOME")
+    raise ConfigError(
+        f"no config.yaml in {here} or above it, and none in {DEFAULT_HOME}; "
+        "run from the bodh folder, or set BODH_HOME"
+    )
 
 
 # The key names before October 2026 and where each moved. Read for one release: a file that
@@ -504,10 +554,14 @@ def modernise_keys(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     def _place(section: str | None, key: str, value: Any, origin: str) -> None:
         target = data if section is None else data.setdefault(section, {})
         if not isinstance(target, dict):
-            raise ConfigError(f"config.yaml: `{section}` must be a mapping to hold `{key}` (moved from `{origin}`)")
+            raise ConfigError(
+                f"config.yaml: `{section}` must be a mapping to hold `{key}` (moved from `{origin}`)"
+            )
         if key in target:
-            raise ConfigError(f"config.yaml sets both `{origin}` and its new name "
-                              f"`{section + '.' if section else ''}{key}`; keep one")
+            raise ConfigError(
+                f"config.yaml sets both `{origin}` and its new name "
+                f"`{section + '.' if section else ''}{key}`; keep one"
+            )
         target[key] = value
 
     for (old_section, old_key), (section, key) in OLD_KEYS.items():
@@ -522,8 +576,10 @@ def modernise_keys(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             del data[old_section]
         elif holder is not None:
             keys = ", ".join(sorted(holder)) if isinstance(holder, dict) else str(holder)
-            raise ConfigError(f"config.yaml: the section `{old_section}` is gone (its keys moved; see docs/glossary.md "
-                              f"and CHANGELOG.md); these are not known: {keys}")
+            raise ConfigError(
+                f"config.yaml: the section `{old_section}` is gone (its keys moved; see docs/glossary.md "
+                f"and CHANGELOG.md); these are not known: {keys}"
+            )
     folders = data.get("folders")
     if isinstance(folders, dict):
         for name, policy in folders.items():
@@ -532,7 +588,9 @@ def modernise_keys(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             for old_key, key in OLD_FOLDER_KEYS.items():
                 if old_key in policy:
                     if key in policy:
-                        raise ConfigError(f"config.yaml: folder {name!r} sets both `{old_key}` and `{key}`; keep one")
+                        raise ConfigError(
+                            f"config.yaml: folder {name!r} sets both `{old_key}` and `{key}`; keep one"
+                        )
                     policy[key] = policy.pop(old_key)
                     moves.append(f"folders.{name}.{old_key} -> folders.{name}.{key}")
     return data, moves
@@ -549,8 +607,12 @@ def load_config(root: Path | None = None) -> Config:
     raw, old_keys = modernise_keys(raw)
     if old_keys:
         shown = ", ".join(old_keys[:3]) + (f" and {len(old_keys) - 3} more" if len(old_keys) > 3 else "")
-        log.warning("config.yaml uses %d old key name(s): %s; `bodh doctor` lists them all, and they stop "
-                    "working in the next release", len(old_keys), shown)
+        log.warning(
+            "config.yaml uses %d old key name(s): %s; `bodh doctor` lists them all, and they stop "
+            "working in the next release",
+            len(old_keys),
+            shown,
+        )
     cfg = Config(**raw)
     cfg.root = root
     cfg._timezone_from_file = bool(str(raw.get("timezone") or "").strip())

@@ -5,5 +5,8 @@ import warnings
 
 from .readers.bazqux import *  # noqa: E402,F401,F403
 
-warnings.warn("bodh.bazqux is bodh.readers.bazqux since October 2026; the old name goes away in the next release",
-              DeprecationWarning, stacklevel=2)
+warnings.warn(
+    "bodh.bazqux is bodh.readers.bazqux since October 2026; the old name goes away in the next release",
+    DeprecationWarning,
+    stacklevel=2,
+)

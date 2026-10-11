@@ -26,7 +26,10 @@ def test_parse_compact_judgments_maps_codes_and_clamps():
     assert [v.n for v in out] == [1, 2]  # the three-score judgment is dropped, never guessed
     v = out[0]
     assert (v.quality, v.learning, v.fit, v.breadth, v.relevance) == (100, 0, 60, 55, 40)
-    assert v.kind == "original_analysis" and v.flags == ["primary_source", "home_angle"]   # "INDIA" is the old code
+    assert v.kind == "original_analysis" and v.flags == [
+        "primary_source",
+        "home_angle",
+    ]  # "INDIA" is the old code
     assert v.concept == "liquid cooling economics" and v.confidence == "high"
     assert out[1].kind == "promo" and out[1].flags == ["vendor_marketing_no_data"] and out[1].dupe_of == 1
     assert parse_judgments("no json here") is None
@@ -63,9 +66,15 @@ class CC:
 
 def test_cost_accounting_with_cache_tiers_and_batch_discount(cfg, conn):
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
-    usage, usd = llm.cost("claude-sonnet-5-5", U(input_tokens=1_000_000, output_tokens=100_000,
-                                                    cache_read_input_tokens=1_000_000,
-                                                    cache_creation=CC(ephemeral_1h_input_tokens=100_000, ephemeral_5m_input_tokens=100_000)))
+    usage, usd = llm.cost(
+        "claude-sonnet-5-5",
+        U(
+            input_tokens=1_000_000,
+            output_tokens=100_000,
+            cache_read_input_tokens=1_000_000,
+            cache_creation=CC(ephemeral_1h_input_tokens=100_000, ephemeral_5m_input_tokens=100_000),
+        ),
+    )
     # 2.00 input + 1.00 output + 0.10 cache read + 0.40 (1h write at 2x) + 0.25 (5m write at 1.25x)
     assert abs(usd - 3.75) < 1e-6 and usage["cache_write"] == 200_000 and usage["cache_read"] == 1_000_000
     _, half = llm.cost("claude-sonnet-5-5", U(input_tokens=1_000_000), discount=0.5)
@@ -97,7 +106,9 @@ def test_request_params_shapes(cfg, conn):
     assert LLM(cfg, Secrets(anthropic_api_key="k"), conn).plain_json  # remembered across runs
     # a rejected 1-hour cache falls back to the default cache, and that is remembered too
     assert llm.adapt_to_error("m", "cache_control: ttl is not supported") and not llm.long_ttl_ok
-    assert llm.request_params("m", "SYS", "USER", ttl="1h")["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert llm.request_params("m", "SYS", "USER", ttl="1h")["system"][0]["cache_control"] == {
+        "type": "ephemeral"
+    }
     assert not LLM(cfg, Secrets(anthropic_api_key="k"), conn).long_ttl_ok
     assert not llm.adapt_to_error("m", "something else")
 
@@ -117,9 +128,26 @@ def test_teacher_prefix_is_stable_and_concepts_travel_with_the_articles(cfg, con
             return {"system": system_text, "user": user_text}
 
     t = Judge(cfg, StubLLM(), conn, context="Read: gpus: 3")  # type: ignore[arg-type]
-    assert "gpus: 3" not in t.system_text and "# About the student" in t.system_text and "# Learned profile" in t.system_text
-    text = t._user_text([{"id": "a", "text": "body", "url": "", "feed_title": "f", "folder": None, "title": "T",
-                          "author": None, "published": None}], 100)
+    assert (
+        "gpus: 3" not in t.system_text
+        and "# About the student" in t.system_text
+        and "# Learned profile" in t.system_text
+    )
+    text = t._user_text(
+        [
+            {
+                "id": "a",
+                "text": "body",
+                "url": "",
+                "feed_title": "f",
+                "folder": None,
+                "title": "T",
+                "author": None,
+                "published": None,
+            }
+        ],
+        100,
+    )
     assert text.startswith("# Concepts\nRead: gpus: 3") and "[1]\n" in text and "title: T" in text
 
 
@@ -130,28 +158,53 @@ def test_unscored_unread_filters(conn, cfg):
     unknown = make_item(4, title="no dates")
     for item, folder in ((old, None), (new, None), (comic, "Comics"), (unknown, None)):
         store.upsert_article(conn, item, folder)
-    assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2")} == {old.id, new.id, comic.id, unknown.id}
+    assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2")} == {
+        old.id,
+        new.id,
+        comic.id,
+        unknown.id,
+    }
     within = store.unscored_unread(conn, "teacher.v2", max_age_days=14, skip_folders=["Comics"])
     assert {r["id"] for r in within} == {new.id, unknown.id}
     store.add_batch(conn, "b1", 1, "teacher", "m", [("t1-0", [new.id])])
-    assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2", 14, [], exclude_inflight=True)} == {comic.id, unknown.id}
-    assert store.batch_members(conn, "b1") == {"t1-0": [new.id]} and store.inflight_ids(conn, "teacher") == {new.id}
+    assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2", 14, [], exclude_inflight=True)} == {
+        comic.id,
+        unknown.id,
+    }
+    assert store.batch_members(conn, "b1") == {"t1-0": [new.id]} and store.inflight_ids(conn, "teacher") == {
+        new.id
+    }
     store.close_batch(conn, "b1", "done")
     assert store.inflight_ids(conn, "teacher") == set() and store.recent_batches(conn)[0]["status"] == "done"
 
 
 def test_progress_views_render(conn, cfg):
     cfg.folders = {"Comics": FolderPolicy(protected=True, judge=False)}
-    seed_scored(conn, cfg, [dict(n=1, score=90, folder="Essays"), dict(n=2, score=20, folder="Essays"),
-                                  dict(n=3, score=40, folder="News", confidence="low")])
+    seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=90, folder="Essays"),
+            dict(n=2, score=20, folder="Essays"),
+            dict(n=3, score=40, folder="News", confidence="low"),
+        ],
+    )
     store.upsert_article(conn, make_item(10, title="pending one", crawled_msec=4_000_000_000_000), "News")
     store.upsert_article(conn, make_item(11, title="ancient", crawled_msec=1), "News")
-    store.upsert_article(conn, make_item(12, feed="Comics feed", title="comic", crawled_msec=4_000_000_000_000), "Comics")
+    store.upsert_article(
+        conn, make_item(12, feed="Comics feed", title="comic", crawled_msec=4_000_000_000_000), "Comics"
+    )
     flying = make_item(13, title="in flight", crawled_msec=4_000_000_000_000)
     store.upsert_article(conn, flying, "News")
     store.add_batch(conn, "msgbatch_abc", 1, "teacher", "claude-sonnet-5-5", [("t1-0", [flying.id])])
-    store.record_cost(conn, 1, "claude-sonnet-5-5", "teacher",
-                      {"input_tokens": 100, "output_tokens": 50, "cache_write": 10, "cache_read": 300}, 0.01)
+    store.record_cost(
+        conn,
+        1,
+        "claude-sonnet-5-5",
+        "teacher",
+        {"input_tokens": 100, "output_tokens": 50, "cache_write": 10, "cache_read": 300},
+        0.01,
+    )
     run_id = store.begin_run(conn, "run")
     store.finish_run(conn, run_id, True, summary="judged 3")
     snap = progress.snapshot(conn, cfg)
@@ -159,7 +212,11 @@ def test_progress_views_render(conn, cfg):
     assert snap["too_old"] == 1 and snap["skipped"] == 1 and snap["low_conf"] == 1 and snap["inflight"] == 1
     assert snap["cache_hit"] and abs(snap["cache_hit"] - 300 / 410) < 1e-6
     folders = {f["folder"]: f for f in snap["folders"]}
-    assert folders["News"]["pending"] == 1 and folders["News"]["inflight"] == 1 and folders["Essays"]["good"] == 1
+    assert (
+        folders["News"]["pending"] == 1
+        and folders["News"]["inflight"] == 1
+        and folders["Essays"]["good"] == 1
+    )
     assert folders["Comics"]["scored"] is False
     text = progress.render_text(snap, width=120)
     assert "judged" in text and "msgbatch_abc" in text and "Comics" in text and "in progress" in text
@@ -173,7 +230,6 @@ def test_fake_client_tracks_read_state():
     assert [r.id for r in c.unread_ids()] == ["b"]
     c.mark_unread(["a"])
     assert {r.id for r in c.unread_ids()} == {"a", "b"}
-
 
 
 def test_live_file_and_activity(conn, cfg):
@@ -194,7 +250,9 @@ def test_live_file_and_activity(conn, cfg):
         text = progress.render_text(snap)
         assert "RUN IN PROGRESS" in text and "judging" in text and "Last 3 h" in text
         html = progress.render_html(snap)
-        assert "dot on" in html and "progress.json" in html and "p-spark" in html and "run in progress" in html
+        assert (
+            "dot on" in html and "progress.json" in html and "p-spark" in html and "run in progress" in html
+        )
     assert ids and progress.log_tail(cfg.root / "nope.log") == []
 
 
@@ -238,8 +296,19 @@ def test_many_workers_share_the_database_safely(conn, cfg):
             _t.sleep(0.002)
             text = params["messages"][0]["content"]
             ns = [int(m) for m in _re.findall(r"^\[(\d+)\]$", text, _re.M)]
-            js = [{"n": n, "s": [60, 60, 60, 60, 60], "lesson": "l", "concept": "c", "kind": "news", "flags": [],
-                   "dupe": None, "conf": "high"} for n in ns]
+            js = [
+                {
+                    "n": n,
+                    "s": [60, 60, 60, 60, 60],
+                    "lesson": "l",
+                    "concept": "c",
+                    "kind": "news",
+                    "flags": [],
+                    "dupe": None,
+                    "conf": "high",
+                }
+                for n in ns
+            ]
             return StubResponse([StubBlock(json.dumps({"judgments": js}))])
 
     class StubClient:
@@ -250,7 +319,9 @@ def test_many_workers_share_the_database_safely(conn, cfg):
             return self
 
     for n in range(1, 241):
-        store.upsert_article(conn, make_item(n, title=f"article number {n}", crawled_msec=1_800_000_000_000 + n), None)
+        store.upsert_article(
+            conn, make_item(n, title=f"article number {n}", crawled_msec=1_800_000_000_000 + n), None
+        )
     cfg.judge.articles_per_call = 5
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
     llm._client = StubClient()

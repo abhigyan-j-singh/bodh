@@ -31,7 +31,7 @@ def long_to_short(long_id: str) -> int:
     """Long-form tag URI -> signed decimal int."""
     if not long_id.startswith(LONG_PREFIX):
         raise ValueError(f"not a long-form item id: {long_id!r}")
-    hex_part = long_id[len(LONG_PREFIX):]
+    hex_part = long_id[len(LONG_PREFIX) :]
     if len(hex_part) != 16:
         raise ValueError(f"long-form hex must be 16 chars, got {len(hex_part)}: {long_id!r}")
     unsigned = int(hex_part, 16)
@@ -44,7 +44,7 @@ def normalize_item_id(item_id: int | str) -> str:
         return short_to_long(item_id)
     s = str(item_id).strip()
     if s.startswith(LONG_PREFIX):
-        hex_part = s[len(LONG_PREFIX):]
+        hex_part = s[len(LONG_PREFIX) :]
         if len(hex_part) != 16:
             raise ValueError(f"long-form hex must be 16 chars: {s!r}")
         int(hex_part, 16)  # validates

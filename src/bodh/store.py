@@ -118,11 +118,11 @@ SCHEMA_VERSION = 4
 SCHEMA_VERSION_KEY = "schema_version"
 
 # The kv keys, named by the glossary. The names before October 2026 are moved by _migrate_4.
-PHASE_KEY = "run_phase"                   # what the run in progress is doing, for the live views
-PLAIN_JSON_KEY = "provider.plain_json"    # "1" once the judge's model rejected structured outputs
-CACHE_TTL_KEY = "provider.cache_ttl"      # "5m" once the API rejected the 1-hour prompt cache
-SAFETY_KEY = "safety_tripped"             # the run whose autocut tripped the safety limit; set until `bodh safety reset`
-LEGACY_SAFETY_KEY = "breaker_tripped"     # the key before October 2026, kept in step: a rollback to the old code must still see the trip
+PHASE_KEY = "run_phase"  # what the run in progress is doing, for the live views
+PLAIN_JSON_KEY = "provider.plain_json"  # "1" once the judge's model rejected structured outputs
+CACHE_TTL_KEY = "provider.cache_ttl"  # "5m" once the API rejected the 1-hour prompt cache
+SAFETY_KEY = "safety_tripped"  # the run whose autocut tripped the safety limit; set until `bodh safety reset`
+LEGACY_SAFETY_KEY = "breaker_tripped"  # the key before October 2026, kept in step: a rollback to the old code must still see the trip
 OLD_KV_KEYS = {"phase": PHASE_KEY, "plain_json": PLAIN_JSON_KEY}
 
 
@@ -213,6 +213,7 @@ def html_to_text(raw: str, limit: int = 20000) -> str:
 
 # -- articles -----------------------------------------------------------------
 
+
 def upsert_article(conn: sqlite3.Connection, item: Any, folder: str | None) -> None:
     conn.execute(
         """INSERT INTO articles (id, short_id, feed_stream, feed_title, folder, title, url, author,
@@ -222,8 +223,18 @@ def upsert_article(conn: sqlite3.Connection, item: Any, folder: str | None) -> N
              feed_stream=excluded.feed_stream, title=excluded.title, url=excluded.url, author=excluded.author,
              published=excluded.published, crawled_msec=excluded.crawled_msec, text=excluded.text""",
         (
-            item.id, item.short_id, item.feed_stream_id, item.feed_title, folder, item.title, item.url,
-            item.author, item.published, item.crawled_msec, html_to_text(item.html), utcnow_iso(),
+            item.id,
+            item.short_id,
+            item.feed_stream_id,
+            item.feed_title,
+            folder,
+            item.title,
+            item.url,
+            item.author,
+            item.published,
+            item.crawled_msec,
+            html_to_text(item.html),
+            utcnow_iso(),
         ),
     )
     conn.execute(
@@ -234,9 +245,13 @@ def upsert_article(conn: sqlite3.Connection, item: Any, folder: str | None) -> N
 
 
 def unread_without_text(conn: sqlite3.Connection) -> list[str]:
-    return [r[0] for r in conn.execute(
-        "SELECT a.id FROM articles a JOIN state st ON st.article_id = a.id "
-        "WHERE st.status = 'unread' AND (a.text IS NULL OR a.text = '')")]
+    return [
+        r[0]
+        for r in conn.execute(
+            "SELECT a.id FROM articles a JOIN state st ON st.article_id = a.id "
+            "WHERE st.status = 'unread' AND (a.text IS NULL OR a.text = '')"
+        )
+    ]
 
 
 def known_ids(conn: sqlite3.Connection) -> set[str]:
@@ -258,8 +273,9 @@ def in_chunks(ids: Iterable[str], size: int = IN_CHUNK) -> Iterator[list[str]]:
         yield batch
 
 
-def fetch_in(conn: sqlite3.Connection, sql: str, ids: Iterable[str], before: tuple = (),
-             after: tuple = ()) -> list[sqlite3.Row]:
+def fetch_in(
+    conn: sqlite3.Connection, sql: str, ids: Iterable[str], before: tuple = (), after: tuple = ()
+) -> list[sqlite3.Row]:
     """Run ``sql`` (with ``{marks}`` where the ids go) once per chunk of ids and gather the rows,
     so a mark-all-read of a big pile never exceeds the variable limit."""
     rows: list[sqlite3.Row] = []
@@ -296,29 +312,42 @@ MAX_JUDGE_FAILURES = 3  # empty answers from the model for one article before it
 def bump_judge_failures(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
     """The model answered for these articles and said nothing usable; three times and they
     are left unread, unjudged, until `bodh safety reset`."""
-    conn.executemany("UPDATE state SET judge_failures = judge_failures + 1 WHERE article_id = ?", [(i,) for i in ids])
+    conn.executemany(
+        "UPDATE state SET judge_failures = judge_failures + 1 WHERE article_id = ?", [(i,) for i in ids]
+    )
 
 
 def given_up(conn: sqlite3.Connection) -> int:
     """Unread articles the judge has stopped asking about."""
-    return int(conn.execute(
-        "SELECT COUNT(*) FROM state st LEFT JOIN scores s ON s.article_id = st.article_id "
-        "WHERE st.status = 'unread' AND st.judge_failures >= ? AND s.article_id IS NULL", (MAX_JUDGE_FAILURES,)
-    ).fetchone()[0] or 0)
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM state st LEFT JOIN scores s ON s.article_id = st.article_id "
+            "WHERE st.status = 'unread' AND st.judge_failures >= ? AND s.article_id IS NULL",
+            (MAX_JUDGE_FAILURES,),
+        ).fetchone()[0]
+        or 0
+    )
 
 
 def reset_judge_failures(conn: sqlite3.Connection) -> int:
     return conn.execute("UPDATE state SET judge_failures = 0 WHERE judge_failures > 0").rowcount
 
 
-def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders: Iterable[str],
-                    exclude_inflight: bool, rejudge: tuple[str, float] | None = None) -> tuple[list[str], list[Any]]:
+def _unscored_where(
+    prompt_version: str,
+    max_age_days: int | None,
+    skip_folders: Iterable[str],
+    exclude_inflight: bool,
+    rejudge: tuple[str, float] | None = None,
+) -> tuple[list[str], list[Any]]:
     """``rejudge`` = (judge model, min score): a judgment by another model at or above the
     score counts as still pending for the judge."""
     params: list[Any] = [prompt_version]
     if rejudge is not None:
-        where = ["st.status = 'unread'",
-                 "(s.article_id IS NULL OR (s.model != ? AND s.model != 'dedup' AND s.score >= ?))"]
+        where = [
+            "st.status = 'unread'",
+            "(s.article_id IS NULL OR (s.model != ? AND s.model != 'dedup' AND s.score >= ?))",
+        ]
         params += [rejudge[0], float(rejudge[1])]
     else:
         where = ["st.status = 'unread'", "s.article_id IS NULL"]
@@ -326,8 +355,10 @@ def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders:
     params.append(MAX_JUDGE_FAILURES)
     if max_age_days is not None:
         cutoff_ms = int((utcnow() - timedelta(days=max_age_days)).timestamp() * 1000)
-        where.append("((a.crawled_msec IS NULL AND a.published IS NULL) "
-                     "OR COALESCE(a.crawled_msec, a.published * 1000) >= ?)")
+        where.append(
+            "((a.crawled_msec IS NULL AND a.published IS NULL) "
+            "OR COALESCE(a.crawled_msec, a.published * 1000) >= ?)"
+        )
         params.append(cutoff_ms)
     skip = [f for f in skip_folders if f]
     if skip:
@@ -338,30 +369,50 @@ def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders:
     return where, params
 
 
-def unscored_unread_count(conn: sqlite3.Connection, prompt_version: str, max_age_days: int | None = None,
-                          skip_folders: Iterable[str] = (), exclude_inflight: bool = False,
-                          rejudge: tuple[str, float] | None = None) -> int:
+def unscored_unread_count(
+    conn: sqlite3.Connection,
+    prompt_version: str,
+    max_age_days: int | None = None,
+    skip_folders: Iterable[str] = (),
+    exclude_inflight: bool = False,
+    rejudge: tuple[str, float] | None = None,
+) -> int:
     where, params = _unscored_where(prompt_version, max_age_days, skip_folders, exclude_inflight, rejudge)
     row = conn.execute(
         f"""SELECT COUNT(*) FROM articles a JOIN state st ON st.article_id = a.id
             LEFT JOIN scores s ON s.article_id = a.id AND s.prompt_version = ?
-            WHERE {' AND '.join(where)}""", params).fetchone()
+            WHERE {" AND ".join(where)}""",
+        params,
+    ).fetchone()
     return int(row[0] or 0)
 
 
-def unscored_unread_folders(conn: sqlite3.Connection, prompt_version: str, max_age_days: int | None = None,
-                            skip_folders: Iterable[str] = (), exclude_inflight: bool = False) -> list[sqlite3.Row]:
+def unscored_unread_folders(
+    conn: sqlite3.Connection,
+    prompt_version: str,
+    max_age_days: int | None = None,
+    skip_folders: Iterable[str] = (),
+    exclude_inflight: bool = False,
+) -> list[sqlite3.Row]:
     """Only the folder of each pending article (no text), for the progress views."""
     where, params = _unscored_where(prompt_version, max_age_days, skip_folders, exclude_inflight)
     return conn.execute(
         f"""SELECT a.folder FROM articles a JOIN state st ON st.article_id = a.id
             LEFT JOIN scores s ON s.article_id = a.id AND s.prompt_version = ?
-            WHERE {' AND '.join(where)}""", params).fetchall()
+            WHERE {" AND ".join(where)}""",
+        params,
+    ).fetchall()
 
 
-def unscored_unread(conn: sqlite3.Connection, prompt_version: str, max_age_days: int | None = None,
-                    skip_folders: Iterable[str] = (), exclude_inflight: bool = False,
-                    limit: int | None = None, rejudge: tuple[str, float] | None = None) -> list[sqlite3.Row]:
+def unscored_unread(
+    conn: sqlite3.Connection,
+    prompt_version: str,
+    max_age_days: int | None = None,
+    skip_folders: Iterable[str] = (),
+    exclude_inflight: bool = False,
+    limit: int | None = None,
+    rejudge: tuple[str, float] | None = None,
+) -> list[sqlite3.Row]:
     """Unread articles the judge still has to judge: no score for this prompt version (or a
     promising one from another model, see ``rejudge``), not older than the window (articles of
     unknown age count as new), not in a folder the judge never reads, and, if asked, not
@@ -374,7 +425,7 @@ def unscored_unread(conn: sqlite3.Connection, prompt_version: str, max_age_days:
     return conn.execute(
         f"""SELECT a.* FROM articles a JOIN state st ON st.article_id = a.id
             LEFT JOIN scores s ON s.article_id = a.id AND s.prompt_version = ?
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             ORDER BY a.crawled_msec DESC{tail}""",
         params,
     ).fetchall()
@@ -396,11 +447,22 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 # -- scores -------------------------------------------------------------------
 
-def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_score: float,
-                 score: float, bucket: str, prompt_version: str, model: str) -> str | None:
+
+def record_score(
+    conn: sqlite3.Connection,
+    article_id: str,
+    verdict: dict,
+    base_score: float,
+    score: float,
+    bucket: str,
+    prompt_version: str,
+    model: str,
+) -> str | None:
     """Insert or replace a judgment. Returns the band tag the article carried in BazQux
     before, when a re-score moved it to another bucket, so the caller can remove it."""
-    old = conn.execute("SELECT bucket, bucket_tagged FROM scores WHERE article_id = ?", (article_id,)).fetchone()
+    old = conn.execute(
+        "SELECT bucket, bucket_tagged FROM scores WHERE article_id = ?", (article_id,)
+    ).fetchone()
     stale = old["bucket"] if old is not None and old["bucket_tagged"] and old["bucket"] != bucket else None
     conn.execute(
         """INSERT INTO scores (article_id, prompt_version, model, quality, learning, fit, breadth, relevance,
@@ -417,19 +479,35 @@ def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_
              bucket_tagged=CASE WHEN scores.bucket = excluded.bucket THEN scores.bucket_tagged ELSE 0 END,
              second_look_score=NULL, second_look_model=NULL, scored_at=excluded.scored_at""",
         (
-            article_id, prompt_version, model,
-            verdict["quality"], verdict["learning"], verdict["fit"], verdict["breadth"], verdict["relevance"],
-            base_score, score, verdict.get("lesson", ""), verdict.get("concept", ""), verdict.get("kind", ""),
-            json.dumps(verdict.get("flags", [])), verdict.get("dupe_of"), verdict.get("confidence", "medium"),
-            bucket, utcnow_iso(),
+            article_id,
+            prompt_version,
+            model,
+            verdict["quality"],
+            verdict["learning"],
+            verdict["fit"],
+            verdict["breadth"],
+            verdict["relevance"],
+            base_score,
+            score,
+            verdict.get("lesson", ""),
+            verdict.get("concept", ""),
+            verdict.get("kind", ""),
+            json.dumps(verdict.get("flags", [])),
+            verdict.get("dupe_of"),
+            verdict.get("confidence", "medium"),
+            bucket,
+            utcnow_iso(),
         ),
     )
-    conn.execute("UPDATE state SET judge_failures = 0 WHERE article_id = ? AND judge_failures > 0", (article_id,))
+    conn.execute(
+        "UPDATE state SET judge_failures = 0 WHERE article_id = ? AND judge_failures > 0", (article_id,)
+    )
     return stale
 
 
-def record_review(conn: sqlite3.Connection, article_id: str, second: float, model: str,
-                       new_score: float, bucket: str) -> None:
+def record_review(
+    conn: sqlite3.Connection, article_id: str, second: float, model: str, new_score: float, bucket: str
+) -> None:
     conn.execute(
         """UPDATE scores SET second_look_score = ?, second_look_model = ?, score = ?,
                   bucket_tagged = CASE WHEN bucket = ? THEN bucket_tagged ELSE 0 END, bucket = ?
@@ -441,13 +519,17 @@ def record_review(conn: sqlite3.Connection, article_id: str, second: float, mode
 def record_review_failure(conn: sqlite3.Connection, article_id: str) -> None:
     """The review could not be had (a failed request, text that will not parse). The
     article counts as examined so it is not retried every run; autocut leaves it unread."""
-    conn.execute("UPDATE scores SET second_look_model = 'failed' WHERE article_id = ? AND second_look_score IS NULL",
-                 (article_id,))
+    conn.execute(
+        "UPDATE scores SET second_look_model = 'failed' WHERE article_id = ? AND second_look_score IS NULL",
+        (article_id,),
+    )
 
 
 def untagged_bands(conn: sqlite3.Connection) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for row in conn.execute("SELECT article_id, bucket FROM scores WHERE bucket_tagged = 0 AND bucket IS NOT NULL"):
+    for row in conn.execute(
+        "SELECT article_id, bucket FROM scores WHERE bucket_tagged = 0 AND bucket IS NOT NULL"
+    ):
         out.setdefault(row["bucket"], []).append(row["article_id"])
     return out
 
@@ -457,6 +539,7 @@ def mark_band_tagged(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
 
 
 # -- state --------------------------------------------------------------------
+
 
 def set_flags(conn: sqlite3.Connection, ids: Iterable[str], **cols: Any) -> None:
     if not cols:
@@ -495,15 +578,23 @@ def _bulk(conn: sqlite3.Connection) -> Iterator[None]:
 
 def cut_pending_now_exempt(conn: sqlite3.Connection) -> list[str]:
     """Cuts not yet written to BazQux whose article is starred or protected by now."""
-    return [r[0] for r in conn.execute(
-        "SELECT article_id FROM state WHERE status = 'cut' AND (cut_tagged = 0 OR read_marked = 0) "
-        "AND (starred = 1 OR protected = 1)")]
+    return [
+        r[0]
+        for r in conn.execute(
+            "SELECT article_id FROM state WHERE status = 'cut' AND (cut_tagged = 0 OR read_marked = 0) "
+            "AND (starred = 1 OR protected = 1)"
+        )
+    ]
 
 
 def cut_pending(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
     """Cut articles still missing their tag, and those still not marked read."""
-    untagged = [r[0] for r in conn.execute("SELECT article_id FROM state WHERE status='cut' AND cut_tagged=0")]
-    unmarked = [r[0] for r in conn.execute("SELECT article_id FROM state WHERE status='cut' AND read_marked=0")]
+    untagged = [
+        r[0] for r in conn.execute("SELECT article_id FROM state WHERE status='cut' AND cut_tagged=0")
+    ]
+    unmarked = [
+        r[0] for r in conn.execute("SELECT article_id FROM state WHERE status='cut' AND read_marked=0")
+    ]
     return untagged, unmarked
 
 
@@ -536,6 +627,7 @@ def rescued_ids(conn: sqlite3.Connection) -> set[str]:
 
 # -- runs and costs -----------------------------------------------------------
 
+
 def begin_run(conn: sqlite3.Connection, kind: str) -> int:
     cur = conn.execute("INSERT INTO runs (kind, started_at, ok) VALUES (?, ?, 0)", (kind, utcnow_iso()))
     return int(cur.lastrowid or 0)
@@ -550,22 +642,36 @@ def finish_run(conn: sqlite3.Connection, run_id: int, ok: bool, **cols: Any) -> 
 
 def last_runs(conn: sqlite3.Connection, n: int = 10, kind: str | None = None) -> list[sqlite3.Row]:
     if kind:
-        return conn.execute("SELECT * FROM runs WHERE kind = ? ORDER BY id DESC LIMIT ?", (kind, n)).fetchall()
+        return conn.execute(
+            "SELECT * FROM runs WHERE kind = ? ORDER BY id DESC LIMIT ?", (kind, n)
+        ).fetchall()
     return conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT ?", (n,)).fetchall()
 
 
-def record_cost(conn: sqlite3.Connection, run_id: int | None, model: str, purpose: str,
-                usage: dict, usd: float) -> None:
+def record_cost(
+    conn: sqlite3.Connection, run_id: int | None, model: str, purpose: str, usage: dict, usd: float
+) -> None:
     conn.execute(
         """INSERT INTO costs (run_id, model, purpose, input_tokens, output_tokens, cache_write, cache_read,
                               usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (run_id, model, purpose, usage.get("input_tokens", 0), usage.get("output_tokens", 0),
-         usage.get("cache_write", 0), usage.get("cache_read", 0), usd, utcnow_iso()),
+        (
+            run_id,
+            model,
+            purpose,
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            usage.get("cache_write", 0),
+            usage.get("cache_read", 0),
+            usd,
+            utcnow_iso(),
+        ),
     )
 
 
 def spent_since(conn: sqlite3.Connection, since_iso: str) -> float:
-    row = conn.execute("SELECT COALESCE(SUM(usd), 0) FROM costs WHERE created_at >= ?", (since_iso,)).fetchone()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(usd), 0) FROM costs WHERE created_at >= ?", (since_iso,)
+    ).fetchone()
     return float(row[0] or 0.0) if row else 0.0
 
 
@@ -579,8 +685,12 @@ def local_midnight_iso(tz_name: str) -> str:
 # -- the names shown for stored kinds ------------------------------------------
 # The database keeps the words it was written with; the surfaces show the glossary's.
 
-CUT_MODE_NAMES = {"floor": "autocut", "bankruptcy": "clear-old"}      # state.cut_mode before October 2026
-RUN_KIND_NAMES = {"blast": "catch-up", "bankruptcy": "clear-old", "nudge": "steer"}   # runs.kind before October 2026
+CUT_MODE_NAMES = {"floor": "autocut", "bankruptcy": "clear-old"}  # state.cut_mode before October 2026
+RUN_KIND_NAMES = {
+    "blast": "catch-up",
+    "bankruptcy": "clear-old",
+    "nudge": "steer",
+}  # runs.kind before October 2026
 FEEDBACK_KIND_NAMES = {"wrong": "rescue tag", "dismiss": "dismissed", "read": "read"}
 
 
@@ -600,17 +710,18 @@ def feedback_kind_name(kind: str | None) -> str:
 
 # The kinds of feedback, and what they mean to the judge and the weekly rewrite.
 # Stars and reads come from BazQux state; the rest are the student's tags.
-GRADES = ("great", "good", "meh", "bad")      # one per article; the harsher wins when two are present
-LEVELS = ("basic", "heavy")                   # the level missed: too elementary, too dense
-STEERS = ("more", "less")                     # steer the judge by this article's concept, now
-LOVED_KINDS = ("star", "great", "wrong")      # the strongest positives: the eval gate checks against these
+GRADES = ("great", "good", "meh", "bad")  # one per article; the harsher wins when two are present
+LEVELS = ("basic", "heavy")  # the level missed: too elementary, too dense
+STEERS = ("more", "less")  # steer the judge by this article's concept, now
+LOVED_KINDS = ("star", "great", "wrong")  # the strongest positives: the eval gate checks against these
 POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong")
 NEGATIVE_KINDS = ("bad", "meh", "dismiss", "prune")
 
 
 def add_feedback(conn: sqlite3.Connection, article_id: str, kind: str) -> bool:
     cur = conn.execute(
-        "INSERT OR IGNORE INTO feedback (article_id, kind, at) VALUES (?, ?, ?)", (article_id, kind, utcnow_iso())
+        "INSERT OR IGNORE INTO feedback (article_id, kind, at) VALUES (?, ?, ?)",
+        (article_id, kind, utcnow_iso()),
     )
     return cur.rowcount > 0
 
@@ -631,13 +742,20 @@ def verdicts(conn: sqlite3.Connection, kinds: Iterable[str]) -> dict[str, str]:
     """article id -> the recorded kind, for one exclusive group."""
     kinds = list(kinds)
     marks = ",".join("?" * len(kinds))
-    return {r[0]: r[1] for r in conn.execute(f"SELECT article_id, kind FROM feedback WHERE kind IN ({marks})", kinds)}
+    return {
+        r[0]: r[1]
+        for r in conn.execute(f"SELECT article_id, kind FROM feedback WHERE kind IN ({marks})", kinds)
+    }
 
 
 def feedback_for(conn: sqlite3.Connection, article_id: str) -> list[tuple[str, str]]:
     """(kind, at) for one article, oldest first."""
-    return [(r[0], r[1]) for r in conn.execute(
-        "SELECT kind, at FROM feedback WHERE article_id = ? ORDER BY at, id", (article_id,))]
+    return [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT kind, at FROM feedback WHERE article_id = ? ORDER BY at, id", (article_id,)
+        )
+    ]
 
 
 def feedback_ids(conn: sqlite3.Connection, kind: str) -> set[str]:
@@ -655,7 +773,9 @@ def feedback_since(conn: sqlite3.Connection, kinds: Iterable[str], since_iso: st
     ).fetchall()
 
 
-def concept_counts(conn: sqlite3.Connection, kinds: Iterable[str], since_iso: str, limit: int = 40) -> list[tuple[str, int]]:
+def concept_counts(
+    conn: sqlite3.Connection, kinds: Iterable[str], since_iso: str, limit: int = 40
+) -> list[tuple[str, int]]:
     kinds = list(kinds)
     marks = ",".join("?" * len(kinds))
     rows = conn.execute(
@@ -674,8 +794,15 @@ def days_ago_iso(days: int) -> str:
 
 # -- batches ------------------------------------------------------------------
 
-def add_batch(conn: sqlite3.Connection, batch_id: str, run_id: int | None, purpose: str, model: str,
-              requests: list[tuple[str, list[str]]]) -> None:
+
+def add_batch(
+    conn: sqlite3.Connection,
+    batch_id: str,
+    run_id: int | None,
+    purpose: str,
+    model: str,
+    requests: list[tuple[str, list[str]]],
+) -> None:
     """Remember a submitted batch: (custom_id, ordered article ids) per request."""
     n_articles = sum(len(ids) for _, ids in requests)
     conn.execute(
@@ -687,7 +814,11 @@ def add_batch(conn: sqlite3.Connection, batch_id: str, run_id: int | None, purpo
         """INSERT INTO inflight (article_id, purpose, batch_id, custom_id, ordinal) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(article_id, purpose) DO UPDATE SET batch_id=excluded.batch_id,
              custom_id=excluded.custom_id, ordinal=excluded.ordinal""",
-        [(aid, purpose, batch_id, custom_id, n) for custom_id, ids in requests for n, aid in enumerate(ids, 1)],
+        [
+            (aid, purpose, batch_id, custom_id, n)
+            for custom_id, ids in requests
+            for n, aid in enumerate(ids, 1)
+        ],
     )
 
 
@@ -698,15 +829,19 @@ def open_batches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def batch_members(conn: sqlite3.Connection, batch_id: str) -> dict[str, list[str]]:
     """custom_id -> article ids in request order."""
     out: dict[str, list[str]] = {}
-    for row in conn.execute("SELECT custom_id, article_id FROM inflight WHERE batch_id = ? ORDER BY custom_id, ordinal",
-                            (batch_id,)):
+    for row in conn.execute(
+        "SELECT custom_id, article_id FROM inflight WHERE batch_id = ? ORDER BY custom_id, ordinal",
+        (batch_id,),
+    ):
         out.setdefault(row["custom_id"], []).append(row["article_id"])
     return out
 
 
 def close_batch(conn: sqlite3.Connection, batch_id: str, status: str, note: str = "") -> None:
-    conn.execute("UPDATE batches SET status = ?, note = ?, ended_at = ? WHERE id = ?",
-                 (status, note[:500], utcnow_iso(), batch_id))
+    conn.execute(
+        "UPDATE batches SET status = ?, note = ?, ended_at = ? WHERE id = ?",
+        (status, note[:500], utcnow_iso(), batch_id),
+    )
     conn.execute("DELETE FROM inflight WHERE batch_id = ?", (batch_id,))
 
 
@@ -720,9 +855,12 @@ def recent_batches(conn: sqlite3.Connection, n: int = 10) -> list[sqlite3.Row]:
 
 # -- learned profile versions and kv --------------------------------------------------
 
+
 def save_learned_version(conn: sqlite3.Connection, text: str, reason: str) -> int:
-    cur = conn.execute("INSERT INTO learned_versions (text, reason, created_at) VALUES (?, ?, ?)",
-                       (text, reason, utcnow_iso()))
+    cur = conn.execute(
+        "INSERT INTO learned_versions (text, reason, created_at) VALUES (?, ?, ?)",
+        (text, reason, utcnow_iso()),
+    )
     return int(cur.lastrowid or 0)
 
 
@@ -736,8 +874,10 @@ def kv_get(conn: sqlite3.Connection, key: str, default: str | None = None) -> st
 
 
 def kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
-    conn.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                 (key, value))
+    conn.execute(
+        "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
 
 
 def kv_delete(conn: sqlite3.Connection, key: str) -> bool:

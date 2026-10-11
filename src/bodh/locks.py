@@ -20,11 +20,14 @@ log = logging.getLogger(__name__)
 
 LOCK_RETRY_SECONDS = 0.1  # a status probe may hold the lock for an instant; a run waits this long for it
 
+
 class RunTimeout(Exception):
     pass
 
+
 class AlreadyRunning(Exception):
     pass
+
 
 def pid_alive(pid: int) -> bool:
     """Is there a process with this id? Never a signal on Windows, where os.kill(pid, 0) would
@@ -41,6 +44,7 @@ def pid_alive(pid: int) -> bool:
         return True
     return True
 
+
 def _pid_alive_windows(pid: int) -> bool:
     import ctypes
 
@@ -56,12 +60,14 @@ def _pid_alive_windows(pid: int) -> bool:
     finally:
         kernel32.CloseHandle(handle)
 
+
 def _pid_record(data_dir: Path) -> tuple[int, str, float] | None:
     try:
         pid_s, kind, started = (data_dir / "bodh.pid").read_text(encoding="utf-8").split()
         return int(pid_s), kind, float(started)
     except (OSError, ValueError):
         return None
+
 
 def _lock_held_by_someone(path: Path) -> bool:
     """A non-blocking probe of the lock file: taken and released in the same instant. Used only
@@ -79,6 +85,7 @@ def _lock_held_by_someone(path: Path) -> bool:
         return False
     return False
 
+
 def run_in_progress(data_dir: Path) -> bool:
     """True while another process holds the run lock. Decided from the pid file first (no
     lock is touched, so the console's polling cannot refuse a launchd run its lock);
@@ -88,6 +95,7 @@ def run_in_progress(data_dir: Path) -> bool:
     if rec is None or not pid_alive(rec[0]):
         return False
     return _lock_held_by_someone(data_dir / "bodh.lock")
+
 
 @contextmanager
 def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
@@ -118,6 +126,7 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
 
+
 @contextmanager
 def _pid_file(pid_path: Path, kind: str) -> Iterator[None]:
     try:
@@ -131,6 +140,7 @@ def _pid_file(pid_path: Path, kind: str) -> Iterator[None]:
             pid_path.unlink()
         except OSError:
             pass
+
 
 @contextmanager
 def _exclusive_file_lock(path: Path) -> Iterator[None]:
@@ -167,6 +177,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
         except OSError:
             pass
 
+
 def running_process(data_dir: Path) -> dict | None:
     """The process holding the run lock, from the pid file: {pid, kind, started} or None."""
     rec = _pid_record(data_dir)
@@ -174,6 +185,7 @@ def running_process(data_dir: Path) -> dict | None:
         return None
     pid, kind, started = rec
     return {"pid": pid, "kind": kind, "started": started}
+
 
 def stop_process(data_dir: Path, wait: float = 20.0) -> str:
     """Interrupt the running bodh process (Ctrl-C), then insist. The run fails open:
@@ -197,6 +209,7 @@ def stop_process(data_dir: Path, wait: float = 20.0) -> str:
         pass
     return f"sent SIGTERM to {proc['kind']} (pid {pid}) after {wait:.0f}s without a clean stop"
 
+
 @contextmanager
 def time_limit(seconds: int) -> Iterator[None]:
     """A hard wall clock limit for a run, the backstop behind the run's own deadline; the
@@ -216,6 +229,7 @@ def time_limit(seconds: int) -> Iterator[None]:
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous)
+
 
 @contextmanager
 def graceful_sigterm() -> Iterator[None]:
