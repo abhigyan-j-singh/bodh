@@ -58,6 +58,9 @@ def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
     (root / "profile" / "seed.md").write_text(example, encoding="utf-8")  # what ./install.sh leaves behind
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1 and "STILL THE EXAMPLE" in result.output, result.output
+    for args in (["run", "--shadow"], ["blast", "--yes"]):   # refused before any network, exit code 2
+        result = runner.invoke(app, args)
+        assert result.exit_code == 2 and "still the worked example" in result.output, (args, result.output)
     (root / "profile" / "seed.md").write_text("# Seed\nStudent: test.\n", encoding="utf-8")
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0 and result.output.rstrip().endswith("ok"), result.output

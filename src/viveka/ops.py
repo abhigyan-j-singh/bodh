@@ -45,13 +45,10 @@ class AlreadyRunning(Exception):
 
 
 def log_file(data_dir: Path) -> Path:
-    """Where the run log lives: ~/Library/Logs/viveka on a Mac, data/logs elsewhere. An install
-    from before the rename that still has ~/Library/Logs/triage keeps writing there."""
+    """Where the run log lives: ~/Library/Logs/viveka on a Mac, data/logs elsewhere."""
     logs = Path(os.path.expanduser("~/Library/Logs"))
     if not logs.exists():
         return data_dir / "logs" / "viveka.log"
-    if (logs / "triage").is_dir() and not (logs / "viveka").is_dir():
-        return logs / "triage" / "viveka.log"
     return logs / "viveka" / "viveka.log"
 
 

@@ -334,7 +334,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
         parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
                      f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div></td>"
                      f"<td>{_e(r['lesson'])}</td><td>{_e(r['concept'])}</td></tr>")
-    parts.append("</table><p class='muted'>To rescue one, mark it unread in BazQux or NetNewsWire; the next run records the rescue.</p>")
+    parts.append("</table><p class='muted'>To rescue one, mark it unread in BazQux or your reader; the next run records the rescue.</p>")
 
     parts.append("<h2>Feeds, last 30 days</h2><table><tr><th>Feed</th><th>Folder</th><th class='num'>Articles</th>"
                  "<th class='num'>Mean score</th><th class='num'>Cut</th><th class='num'>Read</th><th class='num'>Starred</th>"

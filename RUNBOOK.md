@@ -210,7 +210,7 @@ disagreements shrink week by week, it is learning you.
 | nothing fires for a while | `viveka schedule pause` (`--job run` for one job; without it the control room pauses too); `viveka schedule resume` |
 | a run now, through launchd | `viveka schedule kick` (refused while a run holds the lock) |
 | stop everything, control room included | `viveka halt`; `viveka schedule resume` brings the jobs back. It ends the commands of this checkout started by their full path (launchd's jobs, the alias above); one started as `.venv/bin/viveka …` from inside the folder is not found, Ctrl-C that one |
-| after a code update, or after moving the folder | `./install.sh && ./install-launchd.sh` |
+| after a code update, or after moving the folder | `./install.sh && ./install-launchd.sh` (`viveka halt` first when a run may be going: a run started by the old code is not seen by the new one) |
 | the control room in the foreground | `viveka panel` (Ctrl-C ends it; launchd restarts its own copy) |
 
 
@@ -264,6 +264,8 @@ unknown timezone is refused with the key named, by every command. Current values
 | `prompt_version` [teacher.v2] | which prompt in `src/viveka/prompts/` (a `./prompts/` folder next to config.yaml overrides); changing it re-judges everything unread |
 | `weights` [0.30 quality, 0.30 learning, 0.15 fit, 0.15 breadth, 0.10 relevance] | how the five sub-scores make the score |
 | `expansion_bonus` [10] | points for an article on one of this week's expansion topics |
+| `home_angle` [empty] | your home ground as a short phrase (`India`, `Brazil`, `the Pacific Northwest`): the teacher flags an article with that angle and it gets `home_bonus`; empty turns the flag off |
+| `home_bonus` [10] | the points a home-angle article gets |
 | `batch_size` [20] | articles per teacher call |
 | `workers` [4] | model calls in flight at once in synchronous runs (`--sync`, `--workers` overrides) |
 | `max_per_run` [400] | articles judged per synchronous run |
@@ -303,7 +305,9 @@ the tag names written to and read from BazQux; change them only before the first
 student knows.
 
 **.env** (never committed, `chmod 600`): `BAZQUX_EMAIL`, `BAZQUX_PASSWORD`, `ANTHROPIC_API_KEY`,
-`HEALTHCHECK_URL` (optional). `viveka doctor` says which are set without showing them.
+`HEALTHCHECK_URL` (optional). `viveka doctor` says which are set without showing them. `config.yaml`
+is not committed either (it is yours; the repository carries `config.example.yaml`), so back it up
+with the rest of your files.
 
 **profile/**: `seed.md` is yours (the install leaves a worked example there; `viveka doctor` and the
 run refuse it until it is replaced); `learner.md` is the learner model's, rewritten on Sundays,

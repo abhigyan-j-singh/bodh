@@ -165,6 +165,7 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
     starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
     run's limit), so the next scheduled run is not skipped because this one overran."""
     cfg, conn = ctx.cfg, ctx.conn
+    cfg.check_seed()   # before any network: nothing is fetched or recorded for a student who does not exist
     if stop_after is None:
         stop_after = time.monotonic() + RUN_TIMEOUT_SECONDS - RUN_DEADLINE_MARGIN
     run_id = store.begin_run(conn, "run")

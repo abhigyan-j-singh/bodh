@@ -128,10 +128,10 @@ def test_unscored_unread_filters(conn, cfg):
     new = make_item(2, title="new one", crawled_msec=4_000_000_000_000)
     comic = make_item(3, feed="Comics feed", title="a comic", crawled_msec=4_000_000_000_000)
     unknown = make_item(4, title="no dates")
-    for item, folder in ((old, None), (new, None), (comic, "Comics & Fun"), (unknown, None)):
+    for item, folder in ((old, None), (new, None), (comic, "Comics"), (unknown, None)):
         store.upsert_article(conn, item, folder)
     assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2")} == {old.id, new.id, comic.id, unknown.id}
-    within = store.unscored_unread(conn, "teacher.v2", max_age_days=14, skip_folders=["Comics & Fun"])
+    within = store.unscored_unread(conn, "teacher.v2", max_age_days=14, skip_folders=["Comics"])
     assert {r["id"] for r in within} == {new.id, unknown.id}
     store.add_batch(conn, "b1", 1, "teacher", "m", [("t1-0", [new.id])])
     assert {r["id"] for r in store.unscored_unread(conn, "teacher.v2", 14, [], exclude_inflight=True)} == {comic.id, unknown.id}
@@ -141,12 +141,12 @@ def test_unscored_unread_filters(conn, cfg):
 
 
 def test_progress_views_render(conn, cfg):
-    cfg.cut.folders = {"Comics & Fun": FolderPolicy(protected=True, score=False)}
+    cfg.cut.folders = {"Comics": FolderPolicy(protected=True, score=False)}
     seed_scored(conn, cfg, [dict(n=1, score=90, folder="Essays"), dict(n=2, score=20, folder="Essays"),
                                   dict(n=3, score=40, folder="News", confidence="low")])
     store.upsert_article(conn, make_item(10, title="pending one", crawled_msec=4_000_000_000_000), "News")
     store.upsert_article(conn, make_item(11, title="ancient", crawled_msec=1), "News")
-    store.upsert_article(conn, make_item(12, feed="Comics feed", title="comic", crawled_msec=4_000_000_000_000), "Comics & Fun")
+    store.upsert_article(conn, make_item(12, feed="Comics feed", title="comic", crawled_msec=4_000_000_000_000), "Comics")
     flying = make_item(13, title="in flight", crawled_msec=4_000_000_000_000)
     store.upsert_article(conn, flying, "News")
     store.add_batch(conn, "msgbatch_abc", 1, "teacher", "claude-sonnet-5-5", [("t1-0", [flying.id])])
@@ -160,9 +160,9 @@ def test_progress_views_render(conn, cfg):
     assert snap["cache_hit"] and abs(snap["cache_hit"] - 300 / 410) < 1e-6
     folders = {f["folder"]: f for f in snap["folders"]}
     assert folders["News"]["pending"] == 1 and folders["News"]["inflight"] == 1 and folders["Essays"]["good"] == 1
-    assert folders["Comics & Fun"]["scored"] is False
+    assert folders["Comics"]["scored"] is False
     text = progress.render_text(snap, width=120)
-    assert "judged" in text and "msgbatch_abc" in text and "Comics & Fun" in text and "in progress" in text
+    assert "judged" in text and "msgbatch_abc" in text and "Comics" in text and "in progress" in text
     html = progress.render_html(snap)
     assert "class='prog'" in html and "msgbatch_abc" in html
 

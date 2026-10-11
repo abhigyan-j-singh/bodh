@@ -114,6 +114,11 @@ class Scoring(Strict):
     home_angle: str = ""                                    # the student's home ground ("India", say): an article
                                                             # with that angle gets home_bonus; empty turns the flag off
     home_bonus: int = Field(default=10, ge=0, le=100)
+
+    @field_validator("home_angle")
+    @classmethod
+    def _home_angle(cls, v: str) -> str:
+        return v.strip()   # "  " is off, like ""
     batch_size: int = Field(default=20, ge=1, le=100)        # articles per teacher call
     workers: int = Field(default=4, ge=1, le=64)             # synchronous runs: calls in flight at once
     max_per_run: int = Field(default=400, ge=0)              # synchronous runs: a backlog drains at this rate per run
@@ -227,25 +232,37 @@ def _zone_name_ok(name: str | None) -> bool:
     return True
 
 
+def _after_zoneinfo(path: str) -> str | None:
+    """…/zoneinfo/Europe/Lisbon → Europe/Lisbon (the posix/ and right/ variants too)."""
+    parts = Path(path).parts
+    if "zoneinfo" not in parts:
+        return None
+    tail = list(parts[len(parts) - 1 - parts[::-1].index("zoneinfo") + 1:])
+    if tail and tail[0] in ("posix", "right"):
+        tail = tail[1:]
+    return "/".join(tail) or None
+
+
 def _localtime_name() -> str | None:
-    """Where /etc/localtime points, as an IANA name (…/zoneinfo/Europe/Lisbon → Europe/Lisbon;
-    macOS keeps its copy under /var/db/timezone/zoneinfo). Debian also writes /etc/timezone."""
+    """Where /etc/localtime points, as an IANA name (macOS keeps its copy under
+    /var/db/timezone/zoneinfo). A copied file instead of a link: Debian's /etc/timezone."""
     try:
-        parts = Path("/etc/localtime").resolve().parts
-        if "zoneinfo" in parts:
-            tail = parts[len(parts) - 1 - parts[::-1].index("zoneinfo") + 1:]
-            if tail:
-                return "/".join(tail)
+        name = _after_zoneinfo(str(Path("/etc/localtime").resolve()))
+        if name:
+            return name
         text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
         return text or None
-    except OSError:
+    except (OSError, ValueError, RuntimeError):   # missing, unreadable, not text, a link loop
         return None
 
 
 def system_timezone() -> str:
-    """The machine's zone: $TZ when it names one, else /etc/localtime, else UTC (Windows has
-    neither; a `timezone` line in config.yaml is the way there)."""
+    """The machine's zone: $TZ when it names one (a name, or a path into a zoneinfo tree),
+    else /etc/localtime, else UTC (Windows has neither; a `timezone` line in config.yaml is
+    the way there)."""
     env = (os.environ.get("TZ") or "").lstrip(":")
+    if "zoneinfo" in env:
+        env = _after_zoneinfo(env) or ""
     for candidate in (env, _localtime_name()):
         if _zone_name_ok(candidate):
             return str(candidate)
@@ -297,6 +314,12 @@ class Config(Strict):
 
     def read_seed(self) -> str:
         return self.seed_path.read_text(encoding="utf-8").strip() if self.seed_path.exists() else ""
+
+    def check_seed(self) -> None:
+        """Before any work for the student: a seed that is still the worked example is refused."""
+        if self.seed_is_example():
+            raise ConfigError("profile/seed.md is still the worked example: the teacher will not judge for an "
+                              "invented student. Replace it with your own seed (`viveka doctor` explains)")
 
     def seed_is_example(self) -> bool:
         """profile.example/seed.md describes an invented student and says so in a comment at the

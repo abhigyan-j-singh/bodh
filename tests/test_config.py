@@ -134,6 +134,32 @@ def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
     real_path = config.Path
     monkeypatch.setattr(config, "Path", lambda p="": real_path(str(link)) if p == "/etc/localtime" else real_path(p))
     assert config._localtime_name() == "Europe/Lisbon"
+    # macOS: /var/db/timezone/tz/<version>/zoneinfo/...; the posix/ and right/ trees; $TZ as a path
+    assert config._after_zoneinfo("/private/var/db/timezone/tz/2024a.1.0/zoneinfo/Asia/Kolkata") == "Asia/Kolkata"
+    assert config._after_zoneinfo("/usr/share/zoneinfo/posix/Europe/Lisbon") == "Europe/Lisbon"
+    assert config._after_zoneinfo("/usr/share/zoneinfo") is None and config._after_zoneinfo("/etc/localtime") is None
+    monkeypatch.setenv("TZ", ":/usr/share/zoneinfo/Europe/Lisbon")
+    assert config.system_timezone() == "Europe/Lisbon"
+
+
+def test_localtime_name_copied_file_falls_back_to_etc_timezone(tmp_path, monkeypatch):
+    """Debian copies the zone file to /etc/localtime and names it in /etc/timezone; a machine
+    with neither (Windows) says nothing and the default is UTC; junk in /etc/timezone is not a crash."""
+    from viveka import config
+
+    files = {"/etc/localtime": tmp_path / "localtime", "/etc/timezone": tmp_path / "timezone"}
+    real_path = config.Path
+    monkeypatch.setattr(config, "Path", lambda p="": real_path(str(files.get(p, p))))
+    files["/etc/localtime"].write_bytes(b"TZif2")
+    assert config._localtime_name() is None
+    files["/etc/timezone"].write_text("America/Sao_Paulo\n", encoding="utf-8")
+    assert config._localtime_name() == "America/Sao_Paulo"
+    files["/etc/timezone"].write_bytes(b"\xff\xfe")
+    assert config._localtime_name() is None
+    monkeypatch.delenv("TZ", raising=False)
+    files["/etc/localtime"].unlink()
+    files["/etc/timezone"].unlink()
+    assert config.system_timezone() == "UTC"
 
 
 def test_the_example_seed_is_recognised_and_refused(tmp_path, cfg, conn):

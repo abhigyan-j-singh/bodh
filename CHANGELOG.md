@@ -13,9 +13,15 @@ Every change a user could notice, newest first. The format follows
   variable (`VIVEKA_HOME`), the database (`data/viveka.db`) and the log folder
   (`~/Library/Logs/viveka`) carry the new name. For one release the old names keep working: the
   `triage` command runs with a note, `TRIAGE_HOME` is honoured with a warning, an existing
-  `data/triage.db` and `~/Library/Logs/triage` are kept as they are, and `./install-launchd.sh`
-  boots out the old `com.antriksh.triage*` jobs when it finds them. All of this goes away in the
-  release after 1.0.0.
+  `data/triage.db` is kept as it is, and `./install-launchd.sh` boots out the old
+  `com.antriksh.triage*` jobs when it finds them. The log moves to `~/Library/Logs/viveka/`; the
+  old folder can be deleted. All of this goes away in the release after 1.0.0. To upgrade an
+  install from before the rename: `triage halt`, update the checkout, `./install.sh &&
+  ./install-launchd.sh`.
+- `config.yaml` is no longer tracked by git: it is yours, like `.env` and `profile/`, and
+  `config.example.yaml` is the template. An install that loses its `config.yaml` while it has a
+  database is refused by `install.sh` until the file is restored, so a fresh copy of the template
+  never silently changes folders, floors or timezone.
 - The two scoring rules that were one person's are configuration. `scoring.home_angle` (a short
   phrase; empty turns it off) and `scoring.home_bonus` (10) replace the fixed India angle; the
   `funding` flag now means a funding round outside the student's own field, as the seed describes
@@ -43,7 +49,8 @@ Every change a user could notice, newest first. The format follows
 - Rescued articles (`wrong`, or marked unread again after a cut) are never cut again by any path;
   an undone cut is exempt from the automatic floor.
 - A log redactor: no secret or auth token reaches the log, a traceback or the dashboard.
-- `viveka doctor` exits 1 when a check fails, and reports a seed that is still the worked example.
+- `viveka doctor` exits 1 when a check fails, and reports a seed that is still the worked example;
+  `viveka run` and `viveka blast` refuse such a seed before touching the network (exit code 2).
 - `contrib/replay_archive.py`: judge a sample of another filter's archive offline before anything
   goes live (the `replay` command it replaces needed one particular archive).
 - `CHANGELOG.md` (this file), `LICENSE` (MIT).
@@ -52,4 +59,6 @@ Every change a user could notice, newest first. The format follows
 
 - `laptop-install.sh`; its steps are the README's install section.
 - The `replay` command (see `contrib/replay_archive.py`).
+- The `teacher.v1` prompt: it carried one person's rules and the current parser could not read
+  its answers; `scoring.prompt_version` is `teacher.v2`.
 - `install.sh` no longer reads a sibling project's `.env`.

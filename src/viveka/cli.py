@@ -193,6 +193,9 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
     except AlreadyRunning:
         typer.echo("another run is in progress; skipping")
         raise typer.Exit(0) from None
+    except ConfigError as exc:   # the seed is still the worked example
+        _fail(str(exc), EXIT_CONFIG)
+        return
     except RunTimeout as exc:
         _fail(str(exc), 2)
         return
@@ -263,6 +266,10 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
             if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
                 h.setLevel(logging.WARNING)
     cfg = ctx.cfg
+    try:
+        cfg.check_seed()
+    except ConfigError as exc:
+        _fail(str(exc), EXIT_CONFIG)
     if all_ages:
         cfg.scoring.max_age_days = None
     judge = model or cfg.models.teacher
