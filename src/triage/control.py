@@ -324,7 +324,7 @@ def status(cfg: Config, conn: sqlite3.Connection) -> dict:
         "last_ok": last_ok,
         "last_error": last_err,
         "batches": snap["batches"],
-        "log": snap.get("log", []),
+        "log": progress.log_tail(ops.log_file(data_dir), 10),  # local only: the control room never leaves the Mac
     }
 
 

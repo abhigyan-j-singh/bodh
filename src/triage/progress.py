@@ -78,11 +78,12 @@ def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
     if running and lock.exists():
         run_started = datetime.fromtimestamp(lock.stat().st_mtime, tz=timezone.utc).isoformat()
     phase = store.kv_get(conn, "phase") if running else None
+    # no log tail here: this dict is written to progress.json and the dashboard, which may be
+    # published; the terminal and the control room fetch the log on their own (log_tail)
     return {
         "rate_per_min": rate, "judged_2min": two, "judged_10min": ten,
         "series": counts, "series_bin_minutes": SERIES_BIN_MINUTES, "series_start": start.isoformat(),
         "running": running, "run_started": run_started, "phase": phase or "",
-        "log": log_tail(ops.log_file(data_dir), 10),
     }
 
 
@@ -424,7 +425,6 @@ def render_html(snap: dict) -> str:
     parts.append("</tbody></table>")
     parts.append("<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
                  f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>")
-    parts.append(f"<pre id='p-log' class='log'>{e(chr(10).join(snap.get('log') or ['(no log yet)']))}</pre>")
     parts.append(LIVE_SCRIPT)
     return "\n".join(parts)
 
@@ -472,7 +472,6 @@ PROGRESS_CSS = """
 .live{font-size:13.5px;color:#444;margin:4px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:5px;background:#bbb;margin-right:6px;vertical-align:middle}
 .dot.on{background:#2a7;animation:pulse 1.2s infinite}@keyframes pulse{0%{opacity:1}50%{opacity:.25}100%{opacity:1}}
 .flash{background:#fff3b0;transition:background 1.5s}.spark{margin:6px 0 10px}.spark svg{display:block;margin-top:2px}
-.log{font-size:12px;max-height:160px;overflow:auto;color:#444}
 """
 
 LIVE_SCRIPT = """<script>
@@ -512,7 +511,6 @@ LIVE_SCRIPT = """<script>
       var state = b.status==='submitted' ? 'in progress, submitted '+ago(b.created_at)+' ago' : b.status; if(b.note) state += ' · '+b.note;
       hb += '<tr><td>'+esc(String(b.id).slice(0,22))+'</td><td>'+esc(b.purpose)+'</td><td class="num">'+n(b.n_articles)+'</td><td>'+esc(state)+'</td></tr>'; });
       bb.innerHTML = hb || '<tr><td colspan="4" class="muted">none yet</td></tr>'; }
-    var lg = document.getElementById('p-log'); if(lg && d.log){ var txt = d.log.join('\\n'); if(lg.textContent !== txt){ lg.textContent = txt; lg.scrollTop = lg.scrollHeight; } }
     lastAt = d.at;
   }
   function tick(){

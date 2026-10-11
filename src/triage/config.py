@@ -199,6 +199,11 @@ class Secrets(BaseModel):
     anthropic_api_key: str = ""
     healthcheck_url: str = ""
 
+    def values(self) -> list[str]:
+        """The non-empty values, for the log redactor; never for printing."""
+        return [v for v in (self.bazqux_email, self.bazqux_password, self.anthropic_api_key, self.healthcheck_url)
+                if v]
+
 
 class ConfigError(Exception):
     """No usable config.yaml: nothing runs, nothing is created."""

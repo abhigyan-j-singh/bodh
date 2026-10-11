@@ -50,8 +50,8 @@ def _config() -> Config:
 
 def _ctx(verbose: bool = False) -> pipeline.Context:
     cfg = _config()
-    setup_logging(cfg.root / cfg.data_dir, verbose)
     secrets = load_secrets(cfg.root)
+    setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
     conn = store.connect(cfg.db_path)
     return pipeline.Context(cfg, secrets, conn)
 
@@ -179,11 +179,14 @@ def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --e
     import time
 
     from . import progress as progressmod
+    from .ops import log_file
 
     cfg = _config()
     conn = store.connect(cfg.db_path)
     while True:
-        text = progressmod.render_text(progressmod.snapshot(conn, cfg))
+        snap = progressmod.snapshot(conn, cfg)
+        snap["log"] = progressmod.log_tail(log_file(cfg.root / cfg.data_dir), 10)
+        text = progressmod.render_text(snap)
         if watch:
             typer.echo("\033[2J\033[H" + text + f"\n\n(redraws every {every}s; Ctrl-C to stop)")
             try:

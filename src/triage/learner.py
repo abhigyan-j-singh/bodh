@@ -77,22 +77,28 @@ def _write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str
     return version
 
 
+GIT_IDENTITY = ["-c", "user.name=triage", "-c", "user.email=triage@localhost"]  # when git has none to use
+
+
 def git_commit(repo_dir: Path, message: str) -> bool:
-    """Commit the profile folder if it is a git repository; never fail the run over it."""
+    """Commit the profile folder as a git repository of its own; never fail the run over it.
+    The folder gets its own repository when it has none, even inside a larger checkout:
+    staging from a subfolder of the parent repository would commit the parent's files."""
     try:
-        if not (repo_dir / ".git").exists() and not _in_git_worktree(repo_dir):
-            subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, capture_output=True)
-        subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True, capture_output=True)
-        result = subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo_dir, capture_output=True, text=True)
-        return result.returncode == 0
-    except Exception as exc:  # noqa: BLE001
+        if not (repo_dir / ".git").exists():
+            subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "add", "-A", "--", "."], cwd=repo_dir, check=True, capture_output=True, text=True)
+        identity = subprocess.run(["git", "config", "user.email"], cwd=repo_dir, capture_output=True, text=True)
+        extra = [] if identity.returncode == 0 and identity.stdout.strip() else GIT_IDENTITY
+        result = subprocess.run(["git", *extra, "commit", "-q", "-m", message], cwd=repo_dir,
+                                capture_output=True, text=True)
+        if result.returncode == 0 or "nothing to commit" in (result.stdout + result.stderr):
+            return True
+        log.warning("learner: git commit in %s failed: %s", repo_dir, (result.stderr or result.stdout).strip()[:300])
+        return False
+    except (OSError, subprocess.SubprocessError) as exc:
         log.warning("learner: git commit skipped (%s)", exc)
         return False
-
-
-def _in_git_worktree(path: Path) -> bool:
-    result = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=path, capture_output=True, text=True)
-    return result.returncode == 0 and result.stdout.strip() == "true"
 
 
 def revert(cfg: Config, conn: sqlite3.Connection) -> int | None:

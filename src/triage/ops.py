@@ -5,11 +5,13 @@ from __future__ import annotations
 import fcntl
 import logging
 import os
+import re
 import signal
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import httpx
@@ -44,19 +46,64 @@ def log_file(data_dir: Path) -> Path:
     return log_dir / "triage.log"
 
 
-def setup_logging(data_dir: Path, verbose: bool = False) -> None:
+class Redactor(logging.Filter):
+    """Every secret value, and any auth token, is replaced before a line is written anywhere:
+    the log file's tail reaches the control room, and a traceback or an SDK error can carry
+    what the code itself never prints."""
+
+    _TOKENS = re.compile(r"(GoogleLogin auth=|Bearer |sk-ant-)\S+")
+
+    def __init__(self, secrets: Iterable[str] = ()) -> None:
+        super().__init__()
+        self.secrets = sorted({s for s in secrets if s and len(s) >= 4}, key=len, reverse=True)
+
+    def redact(self, text: str) -> str:
+        for secret in self.secrets:
+            text = text.replace(secret, "[redacted]")
+        return self._TOKENS.sub(r"\1[redacted]", text)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 — a bad format string is logging's problem, not ours
+            return True
+        clean = self.redact(message)
+        if clean != message or record.args:
+            record.msg = clean
+            record.args = ()
+        if record.exc_text:
+            record.exc_text = self.redact(record.exc_text)
+        return True
+
+
+def setup_logging(data_dir: Path, verbose: bool = False, secrets: Iterable[str] = ()) -> None:
+    """The run log: the file (rotated) plus stderr when someone is watching a terminal.
+    ``secrets`` are the values that must never appear in a line."""
     level = logging.DEBUG if verbose else logging.INFO
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    redactor = Redactor(secrets)
+    handlers: list[logging.Handler] = []
+    if verbose or _stderr_is_a_terminal():
+        handlers.append(logging.StreamHandler(sys.stderr))
     try:
         path = log_file(data_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(path, encoding="utf-8"))
+        handlers.append(RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8"))
     except OSError:
         pass
+    for handler in handlers:
+        handler.addFilter(redactor)
     logging.basicConfig(level=level, format=fmt, handlers=handlers, force=True)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("anthropic").setLevel(logging.WARNING)
+
+
+def _stderr_is_a_terminal() -> bool:
+    # under launchd stderr is a file that already receives the log through the file handler
+    try:
+        return sys.stderr.isatty()
+    except (AttributeError, ValueError):
+        return False
 
 
 def run_in_progress(data_dir: Path) -> bool:
