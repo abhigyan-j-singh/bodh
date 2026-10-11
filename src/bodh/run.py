@@ -446,7 +446,7 @@ def _finish(st: _Run) -> None:
 def render_dashboard(cfg: Config, conn: sqlite3.Connection, res: RunResult | None = None) -> None:
     try:
         dashboard.render(cfg, conn)
-    except Exception:
+    except Exception:  # the dashboard is a view: a run that judged and cut has done its work without it
         log.exception("dashboard: render failed")
         if res is not None:
             res.notes.append("dashboard render failed")
@@ -577,7 +577,7 @@ def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict) -> Non
     try:
         cutmod.untag_stale(ctx.client, judge.stale_tags)
         cutmod.tag_bands(ctx.client, conn)
-    except Exception:
+    except Exception:  # the judgments are stored; the next run tags what this one could not
         log.exception("catch-up: tagging failed; the next run finishes it")
     total["elapsed"] = time.monotonic() - total["started"]
     total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))

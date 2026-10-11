@@ -6,6 +6,7 @@ page polls `progress.json` every few seconds while a run writes it."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -16,6 +17,8 @@ from zoneinfo import ZoneInfo
 from . import html as ui
 from . import locks, store
 from .config import Config
+
+log = logging.getLogger(__name__)
 
 BAR = "█"
 PAD = "░"
@@ -321,7 +324,8 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         os.replace(tmp, path)
         _last_live_write[0] = now
         return path
-    except Exception:
+    except Exception:  # the live file is a convenience for the page: a run must never fail over it
+        log.warning("progress: could not write %s", LIVE_FILE, exc_info=True)
         return None
 
 

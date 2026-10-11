@@ -192,7 +192,7 @@ class Console:
             self.cfg = load_config(self.cfg.root)
             self._config_mtime = mtime
             self.forget()
-        except Exception as exc:
+        except Exception as exc:  # a half-saved or broken config.yaml: the page keeps the last good one
             log.warning("console: config.yaml not reloaded: %s", exc)
 
     def run_action(self, action: str, params: dict) -> dict:

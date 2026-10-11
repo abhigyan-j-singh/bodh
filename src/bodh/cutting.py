@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from . import store
 from .config import Config
+from .errors import BodhError
 from .judge import Judge, has_more_to_read
 from .readers.bazqux import BazQuxClient
 
@@ -29,8 +30,8 @@ SAFETY_KEY = (
 )  # kv: the run whose autocut tripped the safety limit; set until `bodh safety reset`
 
 
-class SafetyTripped(Exception):
-    pass
+class SafetyTripped(BodhError):
+    """Autocut would cut nearly everything newly judged: nothing is written until a person resets it."""
 
 
 @dataclass
@@ -314,7 +315,7 @@ def finish_pending_cuts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Con
         store.restore_unread(conn, changed, rescued=False)
         try:
             client.untag(changed, cfg.tags.cut)
-        except Exception:
+        except Exception:  # cosmetic: the articles are unread again; a stale cut tag costs nothing
             log.warning("cut: could not remove the cut tag from %d restored articles", len(changed))
     untagged, unmarked = store.cut_pending(conn)
     if untagged:
@@ -333,7 +334,7 @@ def untag_stale(client: BazQuxClient, stale: dict[str, list[str]]) -> int:
         try:
             client.untag(ids, band)
             done += len(ids)
-        except Exception:
+        except Exception:  # cosmetic: a stale band tag in BazQux; the next re-score tries again
             log.warning("cut: could not remove stale tag %s from %d articles", band, len(ids))
     stale.clear()
     return done

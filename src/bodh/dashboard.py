@@ -5,6 +5,7 @@ It reads only the SQLite file; if it breaks, nothing else does."""
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from zoneinfo import ZoneInfo
 from . import html as ui
 from . import store
 from .config import Config
+
+log = logging.getLogger(__name__)
 
 BANDS = [(90, "90 to 100"), (70, "70 to 89"), (50, "50 to 69"), (30, "30 to 49"), (0, "0 to 29")]
 
@@ -312,7 +315,8 @@ def _section_progress(cfg: Config, conn: sqlite3.Connection) -> str:
 
     try:
         return progress.render_html(progress.snapshot(conn, cfg))
-    except Exception:
+    except Exception:  # the progress section must never break the page the rest of the run depends on
+        log.exception("dashboard: the progress section failed to render")
         return "<p class='bad'>the progress section failed to render</p>"
 
 

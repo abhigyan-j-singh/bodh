@@ -13,6 +13,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field_validator, model_validator
 
+from .errors import ConfigError
+
 log = logging.getLogger(__name__)
 
 # the sentence in profile.example/about.md's opening comment; `bodh doctor` and the judge
@@ -492,8 +494,8 @@ class Secrets(BaseModel):
         ]
 
 
-class ConfigError(Exception):
-    """No usable config.yaml: nothing runs, nothing is created."""
+# ConfigError lives in errors.py with the other exit codes; it is imported here for the callers that
+# always found it in this module
 
 
 DEFAULT_HOME = "~/bodh"  # tried last, when nothing above the working directory holds a config.yaml

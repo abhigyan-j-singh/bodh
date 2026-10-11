@@ -345,7 +345,7 @@ class Judge:
             store.bump_judge_failures(self.conn, [r["id"] for r in batch])
             log.warning("judge: batch of %d: %s; they stay pending", len(batch), exc)
             return
-        except Exception:
+        except Exception:  # one call failed (network, a 5xx after the retries): its articles stay pending
             stats["failed_batches"] += 1
             log.exception("judge: batch of %d failed; they stay pending", len(batch))
             return
@@ -623,7 +623,7 @@ class Judge:
         if new_bucket != old_bucket and client is not None:
             try:
                 client.untag([aid], old_bucket)
-            except Exception:
+            except Exception:  # cosmetic: a stale band tag; the next tagging pass sets the right one
                 log.warning("cut: could not remove old band tag %s from %s", old_bucket, aid)
         floor = self.cfg.cutoff_for(folder)
         return floor is None or new_score >= floor
@@ -750,7 +750,7 @@ class Judge:
             )
         except (BudgetExceeded, ModelConfigError):
             raise
-        except Exception:
+        except Exception:  # the review could not be had: recorded as failed, the article stays unread
             log.exception("judge: review failed for %s", row["id"])
             return None
         if not verdicts:

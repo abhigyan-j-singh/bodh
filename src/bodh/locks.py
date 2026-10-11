@@ -11,6 +11,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
+from .errors import BodhError, LockedError
+
 try:
     import fcntl
 except ImportError:  # Windows: no flock; the lock below falls back to an exclusive file
@@ -21,12 +23,11 @@ log = logging.getLogger(__name__)
 LOCK_RETRY_SECONDS = 0.1  # a status probe may hold the lock for an instant; a run waits this long for it
 
 
-class RunTimeout(Exception):
-    pass
+class RunTimeout(BodhError):
+    """The run passed its hard limit; the next one picks up what is left."""
 
 
-class AlreadyRunning(Exception):
-    pass
+AlreadyRunning = LockedError  # the name before October 2026
 
 
 def pid_alive(pid: int) -> bool:
@@ -117,7 +118,7 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
                 break
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise AlreadyRunning("another bodh run holds the lock") from None
+                    raise AlreadyRunning("another run is in progress; `bodh stop` it or wait") from None
                 time.sleep(0.01)
         try:
             with _pid_file(pid_path, kind):
@@ -156,7 +157,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
                     path.unlink()
                 continue
             if time.monotonic() >= deadline:
-                raise AlreadyRunning("another bodh run holds the lock") from None
+                raise AlreadyRunning("another run is in progress; `bodh stop` it or wait") from None
             time.sleep(0.01)
     try:
         os.write(fd, f"{os.getpid()}\n".encode())

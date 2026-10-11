@@ -32,7 +32,7 @@ class Heartbeat:
             return
         try:
             httpx.post(f"{self.url}{suffix}", content=body[:10000].encode("utf-8"), timeout=10.0)
-        except Exception as exc:
+        except Exception as exc:  # a missing heartbeat must not fail a run; silence is what the alert is for
             log.warning("heartbeat: could not reach %s (%s)", _host_only(self.url) + suffix, exc)
 
     def ok(self, summary: str) -> None:

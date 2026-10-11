@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from ..errors import ReaderError
 from ..ids import long_to_short, normalize_item_id
 
 log = logging.getLogger(__name__)
@@ -45,8 +46,8 @@ def label(name: str) -> str:
     return f"user/-/label/{name}"
 
 
-class BazQuxError(Exception):
-    pass
+class BazQuxError(ReaderError):
+    """BazQux could not be reached, refused, or answered badly."""
 
 
 class BazQuxAuthError(BazQuxError):
@@ -242,7 +243,7 @@ class BazQuxClient:
                             direct_stream_ids=[str(s) for s in ref.get("directStreamIds") or []],
                         )
                     )
-                except Exception as exc:
+                except Exception as exc:  # one malformed reference must not lose the page
                     log.error("bazqux: bad item ref %r (%s)", ref, exc)
             continuation = data.get("continuation")
             if not continuation or not refs or (limit and len(out) >= limit):
@@ -296,7 +297,7 @@ class BazQuxClient:
             for raw in data.get("items", []) or []:
                 try:
                     item = _parse_item(raw)
-                except Exception as exc:
+                except Exception as exc:  # one malformed item must not lose the batch
                     log.error("bazqux: item parse failure (%s); raw: %.300s", exc, str(raw))
                     continue
                 items.append(item)

@@ -12,13 +12,13 @@ from typing import Any
 
 from . import store
 from .config import Config, Secrets
+from .errors import ModelError
 from .judgment import PLAIN_JSON_INSTRUCTION, JudgmentBatchOut, Verdict, parse_judgments
 
 log = logging.getLogger(__name__)
 
 
-class JudgeError(Exception):
-    pass
+JudgeError = ModelError  # the name before October 2026
 
 
 class BudgetExceeded(JudgeError):
@@ -80,8 +80,8 @@ def _output_format() -> dict:
         from anthropic.lib._parse._transform import transform_schema
 
         schema = transform_schema(schema)
-    except Exception:
-        pass
+    except Exception:  # an SDK without that private helper: the plain schema is sent, and still accepted
+        log.debug("llm: anthropic.lib._parse._transform is not available; sending the plain schema")
     return {"type": "json_schema", "schema": schema}
 
 

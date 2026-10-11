@@ -40,7 +40,9 @@ class Redactor(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
-        except Exception:
+        except (
+            Exception
+        ):  # a record whose arguments do not format: logging prints its own error; nothing of ours
             return True
         clean = self.redact(message)
         if clean != message or record.args:

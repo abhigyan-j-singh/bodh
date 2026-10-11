@@ -199,3 +199,30 @@ def test_renamed_commands_print_the_new_name_and_work(tmp_path, monkeypatch):
         assert f"  {hidden} " not in help_text and f"│ {hidden} " not in help_text, hidden
     for shown in ("catch-up", "clear-old", "console", "mark", "steer", "autocut"):
         assert shown in help_text, shown
+
+
+def test_errors_raised_on_purpose_become_one_line_and_an_exit_code(tmp_path, monkeypatch):
+    """ReaderError 3, ModelError 4, LockedError 5, ConfigError 2; a bug keeps exit 1 and its line."""
+    from bodh import run as runmod
+    from bodh.errors import ConfigError, LockedError, ModelError, ReaderError
+
+    _project(tmp_path, monkeypatch)
+    for exc, code in (
+        (ReaderError("BazQux is down"), 3),
+        (ModelError("key rejected"), 4),
+        (ConfigError("no about"), 2),
+    ):
+
+        def boom(*a, _exc=exc, **k):
+            raise _exc
+
+        monkeypatch.setattr(runmod, "run", boom)
+        result = runner.invoke(app, ["run", "--shadow"])
+        assert result.exit_code == code and f"error: {exc}" in result.output, (exc, result.output)
+
+    def locked(*a, **k):
+        raise LockedError
+
+    monkeypatch.setattr(runmod, "prune", locked)
+    result = runner.invoke(app, ["prune", "--dry-run"])
+    assert result.exit_code == 5 and "another run is in progress" in result.output, result.output
