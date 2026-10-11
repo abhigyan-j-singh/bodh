@@ -14,6 +14,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | --- | --- | --- |
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
+| `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
 | `src/triage/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/triage/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
 | `tests/` | 57 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
