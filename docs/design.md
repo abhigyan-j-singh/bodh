@@ -105,8 +105,8 @@ targets on the phone; the page reads in order without CSS. The checklist for the
 
 | Check | State |
 | --- | --- |
-| Contrast: text AA, lines and icons 3:1 | the tokens pass (report below) |
-| Keyboard: reading order equals focus order, Enter and Space operate everything | checked per panel by the keyboard test |
+| Contrast: text AA, lines and icons 3:1 | the tokens pass (report below); axe-core 4.10 finds no violation at WCAG 2.1 AA (and its best-practice rules) in any state, light or dark, 390 or 1280 px, the menus open; a stat tile's delta colours a mark beside its text, not the text, since 13 px in a status colour on the tile's surface is under 4.5:1 |
+| Keyboard: reading order equals focus order, Enter and Space operate everything | `tests/visual/test_keyboard_order_follows_the_reading_order`: the Tab order descends the page, a list row counted as one unit (its verdict menu sits top right and follows its content); every lever, filter, header, chart mark and toggle is reached |
 | Touch targets 44 px on the phone | rows, buttons and tabs at 44 px under 768 px |
 | Screen reader: VoiceOver on macOS, NVDA on Windows | to be checked by a person before 1.0 (owner's live checks) |
 
@@ -114,7 +114,12 @@ targets on the phone; the page reads in order without CSS. The checklist for the
 
 `scripts/screenshots.py` renders the page and the style guide from the seeded fixture with
 Playwright, light and dark, 390 and 1280 px, into `docs/images/`; the README's pictures come
-from there and are never stale.
+from there and are never stale. The visual tests (`tests/visual/`, `BODH_BROWSER=1`) keep the
+first screen of every state at 390, 768 and 1280 px, light and dark, Reduce Motion on, under
+`tests/visual/baseline/` and fail at 0.1 % of pixels changed; the whole page and the style
+guide once. axe-core is not vendored yet (550 KB of JavaScript, or a package): the audit above
+was run by hand with Playwright and is to be wired into the browser tests once that choice is
+made.
 
 ## The palette report
 

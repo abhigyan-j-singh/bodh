@@ -100,8 +100,10 @@
       let d = el && $('.delta', el);
       if (!el) return;
       setText($('.value', el), tile.text);
-      if (!d && tile.delta_text) { d = document.createElement('span'); $('.value', el).after(d); }
-      if (d) { d.className = ('delta ' + (tile.direction || '')).trim(); setText(d, tile.delta_text); }
+      if (!d && tile.delta_text) { d = document.createElement('span'); d.append(document.createElement('i'), ''); $('.value', el).after(d); }
+      if (!d) return;
+      d.className = ('delta ' + (tile.direction || '')).trim(); d.firstElementChild.className = 'mark'; // the mark carries the colour
+      if (d.lastChild.data !== tile.delta_text) { d.lastChild.data = tile.delta_text; wash(d); }
     });
   }
   function applyChild(c) {

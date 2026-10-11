@@ -152,7 +152,9 @@ def grades_grid(rows: list[tuple[str, list[int]]], grades: tuple[str, ...], capt
 
 
 def tile(label: str, value: str, delta: str = "", delta_class: str = "", spark: str = "") -> str:
-    d = f'<span class="delta {delta_class}">{esc(delta)}</span>' if delta else ""
+    """A stat tile. The delta's direction colours a mark beside the text, never the text (13 px
+    in a status colour does not reach AA on the tile's surface); the sign is in the words."""
+    d = f'<span class="delta {delta_class}"><i class="mark"></i>{esc(delta)}</span>' if delta else ""
     return (
         f'<div class="tile"><span class="label">{esc(label)}</span>'
         f'<span class="value num">{esc(value)}</span>{d}{spark}</div>'

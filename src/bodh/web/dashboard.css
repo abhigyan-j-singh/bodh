@@ -153,9 +153,10 @@
   .tile { padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-tile); background: var(--surface-2); display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
   .tile .label { color: var(--text-secondary); font-size: var(--size-13); }
   .tile .value { font-size: var(--size-22); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
-  .tile .delta { font-size: var(--size-13); color: var(--text-secondary); }
-  .tile .delta.up-good, .tile .delta.down-good { color: var(--good); }
-  .tile .delta.up-bad, .tile .delta.down-bad { color: var(--critical); }
+  .tile .delta { font-size: var(--size-13); color: var(--text-secondary); display: inline-flex; align-items: center; gap: var(--space-1); }
+  .tile .delta .mark { width: 8px; height: 8px; border-radius: 4px; background: var(--line-strong); flex: none; }
+  .tile .delta.up-good .mark, .tile .delta.down-good .mark { background: var(--good); }
+  .tile .delta.up-bad .mark, .tile .delta.down-bad .mark { background: var(--critical); }
   .tile .spark { margin-top: auto; display: block; width: 72px; height: 20px; }
   .spark .path { fill: none; stroke: var(--series-muted); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .spark .today { fill: var(--accent); stroke: var(--surface-2); stroke-width: 2; }
@@ -209,6 +210,7 @@
   .concept h3 { margin-bottom: var(--space-1); }
   .concept ul { margin: 0; padding-left: 1.1em; }
   .concept li { margin: 2px 0; }
+  .concept li a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
   .cloud { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); align-items: baseline; max-width: var(--column-wide); }
   .cloud .frontier { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
   .cloud .n { color: var(--text-muted); font-size: var(--size-13); margin-left: 2px; }
