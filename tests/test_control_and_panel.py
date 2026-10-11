@@ -98,16 +98,16 @@ def test_running_process_and_stop(conn, cfg):
         "    print('locked', flush=True)\n"
         "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        pass\n"
     )
-    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
-    assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
-    time.sleep(0.2)
-    running = ops.running_process(data_dir)
-    assert running and running["pid"] == proc.pid and running["kind"] == "blast"
-    st = control.status(cfg, conn)
-    assert st["running"]["kind"] == "blast"
-    msg = ops.stop_process(data_dir, wait=10)
-    assert msg.startswith("stopped blast")
-    proc.wait(timeout=10)
+    with subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True) as proc:
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
+        time.sleep(0.2)
+        running = ops.running_process(data_dir)
+        assert running and running["pid"] == proc.pid and running["kind"] == "blast"
+        st = control.status(cfg, conn)
+        assert st["running"]["kind"] == "blast"
+        msg = ops.stop_process(data_dir, wait=10)
+        assert msg.startswith("stopped blast")
+        proc.wait(timeout=10)
     assert ops.running_process(data_dir) is None and not (data_dir / "triage.pid").exists()
 
 
@@ -368,3 +368,21 @@ def test_panel_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
     assert _get(base + "/api/status")["now"] == first
     _post(base + "/api/action", {"action": "undo"})
     assert _get(base + "/api/status")["now"] != first
+
+
+def test_installer_rejects_unknown_mode_and_plists_parse():
+    import plistlib
+
+    root = Path(__file__).resolve().parents[1]
+    res = subprocess.run(["bash", str(root / "install-launchd.sh"), "--bogus"], capture_output=True, text=True,
+                         cwd=str(root))
+    assert res.returncode == 2 and "usage" in res.stdout
+    for label in control.JOBS.values():
+        with (root / "launchd" / f"{label}.plist").open("rb") as fh:
+            plist = plistlib.load(fh)
+        assert plist["Label"] == label
+        if label.endswith(".panel"):
+            assert plist["KeepAlive"] is True and plist["ThrottleInterval"] == 60
+    ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    for personal in (".env", "data/", "profile/", "dashboard/", "/prompts/", ".coverage", ".mypy_cache/"):
+        assert personal in ignored, personal

@@ -71,10 +71,13 @@ class Child:
 
     def _pump(self, proc: subprocess.Popen) -> None:
         assert proc.stdout is not None
-        for raw in proc.stdout:
-            for piece in raw.replace("\r", "\n").split("\n"):
-                if piece.strip():
-                    self.output.append(piece.rstrip()[:300])
+        try:
+            for raw in proc.stdout:
+                for piece in raw.replace("\r", "\n").split("\n"):
+                    if piece.strip():
+                        self.output.append(piece.rstrip()[:300])
+        finally:
+            proc.stdout.close()  # one descriptor per command would otherwise stay open for the panel's life
         proc.wait()
         with self.lock:
             self.code, self.ended = proc.returncode, time.time()

@@ -61,6 +61,27 @@ def cfg(tmp_path: Path) -> Config:
     return c
 
 
+@pytest.fixture(autouse=True)
+def _close_connections(monkeypatch):
+    """Every connection the code under test opens is closed at teardown: the suite runs with
+    ResourceWarning as an error, so an unclosed database fails the test that leaked it."""
+    opened: list[sqlite3.Connection] = []
+    real = store.connect
+
+    def tracking(path):
+        c = real(path)
+        opened.append(c)
+        return c
+
+    monkeypatch.setattr(store, "connect", tracking)
+    yield
+    for c in opened:
+        try:
+            c.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @pytest.fixture
 def conn(cfg: Config) -> sqlite3.Connection:
     return store.connect(cfg.db_path)

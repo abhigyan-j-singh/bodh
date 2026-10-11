@@ -28,6 +28,7 @@ packages = ["src/triage"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = ["error::ResourceWarning"]
 
 [tool.ruff]
 line-length = 110

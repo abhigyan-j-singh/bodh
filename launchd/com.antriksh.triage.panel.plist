@@ -34,6 +34,10 @@ __USERNAME__
     <key>KeepAlive</key>
     <true/>
 
+    <!-- a port already taken (another control room) would otherwise restart it every 10 s -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
     <key>StandardOutPath</key>
     <string>__HOME__/Library/Logs/triage/panel.out.log</string>
     <key>StandardErrorPath</key>

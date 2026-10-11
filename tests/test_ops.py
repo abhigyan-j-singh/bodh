@@ -42,7 +42,14 @@ def test_live_file_never_carries_env_values(conn, cfg, tmp_path, monkeypatch):
             assert secret not in live.read_text(encoding="utf-8") and secret not in page
         assert "p-log" not in page
     finally:
-        logging.getLogger().handlers.clear()
+        _reset_logging()
+
+
+def _reset_logging() -> None:
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        handler.close()
+        root.removeHandler(handler)
 
 
 def test_setup_logging_rotates_and_skips_stderr_when_not_a_terminal(cfg, tmp_path, monkeypatch):
@@ -56,10 +63,13 @@ def test_setup_logging_rotates_and_skips_stderr_when_not_a_terminal(cfg, tmp_pat
         handlers = logging.getLogger().handlers
         assert len(handlers) == 1 and isinstance(handlers[0], RotatingFileHandler)
         assert handlers[0].maxBytes == 5_000_000 and handlers[0].backupCount == 3
+        old = list(logging.getLogger().handlers)
         ops.setup_logging(cfg.root / cfg.data_dir, verbose=True)
+        for handler in old:
+            handler.close()
         assert len(logging.getLogger().handlers) == 2  # -v always shows the log in the terminal
     finally:
-        logging.getLogger().handlers.clear()
+        _reset_logging()
 
 
 def test_run_lock_is_not_refused_by_status_probes(cfg):
