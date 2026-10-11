@@ -8,7 +8,7 @@ import os
 import signal
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 try:
@@ -106,9 +106,8 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     pid_path = data_dir / "bodh.pid"
     if fcntl is None:
-        with _exclusive_file_lock(path):
-            with _pid_file(pid_path, kind):
-                yield
+        with _exclusive_file_lock(path), _pid_file(pid_path, kind):
+            yield
         return
     with open(path, "a") as fh:  # never truncated: a refused attempt leaves the file as it was
         deadline = time.monotonic() + LOCK_RETRY_SECONDS
@@ -129,17 +128,13 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
 
 @contextmanager
 def _pid_file(pid_path: Path, kind: str) -> Iterator[None]:
-    try:
+    with suppress(OSError):
         pid_path.write_text(f"{os.getpid()} {kind} {time.time():.0f}\n", encoding="utf-8")
-    except OSError:
-        pass
     try:
         yield
     finally:
-        try:
+        with suppress(OSError):
             pid_path.unlink()
-        except OSError:
-            pass
 
 
 @contextmanager
@@ -157,10 +152,8 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
             except (OSError, ValueError, IndexError):
                 holder = 0
             if holder and not pid_alive(holder):
-                try:
+                with suppress(OSError):
                     path.unlink()
-                except OSError:
-                    pass
                 continue
             if time.monotonic() >= deadline:
                 raise AlreadyRunning("another bodh run holds the lock") from None
@@ -172,10 +165,8 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
     try:
         yield
     finally:
-        try:
+        with suppress(OSError):
             path.unlink()
-        except OSError:
-            pass
 
 
 def running_process(data_dir: Path) -> dict | None:
@@ -203,10 +194,8 @@ def stop_process(data_dir: Path, wait: float = 20.0) -> str:
         if running_process(data_dir) is None:
             return f"stopped {proc['kind']} (pid {pid})"
         time.sleep(0.5)
-    try:
+    with suppress(OSError):
         os.kill(pid, signal.SIGTERM)
-    except OSError:
-        pass
     return f"sent SIGTERM to {proc['kind']} (pid {pid}) after {wait:.0f}s without a clean stop"
 
 
@@ -219,7 +208,7 @@ def time_limit(seconds: int) -> Iterator[None]:
         yield
         return
 
-    def _alarm(signum, frame):  # noqa: ANN001
+    def _alarm(signum, frame):
         raise RunTimeout(f"run exceeded {seconds}s")
 
     previous = signal.signal(signal.SIGALRM, _alarm)
@@ -243,7 +232,7 @@ def graceful_sigterm() -> Iterator[None]:
         yield
         return
 
-    def _term(signum, frame):  # noqa: ANN001
+    def _term(signum, frame):
         raise KeyboardInterrupt
 
     previous = signal.signal(signal.SIGTERM, _term)

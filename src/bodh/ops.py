@@ -4,9 +4,9 @@ the release after 1.0.0."""
 
 import warnings
 
-from .heartbeat import *  # noqa: F401,F403
-from .locks import *  # noqa: F401,F403
-from .logs import *  # noqa: F401,F403
+from .heartbeat import *  # noqa: F403
+from .locks import *  # noqa: F403
+from .logs import *  # noqa: F403
 
 warnings.warn(
     "bodh.ops is bodh.locks, bodh.logs and bodh.heartbeat since October 2026; the old name goes away "

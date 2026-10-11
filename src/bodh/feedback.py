@@ -226,7 +226,7 @@ def rescue_one(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, arti
         client.mark_unread([article_id])
         try:
             client.untag([article_id], cfg.tags.cut)
-        except Exception:  # noqa: BLE001 — the tag is cosmetic; the read state is what matters
+        except Exception:
             log.warning("feedback: could not remove the cut tag from %s", article_id)
         store.restore_unread(conn, [article_id], rescued=True)
         store.add_feedback(conn, article_id, "rescue")

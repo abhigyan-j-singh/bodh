@@ -322,7 +322,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
 
     try:
         parts.append(progress.render_html(progress.snapshot(conn, cfg)))
-    except Exception:  # noqa: BLE001 — the progress section must never break the page
+    except Exception:
         parts.append("<p class='bad'>the progress section failed to render</p>")
 
     parts.append("<h2>Flow, last 14 days</h2>")

@@ -158,7 +158,7 @@ def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
         time.sleep(0.1)
     assert st["child"]["code"] == 0 and any("judged 3" in line for line in st["child"]["output"])
     # stop interrupts a background command
-    panel.child.start(panel.command + ["sleepy"], cfg.root, panel.env)
+    panel.child.start([*panel.command, "sleepy"], cfg.root, panel.env)
     time.sleep(0.3)
     code, res = _post(base + "/api/action", {"action": "stop"})
     assert res["ok"] and res["message"] == "stopped"
@@ -220,7 +220,7 @@ def test_installer_covers_every_job():
     for label in jobs.JOBS.values():
         assert label in labels, f"{label} is not installed by install-launchd.sh"
         assert (root / "launchd" / f"{label}.plist").exists()
-    assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")]).returncode == 0
+    assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")], check=False).returncode == 0
 
 
 def test_set_autocut_every_yaml_spelling(cfg):
@@ -431,7 +431,11 @@ def test_installer_rejects_unknown_mode_and_plists_parse():
 
     root = Path(__file__).resolve().parents[1]
     res = subprocess.run(
-        ["bash", str(root / "install-launchd.sh"), "--bogus"], capture_output=True, text=True, cwd=str(root)
+        ["bash", str(root / "install-launchd.sh"), "--bogus"],
+        capture_output=True,
+        text=True,
+        cwd=str(root),
+        check=False,
     )
     assert res.returncode == 2 and "usage" in res.stdout
     for label in jobs.JOBS.values():

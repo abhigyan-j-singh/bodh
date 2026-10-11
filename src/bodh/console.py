@@ -6,6 +6,7 @@ interrupts whatever run holds the lock. No framework, one file."""
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import logging
@@ -190,7 +191,7 @@ class Console:
             self.cfg = load_config(self.cfg.root)
             self._config_mtime = mtime
             self.forget()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("console: config.yaml not reloaded: %s", exc)
 
     def run_action(self, action: str, params: dict) -> dict:
@@ -232,7 +233,13 @@ class Console:
             return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
         try:
             res = subprocess.run(
-                cmd, cwd=str(self.cfg.root), env=self.env, capture_output=True, text=True, timeout=600
+                cmd,
+                cwd=str(self.cfg.root),
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             return {"ok": False, "message": f"bodh {' '.join(args)} took longer than 10 minutes"}
@@ -249,7 +256,7 @@ class Console:
         console = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):  # noqa: ANN001 — quiet
+            def log_message(self, fmt, *args):
                 log.debug("console: " + fmt, *args)
 
             def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8") -> None:
@@ -260,7 +267,7 @@ class Console:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:
                 if not console.host_allowed(self.headers.get("Host")):
                     self._send(403, b'{"error":"forbidden: unexpected Host"}')
                     return
@@ -273,7 +280,7 @@ class Console:
                 elif url.path == "/api/status":
                     try:
                         body = json.dumps(console.status(), default=str).encode("utf-8")
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         log.exception("console: status failed")
                         body = json.dumps({"error": str(exc)}).encode("utf-8")
                     self._send(200, body)
@@ -289,7 +296,7 @@ class Console:
             def _static(self, rel: str) -> None:
                 base = (console.cfg.root / console.cfg.dashboard_dir).resolve()
                 path = (base / rel).resolve()
-                if base not in path.parents and path != base or not path.is_file():
+                if (base not in path.parents and path != base) or not path.is_file():
                     self._send(404, b'{"error":"not found"}')
                     return
                 ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
@@ -300,7 +307,7 @@ class Console:
                     + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("json") else ""),
                 )
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 if not console.host_allowed(self.headers.get("Host")):
                     self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
                     return
@@ -321,7 +328,7 @@ class Console:
                     return
                 try:
                     result = console.run_action(str(payload.get("action", "")), payload)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     log.exception("console: action failed")
                     result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
                 console.forget()
@@ -336,7 +343,7 @@ class Console:
         server.daemon_threads = True
         self.url = f"http://{self.host}:{self.port}"
         info = data_dir / "console.json"
-        try:
+        with contextlib.suppress(OSError):
             info.write_text(
                 json.dumps(
                     {
@@ -349,8 +356,6 @@ class Console:
                 ),
                 encoding="utf-8",
             )
-        except OSError:
-            pass
         console_log(data_dir, f"serving on {self.url} (pid {os.getpid()})")
         log.info("console: serving on %s", self.url)
         try:
@@ -358,10 +363,8 @@ class Console:
         finally:
             server.server_close()
             console_log(data_dir, "stopped")
-            try:
+            with contextlib.suppress(OSError):
                 info.unlink()
-            except OSError:
-                pass
 
 
 def console_log(data_dir: Path, message: str) -> None:

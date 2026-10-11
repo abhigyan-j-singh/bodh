@@ -362,7 +362,7 @@ def run(
 def render_dashboard(cfg: Config, conn: sqlite3.Connection, res: RunResult | None = None) -> None:
     try:
         dashboard.render(cfg, conn)
-    except Exception:  # noqa: BLE001 — the dashboard must never fail a run
+    except Exception:
         log.exception("dashboard: render failed")
         if res is not None:
             res.notes.append("dashboard render failed")
@@ -469,7 +469,7 @@ def catch_up(
         try:
             cutmod.untag_stale(ctx.client, judge.stale_tags)
             cutmod.tag_bands(ctx.client, conn)
-        except Exception:  # noqa: BLE001 — tags can be finished by the next run
+        except Exception:
             log.exception("catch-up: tagging failed; the next run finishes it")
         total["elapsed"] = time.monotonic() - total["started"]
         total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))

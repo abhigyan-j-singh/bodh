@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -87,10 +88,8 @@ def _close_connections(monkeypatch):
     monkeypatch.setattr(store, "connect", tracking)
     yield
     for c in opened:
-        try:
+        with contextlib.suppress(Exception):
             c.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 @pytest.fixture

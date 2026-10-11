@@ -5,6 +5,7 @@ the schedule, autocut on or off, prune, undo. Used by `bodh status` and by the c
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import logging
@@ -85,7 +86,11 @@ def job_state(label: str) -> dict:
         return out
     try:
         res = subprocess.run(
-            ["launchctl", "print", f"{_domain(mode)}/{label}"], capture_output=True, text=True, timeout=10
+            ["launchctl", "print", f"{_domain(mode)}/{label}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         out["state"] = f"unknown ({exc})"
@@ -142,7 +147,11 @@ def _schedule_one(action: str, which: str) -> str:
     dom = _domain(mode)
     if action == "pause":
         res = subprocess.run(
-            ["launchctl", "bootout", f"{dom}/{label}"], capture_output=True, text=True, timeout=20
+            ["launchctl", "bootout", f"{dom}/{label}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
         )
         return (
             f"paused {label}"
@@ -151,7 +160,11 @@ def _schedule_one(action: str, which: str) -> str:
         )
     if action == "resume":
         res = subprocess.run(
-            ["launchctl", "bootstrap", dom, str(path)], capture_output=True, text=True, timeout=20
+            ["launchctl", "bootstrap", dom, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
         )
         return (
             f"resumed {label}"
@@ -160,7 +173,11 @@ def _schedule_one(action: str, which: str) -> str:
         )
     if action == "kick":
         res = subprocess.run(
-            ["launchctl", "kickstart", "-k", f"{dom}/{label}"], capture_output=True, text=True, timeout=20
+            ["launchctl", "kickstart", "-k", f"{dom}/{label}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
         )
         return (
             f"started {label} now"
@@ -178,10 +195,8 @@ def console_state(cfg: Config) -> dict:
     one-second connection attempt; the last line of data/console.log explains a failure."""
     data_dir = cfg.root / cfg.data_dir
     info: dict = {}
-    try:
+    with contextlib.suppress(OSError, ValueError):
         info = json.loads((data_dir / "console.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        pass
     host, port = info.get("host", "127.0.0.1"), int(info.get("port", 8766))
     try:
         with socket.create_connection((host, port), timeout=1.0):
@@ -203,7 +218,7 @@ def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
     not end another's console, or an editor whose arguments mention the path."""
     try:
         res = subprocess.run(
-            ["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10
+            ["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -248,10 +263,8 @@ def stop_all(cfg: Config) -> list[str]:
             notes.append(f"killed pid {pid}: {cmd[:80]}")
         except OSError:
             pass
-    try:
+    with contextlib.suppress(OSError):
         (cfg.root / cfg.data_dir / "console.json").unlink()
-    except OSError:
-        pass
     notes.append("everything is stopped; `bodh schedule resume` starts the jobs again")
     return notes
 

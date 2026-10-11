@@ -97,7 +97,7 @@ def replay(
             batch = futures[fut]
             try:
                 verdicts = fut.result()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 results.append({"error": str(exc), "n": len(batch)})
                 continue
             for r in batch:

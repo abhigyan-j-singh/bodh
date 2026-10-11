@@ -26,8 +26,8 @@ def expansion_topics(learned_text: str) -> list[str]:
     """The phrases under '## Expansion topics for next week', one per line."""
     section = _section(learned_text, "Expansion topics")
     topics = []
-    for line in section.splitlines():
-        line = line.strip().lstrip("-*• ").strip()
+    for raw in section.splitlines():
+        line = raw.strip().lstrip("-*• ").strip()
         if not line or line.startswith("("):
             continue
         phrase = re.split(r"[:;,.—–-]| because | to ", line, maxsplit=1)[0].strip().strip("*_`")
@@ -93,11 +93,15 @@ def git_commit(repo_dir: Path, message: str) -> bool:
             ["git", "add", "-A", "--", "."], cwd=repo_dir, check=True, capture_output=True, text=True
         )
         identity = subprocess.run(
-            ["git", "config", "user.email"], cwd=repo_dir, capture_output=True, text=True
+            ["git", "config", "user.email"], cwd=repo_dir, capture_output=True, text=True, check=False
         )
         extra = [] if identity.returncode == 0 and identity.stdout.strip() else GIT_IDENTITY
         result = subprocess.run(
-            ["git", *extra, "commit", "-q", "-m", message], cwd=repo_dir, capture_output=True, text=True
+            ["git", *extra, "commit", "-q", "-m", message],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode == 0 or "nothing to commit" in (result.stdout + result.stderr):
             return True

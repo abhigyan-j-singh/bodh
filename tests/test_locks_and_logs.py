@@ -110,9 +110,8 @@ def test_pid_file_and_liveness(cfg, monkeypatch):
         assert int(pid) == __import__("os").getpid() and kind == "blast"
         assert locks.run_in_progress(data_dir) and locks.running_process(data_dir)["kind"] == "blast"
         assert (data_dir / "bodh.lock").stat().st_size == 0  # never truncated, never written
-        with __import__("pytest").raises(locks.AlreadyRunning):
-            with locks.run_lock(data_dir, "run"):
-                pass
+        with __import__("pytest").raises(locks.AlreadyRunning), locks.run_lock(data_dir, "run"):
+            pass
     assert not pid_path.exists() and not locks.run_in_progress(data_dir)
     # a stale pid file (a crash) names a process that no longer exists: not running
     pid_path.write_text("999999999 run 1700000000\n", encoding="utf-8")

@@ -48,7 +48,7 @@ def _config() -> Config:
     except ConfigError as exc:
         _fail(str(exc), EXIT_CONFIG)
         raise  # unreachable; keeps the type checker honest
-    except Exception as exc:  # noqa: BLE001 — a config that does not parse or validate
+    except Exception as exc:
         _fail(f"config.yaml does not load: {exc}", EXIT_CONFIG)
         raise
 
@@ -141,7 +141,7 @@ def doctor(
         try:
             load_prompt(name, cfg.root)
             typer.echo(f"prompt {name}: ok")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
     if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
         typer.echo("bazqux credentials: set")
@@ -168,7 +168,7 @@ def doctor(
     typer.echo("ok")
 
 
-def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
+def _doctor_live(cfg: Config, secrets, conn, problem) -> None:
     ctx = runmod.Context(cfg, secrets, conn)
     try:
         ctx.client.user_info()
@@ -195,7 +195,7 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
             items, _ = ctx.client.contents([r.id for r in unread[:3]])
             for it in items:
                 typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         problem(f"bazqux: FAILED ({exc})")
     try:
         from .judge import Judge, concept_context
@@ -227,7 +227,7 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
         typer.echo(
             f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         problem(f"models: FAILED ({exc})")
 
 
@@ -274,7 +274,7 @@ def run(
     except KeyboardInterrupt:
         _fail("stopped; the next run picks up where this one left off", 130)
         return
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _fail(f"run failed: {exc}", 1)
         return
     typer.echo(res.summary())
@@ -746,7 +746,7 @@ def console(
         Console(ctx.cfg, ctx.conn, host=host, port=port).serve()
     except KeyboardInterrupt:
         raise typer.Exit(0) from None
-    except Exception as exc:  # noqa: BLE001 — leave the reason where `bodh status` can show it
+    except Exception as exc:
         console_log(
             ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
         )
@@ -952,7 +952,7 @@ def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
         )
         if not result["applied"] and result.get("gate") and not result["gate"]["passed"]:
             ctx.heartbeat.fail(f"weekly profile rewrite rejected: {result['reason']}")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         store.finish_run(ctx.conn, run_id, False, error=f"{type(exc).__name__}: {exc}")
         ctx.heartbeat.fail(f"weekly failed: {exc}")
         _fail(f"weekly failed: {exc}")

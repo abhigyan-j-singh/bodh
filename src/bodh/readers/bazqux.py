@@ -242,7 +242,7 @@ class BazQuxClient:
                             direct_stream_ids=[str(s) for s in ref.get("directStreamIds") or []],
                         )
                     )
-                except Exception as exc:  # noqa: BLE001 — one odd ref never kills the page
+                except Exception as exc:
                     log.error("bazqux: bad item ref %r (%s)", ref, exc)
             continuation = data.get("continuation")
             if not continuation or not refs or (limit and len(out) >= limit):
@@ -296,7 +296,7 @@ class BazQuxClient:
             for raw in data.get("items", []) or []:
                 try:
                     item = _parse_item(raw)
-                except Exception as exc:  # noqa: BLE001 — one bad item never kills the batch
+                except Exception as exc:
                     log.error("bazqux: item parse failure (%s); raw: %.300s", exc, str(raw))
                     continue
                 items.append(item)

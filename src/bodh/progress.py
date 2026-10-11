@@ -299,14 +299,13 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
 
 # -- the live file ------------------------------------------------------------
 
-_last_live_write = 0.0
+_last_live_write = [0.0]  # when the live file was last written (monotonic), for the throttle
 
 
 def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0) -> Path | None:
     """progress.json next to the dashboard, for its progress section to poll. Never raises."""
-    global _last_live_write
     now = time.monotonic()
-    if min_interval and now - _last_live_write < min_interval:
+    if min_interval and now - _last_live_write[0] < min_interval:
         return None
     try:
         snap = snapshot(conn, cfg)
@@ -319,9 +318,9 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         )  # a console child beside a run: two writers, two files
         tmp.write_text(json.dumps(snap, default=str), encoding="utf-8")
         os.replace(tmp, path)
-        _last_live_write = now
+        _last_live_write[0] = now
         return path
-    except Exception:  # noqa: BLE001 — a live view must never fail a run
+    except Exception:
         return None
 
 
@@ -339,7 +338,7 @@ def live_writer(cfg: Config, conn: sqlite3.Connection, min_interval: float = 2.0
 
 def _bar(share: float, width: int = 30) -> str:
     share = max(0.0, min(1.0, share))
-    full = int(round(share * width))
+    full = round(share * width)
     return BAR * full + PAD * (width - full)
 
 

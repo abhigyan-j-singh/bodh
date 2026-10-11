@@ -20,10 +20,11 @@ def strictest_folder(cfg: Config) -> str | None:
     where a high-volume, low-keep feed belongs; None when the config has no such folder."""
     best: tuple[int, str] | None = None
     for name, policy in cfg.folders.items():
-        floor = policy.cutoff
-        if floor is not None and not policy.protected and floor > cfg.autocut.cutoff:
-            if best is None or floor > best[0]:
-                best = (floor, name)
+        cutoff = policy.cutoff
+        if cutoff is None or policy.protected or cutoff <= cfg.autocut.cutoff:
+            continue
+        if best is None or cutoff > best[0]:
+            best = (cutoff, name)
     return best[1] if best else None
 
 

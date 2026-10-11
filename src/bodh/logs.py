@@ -40,7 +40,7 @@ class Redactor(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
-        except Exception:  # noqa: BLE001 — a bad format string is logging's problem, not ours
+        except Exception:
             return True
         clean = self.redact(message)
         if clean != message or record.args:

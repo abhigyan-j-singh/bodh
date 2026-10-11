@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 from pathlib import Path
@@ -63,6 +64,7 @@ def test_the_owners_files_are_not_tracked():
         capture_output=True,
         text=True,
         cwd=str(ROOT),
+        check=False,
     ).stdout.split()
     if ".gitignore" not in tracked:
         pytest.skip("not a git checkout")
@@ -79,6 +81,7 @@ def test_old_command_name_runs_with_a_note():
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert res.returncode == 0 and f"bodh {__version__}" in res.stdout and "now `bodh`" in res.stderr
     assert CliRunner().invoke(app, ["version"]).output.strip() == f"bodh {__version__}"
@@ -109,10 +112,10 @@ def test_stray_pattern_covers_both_command_names(tmp_path):
 def test_version_is_single_sourced():
     import importlib.metadata
 
-    try:
+    with contextlib.suppress(
+        importlib.metadata.PackageNotFoundError
+    ):  # a PYTHONPATH=src run: the file check below still holds
         assert importlib.metadata.version("bodh") == __version__
-    except importlib.metadata.PackageNotFoundError:
-        pass  # a PYTHONPATH=src run without the package installed: the file check below still holds
     assert "version" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8").split("[project.optional")[
         0
     ].replace('dynamic = ["version"]', "")

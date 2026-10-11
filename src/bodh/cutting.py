@@ -275,7 +275,7 @@ def finish_pending_cuts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Con
         store.restore_unread(conn, changed, rescued=False)
         try:
             client.untag(changed, cfg.tags.cut)
-        except Exception:  # noqa: BLE001 — the tag is cosmetic; the read state is what matters
+        except Exception:
             log.warning("cut: could not remove the cut tag from %d restored articles", len(changed))
     untagged, unmarked = store.cut_pending(conn)
     if untagged:
@@ -294,7 +294,7 @@ def untag_stale(client: BazQuxClient, stale: dict[str, list[str]]) -> int:
         try:
             client.untag(ids, band)
             done += len(ids)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.warning("cut: could not remove stale tag %s from %d articles", band, len(ids))
     stale.clear()
     return done

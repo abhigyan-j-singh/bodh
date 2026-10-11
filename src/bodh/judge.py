@@ -282,13 +282,13 @@ def matches_topic(concept: str, topics: list[str]) -> bool:
     if not c:
         return False
     cw = _words(c)
-    for t in topics:
-        t = t.strip().lower()
-        if not t:
+    for raw in topics:
+        topic = raw.strip().lower()
+        if not topic:
             continue
-        if t in c or c in t:
+        if topic in c or c in topic:
             return True
-        tw = _words(t)
+        tw = _words(topic)
         if cw and tw and len(cw & tw) / len(cw | tw) >= 0.5:
             return True
     return False
@@ -388,7 +388,7 @@ def _output_format() -> dict:
         from anthropic.lib._parse._transform import transform_schema
 
         schema = transform_schema(schema)
-    except Exception:  # noqa: BLE001 — an SDK without the helper still gets a usable schema
+    except Exception:
         pass
     return {"type": "json_schema", "schema": schema}
 
@@ -547,9 +547,9 @@ class LLM:
                 raise _classify(exc) from exc
             try:
                 response = self._client.messages.create(**self.request_params(model, system_text, user_text))
-            except Exception as exc2:  # noqa: BLE001
+            except Exception as exc2:
                 raise _classify(exc2) from exc2
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _classify(exc) from exc
         self.record(run_id, model, purpose, response.usage)
         verdicts = parse_judgments(self.message_text(response))
@@ -575,7 +575,7 @@ class LLM:
                 system=system_text,
                 messages=[{"role": "user", "content": user_text}],
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _classify(exc) from exc
         self.record(run_id, model, purpose, response.usage)
         return self.message_text(response).strip()
@@ -586,7 +586,7 @@ class LLM:
         """requests: [{"custom_id": ..., "params": ...}]. Returns the batch id."""
         try:
             batch = self._client.messages.batches.create(requests=requests)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _classify(exc) from exc
         return batch.id
 
@@ -594,14 +594,14 @@ class LLM:
         """'in_progress', 'canceling' or 'ended'."""
         try:
             return self._client.messages.batches.retrieve(batch_id).processing_status
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _batch_classify(exc) from exc
 
     def batch_counts(self, batch_id: str) -> dict:
         """How many requests of a batch are processing, succeeded, errored, canceled, expired."""
         try:
             counts = self._client.messages.batches.retrieve(batch_id).request_counts
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _batch_classify(exc) from exc
         return {
             k: int(getattr(counts, k, 0) or 0)
@@ -615,7 +615,7 @@ class LLM:
     def batch_results(self, batch_id: str) -> list[Any]:
         try:
             return list(self._client.messages.batches.results(batch_id))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise _batch_classify(exc) from exc
 
 
@@ -647,7 +647,8 @@ def article_block(n: int, row: sqlite3.Row | dict, chars: int) -> str:
 def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
     """A review is worth paying for only when the full text holds more than the
     opening the first pass already saw."""
-    length = row["text_len"] if "text_len" in row.keys() else len(row["text"] or "")  # type: ignore[union-attr]
+    has_len = "text_len" in row.keys()  # noqa: SIM118 — `in row` on a sqlite3.Row tests the values, not the keys
+    length = row["text_len"] if has_len else len(row["text"] or "")
     return int(length or 0) > cfg.judge.text_chars + 200
 
 
@@ -758,13 +759,15 @@ class Judge:
                 target = resolve_ordinal(v.dupe_of, ordered) if v.dupe_of is not None else None
                 earlier = target is not None and target != aid and ordered.index(target) < ordered.index(aid)
                 if earlier and target not in dupes:
-                    v = v.model_copy(update={"dupe_of": target})
+                    verdict = v.model_copy(update={"dupe_of": target})
                     dupes.add(aid)
                 else:
-                    v = v.model_copy(
+                    verdict = v.model_copy(
                         update={"dupe_of": None, "flags": [f for f in v.flags if f != "duplicate"]}
                     )
-            out[aid] = v
+            else:
+                verdict = v
+            out[aid] = verdict
         return out
 
     def score_pending(
@@ -843,7 +846,7 @@ class Judge:
             store.bump_judge_failures(self.conn, [r["id"] for r in batch])
             log.warning("judge: batch of %d: %s; they stay pending", len(batch), exc)
             return
-        except Exception:  # noqa: BLE001 — one bad batch, not the run
+        except Exception:
             stats["failed_batches"] += 1
             log.exception("judge: batch of %d failed; they stay pending", len(batch))
             return
@@ -954,7 +957,7 @@ class Judge:
                 continue
             except ModelConfigError:
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("judge: could not poll batch %s", b["id"])
                 stats["open"] += 1
                 continue
@@ -971,7 +974,7 @@ class Judge:
                 continue
             except ModelConfigError:
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("judge: could not fetch results of batch %s", b["id"])
                 if self._lost(b):  # ended, but its results will not come: the same deadline applies
                     self._give_up(
@@ -1116,7 +1119,7 @@ class Judge:
         if new_bucket != old_bucket and client is not None:
             try:
                 client.untag([aid], old_bucket)
-            except Exception:  # noqa: BLE001 — a stale band tag is cosmetic
+            except Exception:
                 log.warning("cut: could not remove old band tag %s from %s", old_bucket, aid)
         floor = self.cfg.cutoff_for(folder)
         return floor is None or new_score >= floor
@@ -1231,7 +1234,7 @@ class Judge:
                     skip = True
                 except ModelConfigError:
                     raise
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("judge: review failed for %s", aid)
                     second, skip = None, False
                 else:
@@ -1263,7 +1266,7 @@ class Judge:
             )
         except (BudgetExceeded, ModelConfigError):
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("judge: review failed for %s", row["id"])
             return None
         if not verdicts:
