@@ -12,6 +12,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+import pytest
 from conftest import seed_scored
 
 from bodh import jobs, locks, store
@@ -87,12 +88,17 @@ def test_status_text_and_enforce_flip(conn, cfg):
     assert "not installed" in jobs.schedule("pause")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX signals; Windows stops a run with a hard kill until Phase 9"
+)
 def test_running_process_and_stop(conn, cfg):
     data_dir = cfg.root / cfg.data_dir
     assert locks.running_process(data_dir) is None
     assert locks.stop_process(data_dir) == "nothing is running"
     # a child process holding the lock, as a blast or prune would
-    src = str(Path(__file__).resolve().parents[1] / "src")
+    import bodh
+
+    src = str(Path(bodh.__file__).resolve().parents[1])  # wherever the package is: src/, or a flat copy
     code = (
         f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path; from bodh.locks import run_lock\n"
         f"with run_lock(Path({str(data_dir)!r}), 'blast'):\n"
@@ -112,6 +118,9 @@ def test_running_process_and_stop(conn, cfg):
     assert locks.running_process(data_dir) is None and not (data_dir / "bodh.pid").exists()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX signals; Windows stops a run with a hard kill until Phase 9"
+)
 def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
     seed_scored(conn, cfg, [dict(n=1, score=90)])
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")

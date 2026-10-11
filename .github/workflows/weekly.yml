@@ -1,0 +1,54 @@
+# Once a week, and when a prompt or the evaluation set changes: the suite against the newest
+# SDKs, and the evals judged with the owner's key (a few cents, capped), skipped on forks.
+name: weekly
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main, oss]
+    paths:
+      - "src/bodh/prompts/**"
+      - "evals/**"
+      - "src/bodh/judgment.py"
+      - "src/bodh/judge.py"
+  workflow_dispatch:
+
+jobs:
+  newest-sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install with the newest dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install -U anthropic httpx pydantic typer pyyaml python-dotenv
+          python -c "import anthropic, httpx, pydantic, typer; print(anthropic.__version__, httpx.__version__, pydantic.__version__, typer.__version__)"
+      - run: pytest -q -p no:cacheprovider
+
+  evals:
+    if: github.repository == 'abhigyan-j-singh/bodh'
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e .
+      - name: Judge the evaluation set (under 50 cents)
+        run: |
+          mkdir -p evalrun/profile
+          cp config.example.yaml evalrun/config.yaml
+          printf '# About the student\nStudent: the evals run; the set is judged for profile.example.\n' > evalrun/profile/about.md
+          cp profile.example/learned.md evalrun/profile/learned.md
+          cd evalrun
+          bodh eval --cap 0.50 --write ../evals/results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evals-results
+          path: evals/results.json

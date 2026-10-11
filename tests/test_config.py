@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -241,6 +242,7 @@ def test_timezone_defaults_to_the_machine_and_the_example_leaves_it_out(monkeypa
     assert "Asia/Kolkata" not in (ROOT / "config.example.yaml").read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a symlink and /etc/localtime: POSIX")
 def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
     from bodh import config
 

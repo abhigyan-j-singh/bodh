@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 
+import pytest
 from conftest import seed_scored
 
 from bodh import dashboard, locks, logs, progress
@@ -131,12 +133,14 @@ def test_running_process_never_signals_on_windows(monkeypatch):
     assert locks.pid_alive(4242) and not locks.pid_alive(4243) and calls == []
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX signals; Windows stops a run with a hard kill until Phase 9"
+)
 def test_sigterm_ends_a_run_like_ctrl_c(cfg):
     """launchctl bootout sends SIGTERM; it used to kill the run with no run row finished and
     the pid file left behind."""
     import signal
     import subprocess
-    import sys
     import time
     from pathlib import Path
 

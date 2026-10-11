@@ -81,7 +81,12 @@ In order, with the phase shown on the console and in `bodh progress`:
    cut-off, with more text than the judge saw) gets an Opus 5.5 review first and waits one
    run; 20% of what autocut leaves is reserved for new ground; a `prune` tag seen in step 1
    prunes to `prune.keep` as well. In scoring-only mode (`autocut.enabled: false`) nothing is cut, ever.
-7. rendering the dashboard; heartbeat ping.
+7. rendering the dashboard; the day's first run also copies the database to
+   `data/backups/` (seven kept); heartbeat ping.
+
+A run the daily budget cut short (`models.daily_budget_usd`) is a half-judged run: its close
+calls could not have their reviews, so it cuts nothing and says "daily budget reached: nothing
+cut this run"; the next day's runs cut as usual.
 
 A run takes a lock: a second `bodh run` while one is going says so and exits. A run starts no
 model call after 14 minutes and ends itself after 15; the next one picks up what is left. If
@@ -213,6 +218,9 @@ disagreements shrink week by week, it is learning you.
 | stop everything, console included | `bodh stop --all`; `bodh schedule resume` brings the jobs back. It ends the commands of this checkout started by their full path (launchd's jobs, the alias above); one started as `.venv/bin/bodh …` from inside the folder is not found, Ctrl-C that one |
 | after a code update, or after moving the folder | `./install.sh && ./install-launchd.sh` (`bodh stop --all` first when a run may be going: a run started by the old code is not seen by the new one) |
 | the console in the foreground | `bodh console` (Ctrl-C ends it; launchd restarts its own copy) |
+| a copy of the database now | `bodh backup` (`data/backups/bodh-<date>.db`, seven kept; the run makes one a day on its own) |
+| the database is lost or broken | restore the newest file from `data/backups/` as `data/bodh.db`; with no backup, `bodh rebuild --dry-run` then `bodh rebuild`: the band tags, the cut tag and the stars come back from BazQux, nothing already cut is cut again, and the judge reads the unread keepers again on the next runs |
+| measure the judge against the evaluation set | `bodh eval` (sixty articles for the example student, a few cents, `--cap 0.50`); `--write evals/results.json` keeps the result |
 
 
 ## 8. Watching
@@ -359,6 +367,7 @@ until then.
 | the judge's taste drifted | `bodh profile show`; `bodh profile revert`; edit `profile/about.md` |
 | a model id was rejected ("model call rejected") | `models.*` in config.yaml, or the key in `.env`; `bodh doctor --live` |
 | after `git pull` or any code change | `./install.sh` (also runs doctor), then `./install-launchd.sh`; `.venv/bin/pytest -q` runs the tests |
+| the database is lost or `bodh doctor` says it fails its integrity check | the newest file in `data/backups/` back as `data/bodh.db`, or `bodh rebuild` (section 7) |
 
 
 ## 11. What it costs
@@ -366,4 +375,5 @@ until then.
 Sonnet 5.5 through batches with the cached prefix: about $0.65 per 1,000 judged, so under a
 dollar for a 1,300-article day; `bodh progress` shows the measured figure and the cache hit
 share. A full catch-up of 30,000 articles: $35 to $40 with Sonnet synchronous (full price), about $2.50
-with the quick judge. `models.daily_budget_usd` caps a bad day; nothing is ever cut because the budget ran out.
+with the quick judge. `models.daily_budget_usd` caps a bad day; a run the budget stopped cuts nothing,
+and nothing is ever cut because the budget ran out. The evaluation set (`bodh eval`) costs a few cents a run.

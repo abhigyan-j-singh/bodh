@@ -77,6 +77,25 @@ of the aliases go away in the release after 1.0.0.
 
 ### Changed
 
+- A run the daily budget cut short cuts nothing and says so ("daily budget reached: nothing
+  cut this run"): a half-judged run's close calls could not have their reviews. Before, the
+  judged junk of such a run was still cut. The next day's runs cut as usual.
+- The CLI's error line replaces any secret value found in a message (an API echoing a header,
+  a URL with a token) before printing it, and the model client scrubs its key from every error
+  it classifies.
+- `bodh weekly` exits with the error's own code (4 for the model) instead of 1 for everything;
+  `bodh profile` refuses a word it does not know; `bodh version` takes `-v` like every command;
+  `bodh stop --all` no longer waits a second when there is nothing to end.
+- The run's phase changes no longer walk the whole database for `progress.json` every time (the
+  phase goes to the database at once, the file follows at most once a second), the per-folder
+  counts no longer join every article, the dashboard takes one progress snapshot instead of two,
+  and bulk writes to the feedback and state tables are one transaction each (25,000 cut articles
+  coming back unread took seven seconds; under one now). Migration 5 adds the indexes the queries
+  by time walk; it is harmless to older code.
+- `canonical_url` strips whitespace from the path, so the result is its own canonical form.
+- Dependencies carry bounds: `anthropic>=0.77,<2` (0.77 is the first with structured outputs;
+  the 1.x line passes the suite), `httpx<1`, `pydantic<3`, `typer<1`, `pyyaml<7`,
+  `python-dotenv<2`.
 - The score's caps (promo 30, off-field funding 40, duplicate 20) now come after the bonuses
   (the home angle, the expansion topics), so a bonus never lifts a capped article over the
   cut-off; vendor marketing on an expansion topic used to score 40. Nothing already judged
@@ -121,6 +140,27 @@ of the aliases go away in the release after 1.0.0.
 
 ### Added
 
+- `bodh backup`: a copy of the database with `VACUUM INTO` under `data/backups/`, seven kept;
+  the run makes one a day on its own; `bodh doctor` reports how many and the newest.
+- `bodh rebuild [--dry-run]`: after a lost database, the band tags, the cut tag and the stars
+  come back from BazQux. A rebuilt score carries the band's threshold with `model = "rebuilt"`
+  and a low confidence (autocut leaves it alone); the cut tag on a read article becomes a cut
+  already written; the unread rebuilt keepers at or above `catch_up.rejudge_at` are read again
+  by the judge on the next runs. Nothing BazQux shows is changed.
+- `bodh eval`: the evaluation set (`evals/set.yaml`, sixty short articles written for the
+  purpose, each with the band the example student should see it in), judged with the
+  configured judge under a dollar cap; prints the agreement by band and the largest
+  disagreements; `--write` keeps the result as JSON. CI runs it weekly with the owner's key.
+- The test suite is the contributor's safety net now: one fake reader, one fake BazQux
+  server behind a mock transport, one fake model SDK under the real client wrapper
+  (`tests/fakes.py`); contract suites for readers and providers (`tests/contracts/`); the
+  failure drills (`tests/test_drills.py`); the parser, `compose`, the ids and `canonical_url`
+  under hypothesis; the rendered prompts as a snapshot; every command through the runner with
+  a scan for secrets in the output; the 50,000-article timings (`scripts/make_fixture_db.py`,
+  `BODH_PERF=1`); the budget's midnight across a DST change and a half-hour zone. GitHub
+  Actions run the lot on Linux, macOS and Windows with Python 3.10 and 3.13, one leg on the
+  oldest supported SDK, pip-audit and an install smoke test; a weekly workflow runs the
+  newest SDKs and the evals. `CONTRIBUTING.md` says how to add a test, a reader or a provider.
 - `bodh safety [status|reset]`: the safety limit, which now persists between runs (autocut and the
   tag-requested prune wait, `bodh prune` refuses, until a person resets it), and the articles
   the judge gave up on after three empty answers.

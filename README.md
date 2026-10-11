@@ -1,5 +1,10 @@
 # bodh
 
+[![ci](https://github.com/abhigyan-j-singh/bodh/actions/workflows/ci.yml/badge.svg)](https://github.com/abhigyan-j-singh/bodh/actions/workflows/ci.yml)
+[![weekly](https://github.com/abhigyan-j-singh/bodh/actions/workflows/weekly.yml/badge.svg)](https://github.com/abhigyan-j-singh/bodh/actions/workflows/weekly.yml)
+![python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
+![licence](https://img.shields.io/badge/licence-MIT-green)
+
 Bodh (बोध: understanding, insight) keeps your BazQux unread list worth reading. A judge (Claude
 Sonnet 5.5) reads every unread article once as teaching material for you and writes its judgment:
 writing quality, what you learn, level fit, breadth, relevance. The worst are marked read in BazQux
@@ -60,7 +65,10 @@ worked example in `profile/about.md` with yourself, and name your own folders in
 | `bodh profile [show\|revert]` | The learned profile and its versions; `revert` restores the previous one. |
 | `bodh weekly` | Sunday: the profiler rewrites the learned profile from the week's reading (kept only if the eval gate passes), writes the weekly note, runs the drift check. |
 | `bodh report` | Monthly feed report with proposals (unsubscribe, move to the strictest folder, protect). |
-| `bodh doctor [--live]` | Configuration and connectivity checks; exit code 1 when one fails. Run after every update. |
+| `bodh doctor [--live] [--values]` | Configuration and connectivity checks, the database's integrity and backups; exit code 1 when one fails. Run after every update. `--values` prints every setting in effect with its source (config.yaml or the default). |
+| `bodh backup` | Copy the database to `data/backups/bodh-<date>.db` (`VACUUM INTO`); seven kept. The run does this once a day on its own. |
+| `bodh rebuild [--dry-run]` | After a lost database: read the band tags, the cut tag and the stars back from BazQux, so nothing already judged is paid for again and nothing already cut is cut again. Rebuilt scores carry the band's threshold and a low confidence (autocut leaves them alone); the unread ones rated 50 or more are read again by the judge on the next runs. |
+| `bodh eval [--model] [--cap 0.50]` | Judge the sixty-article evaluation set (`evals/`) for the example student and print the agreement by band and the cost. A few cents; the figure below comes from it. |
 
 ## Install
 
@@ -252,7 +260,8 @@ cd ~/bodh && git pull && ./install.sh
 | "came back with no judgment" in a batch note | The model answered without a judgment, three times for the same articles and they are left alone; `bodh safety` counts them | They stay unread, unjudged, until `bodh safety reset` |
 | "gone upstream at once; not believed" | BazQux answered with an empty or truncated unread list, or you marked everything read | Nothing recorded this run; the next run within three hours decides |
 | Rescues above 5% in a week | The cut-off is too high for your taste; it drops to 25 on its own and alerts | Manual prune unaffected |
-| Database lost | Restore `data/bodh.db` from a backup; without one, the next runs re-judge the unread list (the band tags in BazQux stay, a `bodh rebuild` from them is planned) | Costs a few dollars |
+| "daily budget reached: nothing cut this run" | The budget stopped the judging part way; a half-judged run cuts nothing (its close calls could not have their reviews) | Tomorrow's runs cut as usual; `models.daily_budget_usd` raises the cap |
+| Database lost | Restore `data/bodh.db` from `data/backups/` (the run keeps seven daily copies); without one, `bodh rebuild` reads the band tags, the cut tag and the stars back from BazQux | Nothing already cut is cut again; the unread keepers are judged again, a few cents |
 
 Logs: `~/Library/Logs/bodh/bodh.log`. State: `data/bodh.db` (an audit cache; BazQux is the
 record). The learned profile's history: `git log` in `profile/`.
@@ -261,12 +270,33 @@ record). The learned profile's history: `git log` in `profile/`.
 
 ```bash
 make check                 # ruff, ruff format --check, mypy --strict, the suite; CI runs the same
-.venv/bin/pytest -q        # the suite alone: ids, scoring rules, cuts, safety, client, feedback, batches, catch-up, progress, locks, the console, a run end to end
+make coverage              # the suite with coverage, and the gate CI applies: 85% on the core modules
+make perf                  # the 50,000-article timings (BODH_PERF=1; CI runs them on Linux)
+make audit                 # pip-audit over the installed dependencies
 pre-commit install         # the same checks before every commit (pip install pre-commit first)
 ```
 
+The suite runs offline against the fakes in `tests/fakes.py`: a reader in memory, BazQux's HTTP
+API behind a mock transport (login, the write token, ids by page, contents, edit-tag, and the
+failures seen live), the model SDK scripted by title (a failure on the nth call, structured
+outputs or the 1-hour cache rejected once, batches that expire or vanish), and the real client
+wrapper over it. `tests/contracts/` holds the suites a new reader or model provider must pass;
+`tests/test_drills.py` the failure drills (BazQux down for a run, the model out mid-run, a crash
+between the tag and the read mark, a laptop asleep two days, the budget reached mid-run, two runs
+at once, a corrupt `progress.json`, a typo in `config.yaml`, a model id the provider does not
+know); `tests/snapshots/` the rendered prompts, so a prompt change shows as a diff and
+`BODH_UPDATE_SNAPSHOTS=1` accepts it once `CHANGELOG.md` says whether it re-judges. The parser,
+`compose`, the ids and `canonical_url` run under hypothesis; `scripts/make_fixture_db.py` builds
+a year of invented use for the timings. CI (`.github/workflows/ci.yml`) runs the lot on Linux,
+macOS and Windows with Python 3.10 and 3.13, one leg on the oldest supported SDK, and weekly
+against the newest SDKs with the evals (`weekly.yml`, the owner's key as a secret).
+
+Agreement on the evaluation set (`bodh eval`, sixty articles for the example student): not yet
+measured; the owner runs it once and puts the figure and its date here.
+
 `docs/glossary.md` has the words, `docs/internals.md` the rules the code keeps (threads and
-connections, the run lock, failing open, exit codes, stored words). Every error bodh raises on
-purpose exits with a code a script can act on: 2 configuration, 3 BazQux, 4 the model, 5 a run
-in progress, 1 anything else. Prose is in British spelling; identifiers follow Python's
-conventions (`normalize`, `color` in CSS).
+connections, the run lock, failing open, exit codes, stored words), `CONTRIBUTING.md` how to add a
+test, a reader or a provider, `docs/live-checks.md` the few checks only the owner's account can run. Every error bodh raises on purpose exits with a code a script can
+act on: 2 configuration, 3 BazQux, 4 the model, 5 a run in progress, 1 anything else (`bodh run`
+alone answers 0 when another run holds the lock: the timer's own overlap is not an error). Prose
+is in British spelling; identifiers follow Python's conventions (`normalize`, `color` in CSS).

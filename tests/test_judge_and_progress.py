@@ -45,7 +45,10 @@ def test_judgment_schema_has_no_unsupported_constraints():
     assert fmt["type"] == "json_schema"
     props = fmt["schema"]["$defs"]["JudgmentOut"]["properties"]
     assert set(props) == {"n", "s", "lesson", "concept", "kind", "flags", "dupe", "conf"}
-    assert "minimum" not in str(fmt["schema"]) and props["kind"]["enum"][0] == "src"
+    assert "minimum" not in str(fmt["schema"])
+    # the codes travel as an enum (the SDK since 0.80) or in the description (0.77 to 0.79)
+    kind = props["kind"]
+    assert kind.get("enum", [None])[0] == "src" or "'src'" in kind["description"]
     assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], kind="src", dupe="2").to_verdict().kind == "primary_source"
     assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], dupe="2").to_verdict().dupe_of == 2
     assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], dupe="x", conf="sure").to_verdict().confidence == "medium"
