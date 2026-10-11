@@ -152,10 +152,9 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     if words > MAX_WORDS or "## Expansion topics" not in new_text:
         result["reason"] = f"rewrite rejected: {words} words or missing sections"
         return result
-    for forbidden in ("# Seed", "already knows well"):
-        if forbidden.lower() in new_text.lower() and forbidden == "# Seed":
-            result["reason"] = "rewrite rejected: it repeated the seed"
-            return result
+    if repeats_seed(new_text, seed):
+        result["reason"] = "rewrite rejected: it repeated the seed"
+        return result
 
     gate = gate_check(cfg, llm, conn, run_id, new_text)
     result["gate"] = gate
@@ -171,6 +170,15 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     result["applied"] = True
     result["reason"] = "rewrite applied"
     return result
+
+
+def repeats_seed(new_text: str, seed: str) -> bool:
+    """The rewrite may not carry the seed into the learner model: its heading, or any full
+    line of it (the prompt forbids both; a copied seed doubles the cached prefix for nothing)."""
+    low = new_text.lower()
+    if "# seed" in low:
+        return True
+    return any(len(line) >= 40 and line in low for line in (ln.strip().lower() for ln in seed.splitlines()))
 
 
 def _evidence_line(r: sqlite3.Row) -> str:
@@ -199,23 +207,21 @@ def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | No
     ).fetchall()
     if not rows:
         return {"passed": True, "detail": "no starred articles to check against", "checked": 0, "below": []}
-    original = cfg.read_learner()
-    try:
-        cfg.learner_path.write_text(new_learner + "\n", encoding="utf-8")
-        teacher = Teacher(cfg, llm, conn, context=concept_context(conn, cfg), expansion_topics=expansion_topics(new_learner))
-        below: list[str] = []
-        for i in range(0, len(rows), cfg.scoring.batch_size):
-            batch = rows[i: i + cfg.scoring.batch_size]
-            verdicts = teacher.judge_batch(batch, run_id)
-            for row in batch:
-                v = verdicts.get(row["id"])
-                if v is None:
-                    continue
-                floor = cfg.cut.floor_for(row["folder"]) or cfg.cut.default_floor
-                if compose(v, cfg, teacher.expansion_topics) < floor:
-                    below.append(row["title"][:80])
-    finally:
-        cfg.learner_path.write_text(original + "\n", encoding="utf-8")
+    # the proposed model is handed to the teacher in memory: learner.md is not touched, so a
+    # kill or an overlapping run during the check cannot leave the ungated text as the live model
+    teacher = Teacher(cfg, llm, conn, context=concept_context(conn, cfg), expansion_topics=expansion_topics(new_learner),
+                      learner_text=new_learner)
+    below: list[str] = []
+    for i in range(0, len(rows), cfg.scoring.batch_size):
+        batch = rows[i: i + cfg.scoring.batch_size]
+        verdicts = teacher.judge_batch(batch, run_id)
+        for row in batch:
+            v = verdicts.get(row["id"])
+            if v is None:
+                continue
+            floor = cfg.cut.floor_for(row["folder"]) or cfg.cut.default_floor
+            if compose(v, cfg, teacher.expansion_topics) < floor:
+                below.append(row["title"][:80])
     passed = not below
     detail = "all starred articles stay above the floor" if passed else f"{len(below)} starred below the floor: " + "; ".join(below[:5])
     return {"passed": passed, "detail": detail, "checked": len(rows), "below": below}

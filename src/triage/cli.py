@@ -506,15 +506,22 @@ def label(article_id: str, judgment: str = typer.Argument(..., help="star or jun
 @app.command()
 def want(phrase: str) -> None:
     """Tell the teacher now that you want more on a topic."""
-    ctx = _ctx()
-    typer.echo(learner.nudge(ctx.cfg, ctx.conn, "want", phrase))
+    _nudge("want", phrase)
 
 
 @app.command()
 def meh(phrase: str) -> None:
     """Tell the teacher now that you want less of a topic."""
+    _nudge("meh", phrase)
+
+
+def _nudge(kind: str, phrase: str) -> None:
     ctx = _ctx()
-    typer.echo(learner.nudge(ctx.cfg, ctx.conn, "meh", phrase))
+    try:
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "nudge"):   # learner.md is written: not under a run
+            typer.echo(learner.nudge(ctx.cfg, ctx.conn, kind, phrase))
+    except AlreadyRunning:
+        _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
 
 
 @app.command()
@@ -522,7 +529,12 @@ def profile(action: str = typer.Argument("show", help="show or revert")) -> None
     """Show the learner model, or go back one version."""
     ctx = _ctx()
     if action == "revert":
-        v = learner.revert(ctx.cfg, ctx.conn)
+        try:
+            with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"):
+                v = learner.revert(ctx.cfg, ctx.conn)
+        except AlreadyRunning:
+            _fail("a run is in progress; try again in a minute", 5)
+            return
         typer.echo("nothing to revert to" if v is None else f"reverted; now version {v}")
         return
     typer.echo(ctx.cfg.read_seed())
@@ -534,6 +546,14 @@ def profile(action: str = typer.Argument("show", help="show or revert")) -> None
 def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = typer.Option(False, "-v")) -> None:
     """Sunday's job: rewrite the learner model (gated), write the weekly note, run the drift check."""
     ctx = _ctx(verbose)
+    try:
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"):
+            _weekly(ctx, dry_run)
+    except AlreadyRunning:
+        _fail("a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later", 5)
+
+
+def _weekly(ctx: pipeline.Context, dry_run: bool) -> None:
     run_id = store.begin_run(ctx.conn, "weekly")
     try:
         result = learner.weekly_rewrite(ctx.cfg, ctx.llm, ctx.conn, run_id, dry_run=dry_run)

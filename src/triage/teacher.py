@@ -535,7 +535,9 @@ def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
 
 class Teacher:
     def __init__(self, cfg: Config, llm: LLM, conn: sqlite3.Connection, context: str = "",
-                 expansion_topics: list[str] | None = None) -> None:
+                 expansion_topics: list[str] | None = None, learner_text: str | None = None) -> None:
+        """``learner_text`` stands in for profile/learner.md (the weekly rewrite's gate judges
+        with a proposed model without writing it to disk)."""
         self.cfg = cfg
         self.llm = llm
         self.conn = conn
@@ -544,7 +546,7 @@ class Teacher:
         base = load_prompt(self.prompt_version, cfg.root)
         intro, _, rubric = base.partition("\n\n")
         seed = cfg.read_seed() or "(no seed written yet)"
-        learner = cfg.read_learner() or "(no learner model yet)"
+        learner = (cfg.read_learner() if learner_text is None else learner_text) or "(no learner model yet)"
         # the cached prefix changes only when the seed or the learner model does; the concept
         # lists change with every star and read, so they travel in the user message instead
         student = f"# Seed\n{seed}\n\n# Learner model\n{learner}"
