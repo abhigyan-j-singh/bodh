@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fakes import FakeLLM
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -521,3 +523,60 @@ def test_prompt_snapshot(cfg, conn, monkeypatch):
     assert rendered == path.read_text(encoding="utf-8"), (
         "the prompt changed: BODH_UPDATE_SNAPSHOTS=1 to accept, and say in CHANGELOG whether it re-judges"
     )
+
+
+# -- the verdict's fields, the parser's brace search, the topic rules -------------------
+
+
+def test_verdict_keeps_the_lesson_and_reads_a_null_concept_as_blank():
+    v = JudgmentIn(n=1, s=[1, 2, 3, 4, 5], lesson="  Learn this  ", concept=None).to_verdict()
+    assert v.lesson == "Learn this" and v.concept == ""
+
+
+def test_parser_takes_exactly_up_to_the_last_brace():
+    """Prose right after the closing brace (no space) must not be swallowed into the JSON."""
+    out = parse_judgments("Here: " + _batch(_ok(1)) + ".")
+    assert out is not None and [v.n for v in out] == [1]
+
+
+def test_topic_matching_counts_words_of_three_letters_and_half_the_union():
+    """Two-letter words are noise, three-letter words count, and half the words in common is
+    a match; an empty topic in the list is skipped, not the end of the list."""
+    assert matches_topic("gpu cooling loops", ["gpu cooling design"])  # 2 of 4 words: exactly half
+    assert not matches_topic("gpu cooling", ["gpu design"])  # 1 of 3
+    assert matches_topic("ai gpus", ["ml gpus"])  # the two-letter words do not dilute the match
+    assert matches_topic("reefs", ["", "coral reefs"])
+
+
+def test_compose_rounds_to_one_decimal_and_reads_a_missing_subscore_as_zero():
+    cfg = Config()
+    assert compose(base_verdict(quality=81, fit=81), cfg) == 80.4  # 80.45 to one decimal
+    assert compose({"quality": 80}, cfg) == 24.0  # 0.30 * 80, nothing for the rest
+
+
+def test_canonical_url_strips_only_the_trailing_slash():
+    assert canonical_url("https://example.com/OSX/") == "https://example.com/OSX"
+
+
+def test_dup_index_title_threshold_and_default_window(conn, cfg):
+    """A normalised title of 26 characters is matched by title, 25 is not; the index built with
+    no window argument covers seven days."""
+    from conftest import seed_scored
+
+    from bodh.judgment import DupIndex
+
+    t26, t25 = "abcdefghij abcdefghij abcd", "abcdefghij abcdefghij abc"
+    assert len(t26) == 26 and len(t25) == 25
+    ids = seed_scored(
+        conn,
+        cfg,
+        [dict(n=1, score=70, title=t26, feed="Feed A"), dict(n=2, score=70, title=t25, feed="Feed A")],
+    )
+    index = DupIndex(conn)
+    assert index.find({"id": "new", "url": "", "title": t26, "feed_title": "Feed B"})["id"] == ids[0]
+    assert index.find({"id": "new", "url": "", "title": t25, "feed_title": "Feed B"}) is None
+    probe = {"id": "new", "url": "https://example.com/FeedA/1", "title": "", "feed_title": "x"}
+    conn.execute("UPDATE articles SET fetched_at = ?", ((store.utcnow() - timedelta(days=6.5)).isoformat(),))
+    assert DupIndex(conn).find(probe)["id"] == ids[0]
+    conn.execute("UPDATE articles SET fetched_at = ?", ((store.utcnow() - timedelta(days=7.5)).isoformat(),))
+    assert DupIndex(conn).find(probe) is None
