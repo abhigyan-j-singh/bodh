@@ -609,8 +609,8 @@ def test_safety_reports_and_resets_the_tripped_limit(tmp_path, monkeypatch):
 
 
 def test_why_explains_a_judged_article_and_refuses_an_unknown_one(tmp_path, monkeypatch):
-    """`why` takes the signed number or the long id, never a URL; an id it does not know is
-    one line and exit 1."""
+    """`why` takes the signed number, the long id or the article's URL; an id or URL it does
+    not know is one line and exit 1."""
     root = _project(tmp_path, monkeypatch)
     cfg = load_config(root)
     conn = store.connect(cfg.db_path)
@@ -618,15 +618,15 @@ def test_why_explains_a_judged_article_and_refuses_an_unknown_one(tmp_path, monk
     store.upsert_article(conn, make_item(2, title="Not judged yet"), None)
     store.set_verdict(conn, ids[0], "great", store.GRADES)
     conn.close()
-    for args in (["why", "99"], ["why", "https://example.com/FeedA/1"]):
+    for args in (["why", "99"], ["why", "https://example.com/FeedA/9"]):
         result = invoke(args)
         assert result.exit_code == 1 and "error: not found" in result.output, (args, result.output)
-    for ref in ("1", ids[0]):
+    for ref in ("1", ids[0], "https://example.com/FeedA/1", "https://example.com/FeedA/1/?utm_source=x"):
         result = invoke(["why", ref])
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, (ref, result.output)
         for line in (
             "Reef recovery\nhttps://example.com/FeedA/1\nfeed: Feed A · folder: None",
-            "score 80.0 (base 80.0)",
+            "score 80.0 (base 80.0) · band score-70",
             "quality 80 · learning 80 · fit 80 · breadth 80 · relevance 80 · confidence high · kind reporting"
             " · flags none · judged by test (teacher.v2)",
             "concept: reefs\nlesson: l",
@@ -635,7 +635,7 @@ def test_why_explains_a_judged_article_and_refuses_an_unknown_one(tmp_path, monk
         ):
             assert line in result.output, (line, result.output)
     result = invoke(["why", "2"])
-    assert result.exit_code == 0 and "not scored yet" in result.output and "your record" not in result.output
+    assert result.exit_code == 0 and "not judged yet" in result.output and "your record" not in result.output
 
 
 # -- mark and steer ------------------------------------------------------------------
@@ -744,7 +744,7 @@ def test_profile_shows_the_student_and_reverts_one_version(tmp_path, monkeypatch
     result = invoke(["profile", "revert"])
     assert result.exit_code == 0 and result.output.strip() == "nothing to revert to"
     result = invoke(["profile", "delete"])
-    assert result.exit_code == 1 and "say show or revert" in result.output
+    assert result.exit_code == 1 and "say show, revert or edit" in result.output
     assert (root / "profile" / "learned.md").read_text(encoding="utf-8") == LEARNED
     assert invoke(["steer", "more", "reefs"]).exit_code == 0  # version 1 is the initial text, 2 the steer
     assert "wants more on reefs" in invoke(["profile"]).output
@@ -777,7 +777,10 @@ def test_schedule_and_autocut_refuse_a_wrong_word_and_edit_the_right_thing(tmp_p
         and "bodh.run" not in result.output
     )
     result = invoke(["schedule", "dance"])
-    assert result.exit_code == 1 and "action must be status, pause, resume or kick" in result.output
+    assert (
+        result.exit_code == 1
+        and "action must be status, pause, resume, kick, install or uninstall" in result.output
+    )
     result = invoke(["schedule", "pause", "--job", "nope"])
     assert result.exit_code == 1 and "--job must be run, weekly, report, console or all" in result.output
     with locks.run_lock(root / "data", "run"):

@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 BAR = "█"
 PAD = "░"
+LIVE_SCHEMA = 1  # docs/json.md; bumped only when a field is removed or changes meaning
 LIVE_FILE = "progress.json"
 SERIES_BIN_MINUTES = 5
 SERIES_HOURS = 3
@@ -136,7 +137,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
         "batch_mode": cfg.models.batch,
         "max_age_days": cfg.limits.max_age_days,
         "skip_folders": cfg.unjudged_folders(),
-        "teacher": cfg.models.judge,
+        "judge": cfg.models.judge,
         "budget": cfg.models.daily_budget_usd,
         "estimated_models": store.estimated_usage_models(conn),
         **counts,
@@ -316,7 +317,7 @@ def _folder_row(
         "cut": cut,
         "pending": 0,
         "inflight": 0,
-        "floor": cfg.cutoff_for(folder),
+        "cutoff": cfg.cutoff_for(folder),
         "scored": (folder or "") not in skip,
     }
 
@@ -345,6 +346,7 @@ def write_live(
     try:
         snap = dict(snap) if snap is not None else snapshot(conn, cfg)
         snap["now"] = snap["now"].isoformat() if not isinstance(snap["now"], str) else snap["now"]
+        snap = {"schema": LIVE_SCHEMA, **snap}  # the contract in docs/json.md
         out_dir = cfg.root / cfg.dashboard_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / LIVE_FILE
@@ -523,7 +525,7 @@ def _text_folders(snap: dict[str, Any]) -> list[str]:
     for f in snap["folders"][:30]:
         if not f["unread"] and not f["cut"]:
             continue
-        cutoff = "never" if f["floor"] is None else (f"{f['floor']}" if f["scored"] else "not judged")
+        cutoff = "never" if f["cutoff"] is None else (f"{f['cutoff']}" if f["scored"] else "not judged")
         lines.append(
             f"  {f['folder'][:29]:<30}{_n(f['unread']):>8}{_n(f['judged']):>8}{_n(f['pending']):>9}"
             f"{_n(f['inflight']):>8}{_n(f['good']):>6}{_n(f['cut']):>7}  {cutoff}"
@@ -641,7 +643,7 @@ def _folder_rows(folders: list[dict[str, Any]], e: Callable[[Any], str]) -> str:
     for f in folders:
         if not f["unread"] and not f["cut"]:
             continue
-        cutoff = "never" if f["floor"] is None else (str(f["floor"]) if f["scored"] else "not judged")
+        cutoff = "never" if f["cutoff"] is None else (str(f["cutoff"]) if f["scored"] else "not judged")
         rows.append(
             f"<tr><td>{e(f['folder'])}</td><td class='num'>{f['unread']:,}</td><td class='num'>{f['judged']:,}</td>"
             f"<td class='num'>{f['pending']:,}</td><td class='num'>{f['inflight']:,}</td><td class='num'>{f['good']:,}</td>"
@@ -715,7 +717,7 @@ LIVE_SCRIPT = """<script>
     set('k-cache', d.cache_hit==null ? '–' : Math.round(d.cache_hit*100)+'%');
     spark(d.series);
     var fb = document.getElementById('p-folders'); if(fb){ var h=''; (d.folders||[]).forEach(function(f){ if(!f.unread && !f.cut) return;
-      var cutoff = f.floor==null ? 'never' : (f.scored ? String(f.floor) : 'not judged');
+      var cutoff = f.cutoff==null ? 'never' : (f.scored ? String(f.cutoff) : 'not judged');
       h += '<tr><td>'+esc(f.folder)+'</td><td class="num">'+n(f.unread)+'</td><td class="num">'+n(f.judged)+'</td><td class="num">'+n(f.pending)+'</td><td class="num">'+n(f.inflight)+'</td><td class="num">'+n(f.good)+'</td><td class="num">'+n(f.cut)+'</td><td>'+esc(cutoff)+'</td></tr>'; });
       if(h && fb.innerHTML !== h) fb.innerHTML = h; }
     var bb = document.getElementById('p-batches'); if(bb){ var hb=''; (d.batches||[]).forEach(function(b){

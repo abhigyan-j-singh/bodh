@@ -183,7 +183,7 @@ def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 25\n", encoding="utf-8")
     os.utime(cfg.root / "config.yaml", (time.time() + 10, time.time() + 10))
     st = _get(base + "/api/status")
-    assert st["mode"] == "scoring-only" and st["config"]["target"] == 25
+    assert st["mode"] == "scoring-only" and st["config"]["keep"] == 25
     assert os.environ.get("BODH_HOME") != str(cfg.root)  # the child env carries it, the test process does not
 
 

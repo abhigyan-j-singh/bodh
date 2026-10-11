@@ -64,6 +64,13 @@ path = "src/bodh/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/bodh"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# the example files `bodh init` starts a project from, one copy in the repository, shipped inside the package
+"config.example.yaml" = "bodh/templates/config.example.yaml"
+".env.example" = "bodh/templates/env.example"
+"profile.example/about.md" = "bodh/templates/profile.example/about.md"
+"profile.example/learned.md" = "bodh/templates/profile.example/learned.md"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

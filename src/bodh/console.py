@@ -521,7 +521,7 @@ function apply(d){
   document.getElementById('b-stop').disabled = !running;
   var p = d.pile, s = d.spend, cfg = d.config, cp = d.cuts_pending;
   var k = [['unread', n(p.unread)], ['judged', n(p.judged)], ['with the model', n(p.inflight)], ['pending', n(p.pending)],
-           ['await re-judge', n(p.rejudge)], ['keep / cut-off', cfg.target + ' / ' + cfg.floor],
+           ['await re-judge', n(p.rejudge)], ['keep / cut-off', cfg.keep + ' / ' + cfg.cutoff],
            ['spend today', '$' + Number(s.today).toFixed(2) + ' <small>of $' + cfg.budget + '</small>'], ['7 days', '$' + Number(s.week).toFixed(2)],
            ['per 1,000', s.per_1000 == null ? '–' : '$' + Number(s.per_1000).toFixed(2)], ['cache hits', s.cache_hit == null ? '–' : Math.round(s.cache_hit*100) + '%'],
            ['judged today', n(d.today.judged)], ['cut today', n(d.today.cut)]];

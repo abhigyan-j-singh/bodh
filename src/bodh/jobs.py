@@ -370,7 +370,7 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
     now = time.time()
     return {
         "now": store.utcnow_iso(),
-        "panel": console_state(cfg),
+        "console": console_state(cfg),
         "mode": "autocut" if cfg.autocut.enabled else "scoring-only",
         "safety_tripped": store.kv_get(conn, store.SAFETY_KEY),
         "batch_mode": cfg.models.batch,
@@ -429,8 +429,8 @@ def _config_summary(cfg: Config) -> dict[str, Any]:
         "reviewer": cfg.models.reviewer,
         "profiler": cfg.models.profiler,
         "budget": cfg.models.daily_budget_usd,
-        "target": cfg.prune.keep,
-        "floor": cfg.autocut.cutoff,
+        "keep": cfg.prune.keep,
+        "cutoff": cfg.autocut.cutoff,
         "max_age_days": cfg.limits.max_age_days,
         "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
         "root": str(cfg.root),
@@ -506,7 +506,7 @@ def _status_schedule_lines(st: dict[str, Any]) -> list[str]:
     lines = [
         f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · console {jstate('console')}"
     ]
-    pn = st.get("panel") or {}
+    pn = st.get("console") or {}
     if pn.get("up"):
         lines.append(f"console: up at {pn['url']}")
     else:
@@ -524,7 +524,7 @@ def _status_work_lines(st: dict[str, Any]) -> list[str]:
         f"unread {p['unread']:,} · judged {p['judged']:,} · with the model {p['inflight']:,} · pending {p['pending']:,}"
         + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")
         + (f" · {p['rejudge']:,} await the judge's second reading" if p["rejudge"] else "")
-        + f" · prune keeps {st['config']['target']} · cut-off {st['config']['floor']}"
+        + f" · prune keeps {st['config']['keep']} · cut-off {st['config']['cutoff']}"
     ]
     c = st["cuts_pending"]
     if c["untagged"] or c["unmarked"]:

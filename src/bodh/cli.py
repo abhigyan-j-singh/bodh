@@ -1,52 +1,62 @@
-"""bodh: keeps your BazQux unread list worth reading.
-
-bodh doctor [--live]      check config, secrets, prompts; --live also logs in and calls the models
-bodh run [--shadow]       the timer's job: feedback, new articles, judgments, tags, autocut, dashboard, heartbeat
-bodh catch-up             one pass over everything pending with the quick judge; cuts nothing
-bodh progress [--watch]   judged, with the model, pending, rate, ETA, by folder; batches; the log
-bodh prune                cut to prune.keep (default 40); or --fraction 0.3; or --below 65
-bodh undo                 reverse the last cut
-bodh clear-old --days N   mark everything older than N days read, stars and protections exempt
-bodh status | why ID      the whole system at a glance; why one article got its score
-bodh console              the console in the browser: status, run, stop, prune, undo, log
-bodh stop [--all]         stop what is running; --all stops everything incl. the schedule and the console
-bodh schedule             show, pause, resume or kick the launchd jobs
-bodh autocut on|off       the automatic cut below the cut-off, or scoring-only mode
-bodh mark ID great|…      your verdict on an article; `rescue` brings a cut one back
-bodh steer more|less "x"  more or less of a concept, from the next run
-bodh weekly | report      Sunday's profile rewrite and note; the monthly feed report
-"""
+"""The command line: argument parsing and printing only. Every command calls `bodh.api.App`,
+which the console and the MCP server call too. The commands come in eight groups named by when
+they are used (`bodh --help` lists them); each has examples at the end of its own help."""
 
 from __future__ import annotations
 
 import functools
-import json
 import logging
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
+import click
 import typer
 
-from . import __version__, dashboard, feedback, logs, profiler, recovery, report, store
-from . import cutting as cutmod
-from . import run as runmod
-from .config import Config, Secrets, keychain_set, load_config, load_secrets, write_env_value
+from . import __version__, api, store
+from .config import Config, load_config, system_timezone
 from .errors import BodhError, ConfigError, LockedError
-from .ids import normalize_item_id
-from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
-from .providers.base import model_name, same_model
+from .locks import AlreadyRunning
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
+HELP = "bodh (बोध): keeps your BazQux unread list worth reading."
+
+EPILOG = """\
+\b
+Set up        init, doctor, keys, models, version
+Every run     run, catch-up, serve
+Look          status, progress, why, find, list
+Cut           prune, undo, clear-old
+Teach         mark, steer, profile, tags, eval
+Control       stop, schedule, autocut, safety, console
+Housekeeping  backup, rebuild, weekly, report, dashboard, upgrade
+
+\b
+Every command takes -v for debug lines; --json prints one object (docs/json.md); --dry-run
+shows and changes nothing; --yes skips the question. Exit codes: 1 an error, 2 configuration,
+3 BazQux, 4 the model, 5 a run in progress, 130 stopped. Errors are one line on stderr.
+Shell completion: bodh --install-completion.
+"""
+
+app = typer.Typer(
+    name="bodh",
+    help=HELP,
+    epilog=EPILOG,
+    no_args_is_help=True,
+    add_completion=True,
+    rich_markup_mode=None,
+    pretty_exceptions_show_locals=False,
+)
 log = logging.getLogger(__name__)
 
 EXIT_CONFIG = 2  # no usable config.yaml
 VERBOSE = typer.Option(False, "-v", "--verbose", help="Debug-level log lines in the terminal.")
+JSON = typer.Option(False, "--json", help="One JSON object on stdout, nothing else.")
+_secret_values: list[str] = []  # what `_fail` must never print, whatever an error message carries
 
 
 def _config() -> Config:
-    """config.yaml, or a one-line refusal: every command but `version` needs it."""
+    """config.yaml, or a one-line refusal: every command but `version` and `init` needs it."""
     try:
         return load_config()
     except ConfigError as exc:
@@ -57,16 +67,12 @@ def _config() -> Config:
         raise
 
 
-_secret_values: list[str] = []  # what `_fail` must never print, whatever an error message carries
-
-
-def _ctx(verbose: bool = False) -> runmod.Context:
+def _app(verbose: bool = False) -> api.App:
+    """The project, opened: configuration, secrets (remembered for the scrubber), logging."""
     cfg = _config()
-    secrets = load_secrets(cfg.root)
-    _secret_values[:] = secrets.values()
-    logs.setup_logging(cfg.root / cfg.data_dir, verbose, secrets=_secret_values)
-    conn = store.connect(cfg.db_path)
-    return runmod.Context(cfg, secrets, conn)
+    found = api.App(cfg=cfg, verbose=verbose)
+    _secret_values[:] = found.secrets.values()
+    return found
 
 
 def _fail(msg: str, code: int = 1) -> None:
@@ -86,18 +92,155 @@ def _handled(fn: Any) -> Any:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except LockedError as exc:
-            _fail(str(exc) or "another run is in progress; `bodh stop` it or wait", exc.exit_code)
+        except (LockedError, AlreadyRunning) as exc:
+            _fail(str(exc) or "another run is in progress; `bodh stop` it or wait", 5)
         except BodhError as exc:
             _fail(str(exc), exc.exit_code)
 
     return wrapper
 
 
+def _emit(payload: dict[str, Any]) -> None:
+    typer.echo(api.dumps(api.with_schema(payload)))
+
+
+def _interactive() -> bool:
+    """Someone is at the keyboard (so a question can be asked); a script or launchd is not."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _renamed(old: str, new: str) -> None:
+    """The one line an old command name prints before running the new one (one release)."""
+    typer.echo(
+        f"note: `bodh {old}` is now `bodh {new}`; the old name goes away in the next release", err=True
+    )
+
+
+# == Set up ===========================================================================
+
+
 @app.command()
 @_handled
-def version(verbose: bool = VERBOSE) -> None:
+def version(
+    check: bool = typer.Option(False, "--check", help="Also ask PyPI for the newest release."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """The version of bodh, and with --check the newest on PyPI.
+
+    \b
+    Examples:
+      bodh version
+      bodh version --check
+    """
+    from . import upgrade
+
+    newest = upgrade.newest_on_pypi() if check else None
+    if as_json:
+        _emit({"version": __version__, "newest": newest, "channel": upgrade.channel().name})
+        return
     typer.echo(f"bodh {__version__}")
+    if check:
+        typer.echo(upgrade.check_text(newest))
+
+
+@app.command()
+@_handled
+def init(
+    directory: Path | None = typer.Argument(None, help="Where the project goes (default ~/bodh)."),
+    bazqux_email: str | None = typer.Option(None, "--bazqux-email", help="Your BazQux login."),
+    bazqux_password: str | None = typer.Option(
+        None, "--bazqux-password", help="Its password (or set BAZQUX_PASSWORD in the environment)."
+    ),
+    provider: str | None = typer.Option(
+        None, "--provider", help="anthropic, openai, gemini, openrouter or openai-compatible."
+    ),
+    key: str | None = typer.Option(None, "--key", help="The provider's API key (or the service's base URL)."),
+    judge: str | None = typer.Option(None, "--judge", help="The judge, as provider/model-id."),
+    who: str | None = typer.Option(None, "--who", help="Profile: who you are."),
+    knows: str | None = typer.Option(None, "--knows", help="Profile: what you already know well."),
+    goal: str | None = typer.Option(None, "--goal", help="Profile: what reading is for this year."),
+    decisions: str | None = typer.Option(None, "--decisions", help="Profile: the decisions in front of you."),
+    never: str | None = typer.Option(None, "--never", help="Profile: what is never worth attention."),
+    timezone: str | None = typer.Option(None, "--timezone", help="IANA name; default the machine's."),
+    live: bool = typer.Option(
+        True, "--live/--no-live", help="Check the login and the key with one call each."
+    ),
+    install_schedule: bool | None = typer.Option(
+        None, "--install-schedule/--no-install-schedule", help="Schedule the jobs when doctor passes."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Take the defaults for anything not given."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """A new project in one sitting: the directory, your BazQux login, a provider and its key
+    (each checked live), five questions that become your profile, the timezone; then doctor
+    runs and the schedule is offered. Every answer has a flag, for scripts.
+
+    \b
+    Examples:
+      bodh init                               the questions, one by one
+      bodh init ~/reading --provider openai --judge openai/gpt-5-mini
+      bodh init --yes --bazqux-email EMAIL --key KEY --who "..." --knows "..." \\
+                --goal "..." --decisions "..." --never "..." --no-live
+    """
+    import os
+
+    from . import init as initmod
+
+    def ask(text: str, given: str | None, default: str = "", hide: bool = False) -> str:
+        if given is not None:
+            return given
+        if yes or not _interactive():
+            return default
+        return str(typer.prompt(text, default=default, hide_input=hide, show_default=bool(default)))
+
+    answers = initmod.Answers(
+        directory=Path(
+            ask(
+                "Where does the project go?",
+                str(directory) if directory else None,
+                str(initmod.default_directory()),
+            )
+        )
+    )
+    answers.bazqux_email = ask("BazQux e-mail", bazqux_email)
+    answers.bazqux_password = ask(
+        "BazQux password", bazqux_password or os.environ.get("BAZQUX_PASSWORD"), hide=True
+    )
+    answers.provider = ask(
+        "Model provider (anthropic, openai, gemini, openrouter, openai-compatible)", provider, "anthropic"
+    )
+    key_prompt = (
+        "The service's base URL (e.g. http://localhost:11434/v1)"
+        if answers.provider == "openai-compatible"
+        else f"{answers.provider} API key"
+    )
+    answers.key = ask(key_prompt, key, hide=answers.provider != "openai-compatible")
+    answers.judge = ask("The judge (provider/model-id)", judge, initmod.default_judge(answers.provider))
+    given = {"who": who, "knows": knows, "goal": goal, "decisions": decisions, "never": never}
+    for name, question in initmod.QUESTIONS:
+        answers.about[name] = ask(question, given[name])
+    answers.timezone = ask("Timezone (IANA name)", timezone, system_timezone())
+    answers.live = live
+    if install_schedule is None:
+        install_schedule = (
+            False
+            if (yes or not _interactive())
+            else typer.confirm("Schedule the jobs on this machine?", default=True)
+        )
+    answers.install_schedule = install_schedule
+    _secret_values[:] = [v for v in (answers.bazqux_password, answers.key, answers.bazqux_email) if v]
+    outcome = initmod.init(answers, say=typer.echo)
+    if not outcome.doctor_ok:
+        _fail("not ready yet: fix what doctor lists above, then `bodh doctor` again", 1)
+    typer.echo(
+        f"ready: {outcome.root}. Next: `cd {outcome.root}` (or export BODH_HOME={outcome.root}), "
+        "`bodh run --shadow` for a first scoring-only pass"
+        + ("" if answers.install_schedule else ", `bodh schedule install` to schedule the jobs")
+    )
 
 
 @app.command()
@@ -107,246 +250,127 @@ def doctor(
     values: bool = typer.Option(False, "--values", help="Print every setting in effect with its source."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """Connectivity and configuration checks. Run after every update. Exits 1 when a check
-    fails, so an installer stops on a broken install."""
-    cfg = _config()
-    secrets = load_secrets(cfg.root)
-    problems: list[str] = []
+    """Configuration and connectivity checks, one line each. Exits 1 when a check fails, so an
+    installer stops on a broken install. Run after every update.
 
-    def problem(text: str) -> None:
-        problems.append(text)
-        typer.echo(text)
-
-    _doctor_config(cfg)
-    if values:
-        for key, value, source in cfg.values_in_effect():
-            typer.echo(f"   {key} = {value!r}  ({source})")
-    _doctor_profile(cfg, problem)
-    _doctor_prompts(cfg, problem)
-    _doctor_secrets(secrets, problem, cfg)
-    conn = store.connect(cfg.db_path)
-    _doctor_database(cfg, conn, problem)
-    if live and not problems:
-        _doctor_live(cfg, secrets, conn, problem)
-    elif live:
-        typer.echo("live checks skipped until the problems above are fixed")
-    if problems:
-        typer.echo(f"\n{len(problems)} problem(s); see above", err=True)
+    \b
+    Examples:
+      bodh doctor               config, profile, prompts, keys, database
+      bodh doctor --live        also BazQux and each role's model (a few cents)
+      bodh doctor --values      every setting with where it came from
+    """
+    found = _app(verbose)
+    report = found.doctor(live=live, values=values, say=typer.echo)
+    if report.problems:
+        typer.echo(f"\n{len(report.problems)} problem(s); see above", err=True)
         raise typer.Exit(1)
     typer.echo("ok")
 
 
-def _doctor_config(cfg: Config) -> None:
-    typer.echo(f"root: {cfg.root}")
-    typer.echo(f"timezone: {cfg.timezone} (from {cfg.timezone_source})")
-    typer.echo(
-        f"models: judge={cfg.models.judge} reviewer={cfg.models.reviewer} profiler={cfg.models.profiler}"
-        f" quick judge={cfg.catch_up.model} budget=${cfg.models.daily_budget_usd}/day"
-    )
-    mode = (
-        "batch (half price; judgments arrive on the next run)"
-        if cfg.models.batch
-        else f"synchronous ({cfg.limits.parallel_calls} calls at once)"
-    )
-    typer.echo(
-        f"mode: {mode} · prompt {cfg.judge.prompt_version} · {cfg.judge.articles_per_call} articles per call"
-        f" · articles older than {cfg.limits.max_age_days} days are never judged"
-    )
-    typer.echo(
-        f"autocut: {'on' if cfg.autocut.enabled else 'off (scoring-only mode)'}, cut-off {cfg.autocut.cutoff}, "
-        f"at most {cfg.autocut.max_per_run}/run · prune keeps {cfg.prune.keep} · folders {list(cfg.folders) or 'none'}"
-    )
-    typer.echo(
-        f"home angle: {cfg.judge.home_angle!r} (+{cfg.judge.home_bonus})"
-        if cfg.judge.home_angle
-        else "home angle: none (judge.home_angle)"
-    )
-    if cfg.old_keys:
-        typer.echo(
-            f"config.yaml: {len(cfg.old_keys)} old key name(s), still read for one release; rename them:"
-        )
-        for move in cfg.old_keys:
-            typer.echo(f"   {move}")
+@app.command()
+@_handled
+def keys(
+    action: str = typer.Argument("list", help="list, or set <provider>"),
+    provider: str | None = typer.Argument(
+        None, help="anthropic, openai, gemini, openrouter or openai-compatible"
+    ),
+    keychain: bool = typer.Option(
+        False, "--keychain", help="Store in the system keychain instead of .env (pip install bodh[keychain])."
+    ),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """Which provider keys are set (never a value, never a prefix), or set one with hidden
+    input: .env with owner-only permissions, or the keychain. Lookup order: .env, the
+    environment, the keychain.
 
-
-def _doctor_profile(cfg: Config, problem: Any) -> None:
-    if cfg.about_is_example():
-        problem(
-            "about: STILL THE EXAMPLE (profile/about.md describes an invented student): replace every paragraph "
-            "with your own and delete the comment at the top"
-        )
-    elif cfg.read_about():
-        old = (
-            " (as profile/seed.md, the old name; install.sh renames it)"
-            if cfg.about_path.name == "seed.md"
-            else ""
-        )
-        typer.echo("about: found" + old)
-    else:
-        problem(
-            "about: MISSING (profile/about.md): the judge cannot judge for a student it knows nothing about"
-        )
-    typer.echo(f"learned profile: {'found' if cfg.read_learned() else 'missing (will start empty)'}")
-
-
-def _doctor_prompts(cfg: Config, problem: Any) -> None:
-    from .judge import PROMPTS_DIR, load_prompt
-
-    for name in (cfg.judge.prompt_version, "review.v1", "profiler.v1"):
-        try:
-            load_prompt(name, cfg.root)
-            typer.echo(f"prompt {name}: ok")
-        except Exception as exc:  # whatever stopped the read: the line names it and doctor exits 1
-            problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
-
-
-def _doctor_secrets(secrets: Secrets, problem: Any, cfg: Config | None = None) -> None:
-    from .llm import secret_field
-    from .providers.base import REQUIRED_SECRET, ModelRef
-
-    if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
-        typer.echo("bazqux credentials: set")
-    else:
-        problem("bazqux credentials: MISSING (BAZQUX_EMAIL, BAZQUX_PASSWORD in .env)")
-    roles = (
-        [
-            ("judge", cfg.models.judge),
-            ("reviewer", cfg.models.reviewer),
-            ("profiler", cfg.models.profiler),
-            ("quick judge", cfg.catch_up.model),
-        ]
-        if cfg is not None
-        else [("judge", "claude-sonnet-5-5")]
-    )
-    needed: dict[str, list[str]] = {}
-    for role, model in roles:
-        needed.setdefault(ModelRef.parse(model).provider, []).append(role)
-    for provider, used_by in needed.items():
-        name = REQUIRED_SECRET[provider]
-        if secrets.is_set(secret_field(provider)):
-            typer.echo(f"{provider} key: set ({', '.join(used_by)})")
-        else:
-            problem(f"{provider} key: MISSING ({name} in .env; used by the {', '.join(used_by)})")
-    hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
-    typer.echo(f"heartbeat url: {hb}")
-    unpriced = [m for _r, m in roles if cfg is not None and not cfg.models.has_price(m)]
-    if unpriced:
-        typer.echo(
-            f"unpriced models (charged as the dearest known until models.prices_per_mtok names them): {sorted(set(unpriced))}"
-        )
-
-
-def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
-    articles = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-    typer.echo(f"database: {cfg.db_path} ({articles} articles, schema v{store.schema_version(conn)})")
-    for pragma in ("quick_check", "integrity_check"):
-        verdict = conn.execute(f"PRAGMA {pragma}").fetchone()[0]
-        if verdict != "ok":
-            problem(f"database {pragma}: {verdict} (restore data/bodh.db from a backup)")
+    \b
+    Examples:
+      bodh keys                     one line per provider: set or not set
+      bodh keys set openai          asks for the key, writes .env
+      bodh keys set gemini --keychain
+    """
+    found = _app(verbose)
+    if action == "list":
+        rows = found.keys()
+        if as_json:
+            _emit({"keys": rows})
             return
-    typer.echo("database integrity: ok")
-    kept = recovery.backups(cfg)
-    typer.echo(
-        f"backups: {len(kept)}" + (f", newest {kept[-1].name}" if kept else " (the run makes one a day)")
-    )
+        for row in rows:
+            extra = " (the base URL; OPENAI_COMPATIBLE_API_KEY is optional)" if row["optional"] else ""
+            typer.echo(
+                f"{row['provider']:<18} {row['variable']:<28} {'set' if row['set'] else 'not set'}{extra}"
+            )
+        return
+    if action != "set" or not provider:
+        _fail("say `bodh keys list` or `bodh keys set <provider>`")
+        return
+    from .providers.base import PROVIDERS
+
+    if provider not in PROVIDERS:
+        _fail(f"unknown provider {provider!r}; one of {', '.join(PROVIDERS)}")
+        return
+    value = typer.prompt(PROVIDERS[provider], hide_input=True, default="", show_default=False).strip()
+    if not value:
+        _fail("nothing entered; the key is unchanged")
+        return
+    typer.echo(found.set_key(provider, value, keychain=keychain))
+    if provider == "openai-compatible":
+        url = typer.prompt(
+            "OPENAI_COMPATIBLE_BASE_URL (where the service is, e.g. http://localhost:11434/v1)", default=""
+        ).strip()
+        if url:
+            path = found.set_env_value("OPENAI_COMPATIBLE_BASE_URL", url)
+            typer.echo(f"OPENAI_COMPATIBLE_BASE_URL: written to {path}")
 
 
-def _doctor_live(cfg: Config, secrets: Secrets, conn: Any, problem: Any) -> None:
-    """Log in to BazQux and call each role's model once (a few cents); every failure is a line."""
-    ctx = runmod.Context(cfg, secrets, conn)
-    try:
-        _doctor_live_bazqux(ctx, problem)
-    except Exception as exc:  # doctor reports, never crashes: the line carries the cause
-        problem(f"bazqux: FAILED ({exc})")
-    try:
-        _doctor_live_models(ctx, problem)
-    except Exception as exc:  # the same: a rejected key or model id is a line, and exit 1
-        problem(f"models: FAILED ({exc})")
+@app.command()
+@_handled
+def models(
+    action: str = typer.Argument("list", help="list, or compare"),
+    with_model: str | None = typer.Option(
+        None, "--with", help="compare: the second model, as provider/model-id."
+    ),
+    sample: int = typer.Option(
+        50, "--sample", min=1, max=500, help="compare: how many judged unread articles."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="compare: skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The roles and their models, the providers with keys, the prices and the capabilities;
+    or compare the judge with a second model on a sample of already-judged unread articles
+    (band agreement, the largest disagreements, cost per 1,000, seconds per article).
+    Nothing stored changes.
+
+    \b
+    Examples:
+      bodh models
+      bodh models compare --with openai/gpt-5-mini
+      bodh models compare --with gemini/gemini-2.5-flash --sample 20 --yes
+    """
+    from . import comparing
+
+    found = _app(verbose)
+    if action == "list":
+        typer.echo(found.models_text())
+        return
+    if action != "compare":
+        _fail("say `bodh models list` or `bodh models compare --with provider/model`")
+        return
+    if not with_model:
+        _fail("compare needs --with provider/model-id")
+        return
+    plan = found.compare_plan(with_model, sample)
+    typer.echo(plan["preview"])
+    if plan["n"] == 0:
+        return
+    if not yes and not typer.confirm("Judge them with both models?"):
+        raise typer.Exit(0)
+    result = found.compare(with_model, sample, on_progress=lambda d, t: typer.echo(f"  {d}/{t}", err=True))
+    typer.echo(comparing.render_comparison(result))
 
 
-def _doctor_live_bazqux(ctx: runmod.Context, problem: Any) -> None:
-    cfg = ctx.cfg
-    ctx.client.user_info()
-    typer.echo("bazqux login: ok")
-    unread = ctx.client.unread_ids()
-    typer.echo(f"bazqux unread: {len(unread)}")
-    subs = ctx.client.subscriptions()
-    folders = sorted({f for s in subs for f in s.folders})
-    typer.echo(f"bazqux feeds: {len(subs)} in folders {folders}")
-    tags = ctx.client.tags()
-    typer.echo(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
-    if f"user/-/label/{cfg.protect.must_read_stream}" in tags:
-        typer.echo(f"must-read stream '{cfg.protect.must_read_stream}': present")
-    else:
-        problem(
-            f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
-            "protect.must_read_stream)"
-        )
-    unknown = [f for f in cfg.folders if f not in folders]
-    if unknown:
-        problem(f"config folders not in BazQux: {unknown}")
-    if unread:
-        items, _ = ctx.client.contents([r.id for r in unread[:3]])
-        for it in items:
-            typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
-
-
-def _doctor_live_other_roles(ctx: runmod.Context, judge: Any, probe: dict[str, Any], problem: Any) -> None:
-    """The profiler and the quick judge, once each when they are not the models probed already:
-    a few tokens, so a wrong id or a missing key shows here and not on Sunday or in a backlog."""
-    cfg = ctx.cfg
-    probed = {model_name(cfg.models.judge), model_name(cfg.models.reviewer)}
-    if model_name(cfg.models.profiler) not in probed:
-        text = ctx.llm.complete(
-            cfg.models.profiler, "Answer with one word.", "Say ok.", None, "doctor", max_tokens=5
-        )
-        if text.strip():
-            typer.echo(f"profiler ({cfg.models.profiler}): ok")
-        else:
-            problem(f"profiler ({cfg.models.profiler}): call ok, empty answer")
-        probed.add(model_name(cfg.models.profiler))
-    if model_name(cfg.catch_up.model) not in probed:
-        quick_cfg = cfg.model_copy(deep=True)
-        quick_cfg.models.judge = cfg.catch_up.model
-        quick = type(judge)(quick_cfg, ctx.llm, ctx.conn, context=judge.context, purpose="doctor")
-        if quick.judge_batch([probe], None).get("probe"):
-            typer.echo(f"quick judge ({cfg.catch_up.model}): ok")
-        else:
-            problem(f"quick judge ({cfg.catch_up.model}): call ok, no judgment parsed")
-
-
-def _doctor_live_models(ctx: runmod.Context, problem: Any) -> None:
-    from .judge import Judge, concept_context
-
-    cfg, conn = ctx.cfg, ctx.conn
-    judge = Judge(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
-    probe = {
-        "id": "probe",
-        "feed_title": "doctor",
-        "folder": None,
-        "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
-        "url": "https://example.com/probe",
-        "author": "doctor",
-        "published": None,
-        "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once.",
-    }
-    verdicts = judge.judge_batch([probe], None)  # type: ignore[list-item]
-    v = verdicts.get("probe")
-    if v:
-        typer.echo(
-            f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}"
-        )
-    else:
-        problem(f"judge ({cfg.models.judge}): call ok, no judgment parsed")
-    second = judge.review(probe, None)  # type: ignore[arg-type]
-    if second is not None:
-        typer.echo(f"review ({cfg.models.reviewer}): ok")
-    else:
-        problem(f"review ({cfg.models.reviewer}): FAILED")
-    _doctor_live_other_roles(ctx, judge, probe, problem)
-    typer.echo(
-        f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
-    )
+# == Every run ========================================================================
 
 
 @app.command()
@@ -367,24 +391,23 @@ def run(
     rejudge: bool = typer.Option(
         False, "--rejudge", help="Have the judge read again every unread article another model judged."
     ),
+    as_json: bool = JSON,
     verbose: bool = VERBOSE,
 ) -> None:
-    """One full pass. This is what launchd runs every 30 minutes."""
-    ctx = _ctx(verbose)
+    """One full pass: feedback, new articles, judgments, tags, autocut, the dashboard, the
+    heartbeat. This is what the schedule runs every 30 minutes. Answers 0 when another run
+    holds the lock.
+
+    \b
+    Examples:
+      bodh run                      the scheduled pass
+      bodh run --shadow             the same, cutting nothing
+      bodh run --sync --limit 20    twenty judgments now, no batch
+      bodh run -v                   the phases as they happen
+    """
+    found = _app(verbose)
     try:
-        with (
-            run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"),
-            graceful_sigterm(),
-            time_limit(runmod.RUN_TIMEOUT_SECONDS),
-        ):
-            res = runmod.run(
-                ctx,
-                score_limit=limit,
-                enforce=(ctx.cfg.autocut.enabled and not shadow),
-                workers=workers,
-                sync=sync,
-                rejudge=rejudge,
-            )
+        res = found.run(shadow=shadow, limit=limit, sync=sync, workers=workers, rejudge=rejudge)
     except AlreadyRunning:
         typer.echo("another run is in progress; skipping")
         raise typer.Exit(0) from None
@@ -396,14 +419,16 @@ def run(
     except Exception as exc:  # a bug, not a refusal: one line here, the traceback is in the log
         _fail(f"run failed: {exc}", 1)
         return
-    typer.echo(res.summary())
+    if as_json:
+        _emit({"run": _run_dict(res)})
+    else:
+        typer.echo(res.summary())
 
 
-def _renamed(old: str, new: str) -> None:
-    """The one line an old command name prints before running the new one (one release)."""
-    typer.echo(
-        f"note: `bodh {old}` is now `bodh {new}`; the old name goes away in the next release", err=True
-    )
+def _run_dict(res: Any) -> dict[str, Any]:
+    from dataclasses import asdict
+
+    return {**asdict(res), "summary": res.summary()}
 
 
 @app.command(hidden=True)
@@ -419,47 +444,14 @@ def score(
     run(shadow=True, limit=limit, sync=sync, workers=workers, verbose=verbose)
 
 
-@app.command()
-@_handled
-def progress(
-    watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
-    every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
-    verbose: bool = VERBOSE,
-) -> None:
-    """How far the judge has got: judged, with the model, pending, by folder; rate and ETA while a
-    run is going; batches; spend; the log."""
-    from . import progress as progressmod
-    from .logs import log_file
-
-    cfg = _config()
-    conn = store.connect(cfg.db_path)
-    while True:
-        snap = progressmod.snapshot(conn, cfg)
-        snap["log"] = progressmod.log_tail(log_file(cfg.root / cfg.data_dir), 10)
-        text = progressmod.render_text(snap)
-        if watch:
-            typer.echo("\033[2J\033[H" + text + f"\n\n(redraws every {every}s; Ctrl-C to stop)")
-            try:
-                time.sleep(max(2, every))
-            except KeyboardInterrupt:
-                raise typer.Exit(0) from None
-        else:
-            typer.echo(text)
-            return
-
-
 @app.command("catch-up")
 @_handled
 def catch_up(
     workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
-    chunk: int = typer.Option(
-        1000, "--chunk", min=1, max=5000, help="Articles per round (texts held in memory)."
-    ),
-    all_ages: bool = typer.Option(
-        False, "--all-ages", help="Also unread articles older than limits.max_age_days."
-    ),
+    chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
+    all_ages: bool = typer.Option(False, "--all-ages", help="Also articles older than limits.max_age_days."),
     model: str | None = typer.Option(
-        None, "--model", help="Default catch_up.model, the quick judge; name the judge for a full-price pass."
+        None, "--model", help="The model to judge with; default catch_up.model."
     ),
     budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars."),
     max_seconds: float | None = typer.Option(
@@ -475,36 +467,55 @@ def catch_up(
 ) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous, many
     calls at once, with the quick judge unless --model says otherwise. Judges and tags; cuts
-    nothing; the judge reads again what the quick judge rates highly (catch_up.rejudge_at). Stop
-    it with Ctrl-C and run it again to continue. Watch it with `bodh progress --watch`."""
-    ctx = _ctx(verbose)
+    nothing; the judge reads again what the quick judge rates highly (catch_up.rejudge_at).
+    Ctrl-C and run it again to continue. Watch it with `bodh progress --watch`.
+
+    \b
+    Examples:
+      bodh catch-up                           the quick judge over the pending pile
+      bodh catch-up --all-ages --budget 40    the whole backlog, today's cap raised
+      bodh catch-up --model claude-sonnet-5-5 --max-seconds 600
+      bodh catch-up --rejudge                 the judge re-reads what other models judged
+    """
+    from . import logs
+
+    found = _app(verbose)
     if not verbose:  # the progress line owns the terminal; the log file keeps the detail
         logs.quiet_terminal()
-    cfg = ctx.cfg
-    cfg.check_about()
-    if all_ages:
-        cfg.limits.max_age_days = None
-    judge = model or (cfg.models.judge if rejudge else cfg.catch_up.model)
-    if rejudge and not same_model(judge, cfg.models.judge):
-        _fail(f"--rejudge is the judge's pass ({cfg.models.judge}): drop --model, or name the judge")
+    plan = found.catch_up_plan(model=model, all_ages=all_ages, budget=budget, rejudge=rejudge)
+    if plan.pending == 0:
+        typer.echo(
+            "nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)")
+        )
         return
-    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget, yes, rejudge)
-    if pending == 0:
-        return
-    show = _catch_up_progress_line(pending, time.monotonic())
+    again = (
+        f" The judge reads again what it rates {plan.rejudge_at:.0f} or more, on the next runs."
+        if plan.quick and plan.rejudge_at is not None
+        else ""
+    )
+    typer.echo(
+        f"{plan.pending:,} articles pending{' (any age)' if all_ages else ''}; about ${plan.estimate_usd:.2f} "
+        f"with {plan.judge}, {workers} calls at once.{again}"
+    )
+    if plan.over_budget and budget is None:
+        typer.echo(
+            f"today's budget has ${plan.budget_left:.2f} left; pass --budget {plan.budget_needed:.0f} "
+            "to let the catch-up finish"
+        )
+    if not yes and not typer.confirm("Start the catch-up?"):
+        raise typer.Exit(0)
+    show = _catch_up_progress_line(plan.pending, time.monotonic())
     try:
-        with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
-            total = runmod.catch_up(
-                ctx,
-                workers=workers,
-                chunk=chunk,
-                all_ages=all_ages,
-                budget=budget,
-                on_progress=show,
-                model=judge,
-                max_seconds=max_seconds,
-                rejudge=rejudge,
-            )
+        total = found.catch_up(
+            workers=workers,
+            chunk=chunk,
+            all_ages=all_ages,
+            budget=budget,
+            model=model,
+            max_seconds=max_seconds,
+            rejudge=rejudge,
+            on_progress=show,
+        )
     except AlreadyRunning:
         _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again", 5)
         return
@@ -520,7 +531,7 @@ def _catch_up_progress_line(pending: int, started: float) -> Any:
         mins = max(1e-6, (time.monotonic() - started) / 60)
         rate = done / mins
         left_n = max(0, pending - done)
-        eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
+        eta = f"{left_n / rate:.0f} min" if rate > 0 else "-"
         typer.echo(
             f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
             f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   ",
@@ -528,62 +539,6 @@ def _catch_up_progress_line(pending: int, started: float) -> Any:
         )
 
     return show
-
-
-def _catch_up_preview(
-    ctx: runmod.Context,
-    judge: str,
-    workers: int,
-    all_ages: bool,
-    budget: float | None,
-    yes: bool,
-    rejudge_all: bool = False,
-) -> int:
-    """How many articles are pending and what the pass will cost, then the confirmation unless
-    `yes`; 0 when there is nothing to do."""
-    from .judge import Judge
-    from .providers.base import model_name
-
-    cfg = ctx.cfg
-    quick = not same_model(judge, cfg.models.judge)
-    rejudge = None if quick else Judge.rejudge_rule(cfg)
-    if rejudge_all and not quick:
-        rejudge = (model_name(judge), 0.0)
-    pending = store.unscored_unread_count(
-        ctx.conn,
-        cfg.judge.prompt_version,
-        cfg.limits.max_age_days,
-        cfg.unjudged_folders(),
-        exclude_inflight=True,
-        rejudge=rejudge,
-    )
-    if pending == 0:
-        typer.echo(
-            "nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)")
-        )
-        return 0
-    if not cfg.models.has_price(judge):
-        _fail(f"no price for {judge} in models.prices_per_mtok; add it to config.yaml first")
-    p_in, p_out = cfg.models.price(judge)
-    est = pending * (450 * p_in + 65 * p_out) / 1_000_000 * 1.1  # synchronous, prefix cached
-    left = cfg.models.daily_budget_usd - store.spent_since(ctx.conn, store.local_midnight_iso(cfg.timezone))
-    need = max(cfg.models.daily_budget_usd, cfg.models.daily_budget_usd - left + est + 1)
-    again = (
-        f" The judge reads again what it rates {cfg.catch_up.rejudge_at:.0f} or more, on the next runs."
-        if quick and cfg.catch_up.rejudge_at is not None
-        else ""
-    )
-    typer.echo(
-        f"{pending:,} articles pending{' (any age)' if all_ages else ''}; about ${est:.2f} with {judge}, "
-        f"{workers} calls at once.{again}"
-    )
-    if est > left and budget is None:
-        typer.echo(
-            f"today's budget has ${left:.2f} left; pass --budget {need:.0f} to let the catch-up finish"
-        )
-    if not yes and not typer.confirm("Start the catch-up?"):
-        raise typer.Exit(0)
-    return pending
 
 
 def _catch_up_report(total: dict[str, Any]) -> None:
@@ -626,8 +581,217 @@ def blast(
         budget=budget,
         max_seconds=max_seconds,
         yes=yes,
+        rejudge=False,
         verbose=verbose,
     )
+
+
+@app.command()
+@_handled
+def serve(
+    every: int = typer.Option(30, "--every", min=1, help="Minutes between runs."),
+    port: int = typer.Option(8766, "--port", help="The console's port."),
+    host: str = typer.Option("127.0.0.1", "--host", help="127.0.0.1 keeps the console local."),
+    no_console: bool = typer.Option(False, "--no-console", help="The schedule only."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The schedule and the console in one process: a run every --every minutes, the weekly
+    rewrite on Sunday mornings, the report on the first of the month, the console on its port.
+    For Docker, Windows, and any machine without launchd or systemd. Ctrl-C stops it.
+
+    \b
+    Examples:
+      bodh serve                     every 30 minutes, console on http://127.0.0.1:8766
+      bodh serve --every 15 --no-console
+    """
+    from . import serve as servemod
+
+    found = _app(verbose)
+    typer.echo(
+        f"serving: a run every {every} min"
+        + ("" if no_console else f", console on http://{host}:{port}")
+        + " (Ctrl-C stops it)"
+    )
+    servemod.serve(found.cfg, found.conn, every_minutes=every, host=host, port=port, console=not no_console)
+
+
+# == Look =============================================================================
+
+
+@app.command()
+@_handled
+def status(as_json: bool = JSON, verbose: bool = VERBOSE) -> None:
+    """The whole system at a glance: what is running, the schedule, the unread, spend, the last runs.
+
+    \b
+    Examples:
+      bodh status
+      bodh status --json
+    """
+    from . import jobs
+
+    found = _app(verbose)
+    st = found.status()
+    if as_json:
+        _emit({"status": st})
+        return
+    typer.echo(jobs.render_status_text(st))
+    typer.echo("\n(`bodh progress` for the unread by folder, `bodh console` for the console)")
+
+
+@app.command()
+@_handled
+def progress(
+    watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
+    every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """How far the judge has got: judged, with the model, pending, by folder; rate and ETA while
+    a run is going; batches; spend; the log.
+
+    \b
+    Examples:
+      bodh progress
+      bodh progress --watch          redraws every 5 s
+      bodh progress --json
+    """
+    from . import progress as progressmod
+
+    found = _app(verbose)
+    while True:
+        snap = found.progress()
+        if as_json:
+            _emit({"progress": snap})
+            return
+        text = progressmod.render_text(snap)
+        if watch:
+            click.clear()
+            typer.echo(text + f"\n\n(redraws every {every}s; Ctrl-C to stop)")
+            try:
+                time.sleep(max(2, every))
+            except KeyboardInterrupt:
+                raise typer.Exit(0) from None
+        else:
+            typer.echo(text)
+            return
+
+
+@app.command()
+@_handled
+def why(
+    article: str = typer.Argument(..., help="The article's id (either form) or its URL."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """One article: its score and sub-scores, the lesson, the concept, its state, your record.
+    This is the explanation of the system, one article at a time.
+
+    \b
+    Examples:
+      bodh why tag:google.com,2005:reader/item/00000000a1b2c3d4
+      bodh why https://example.org/post
+      bodh why 1234 --json
+    """
+    found = _app(verbose)
+    view = found.why(article)
+    if view is None:
+        _fail("not found (an id of either form, or the URL of an article a run has fetched)")
+        return
+    if as_json:
+        _emit({"article": view.to_dict()})
+        return
+    typer.echo(f"{view.title}\n{view.url}\nfeed: {view.feed} · folder: {view.folder}")
+    if not view.judged:
+        typer.echo("not judged yet")
+    else:
+        typer.echo(
+            f"score {view.score:.1f} (base {view.base_score:.1f}"
+            + (f", review {view.review_score:.1f}" if view.review_score is not None else "")
+            + f") · band {view.band}"
+        )
+        typer.echo(
+            f"quality {view.quality} · learning {view.learning} · fit {view.fit} · breadth {view.breadth}"
+            f" · relevance {view.relevance} · confidence {view.confidence} · kind {view.kind} · flags "
+            f"{', '.join(view.flags) or 'none'} · judged by {view.judged_by} ({view.prompt_version})"
+        )
+        typer.echo(f"concept: {view.concept}\nlesson: {view.lesson}")
+    typer.echo(
+        f"state: {view.status}"
+        + (f" ({view.cut_mode} at {view.cut_at}, run {view.cut_run_id})" if view.cut_mode else "")
+        + (" · starred" if view.starred else "")
+        + (" · protected" if view.protected else "")
+        + (" · new ground" if view.new_ground else "")
+    )
+    if view.record:
+        typer.echo("your record: " + ", ".join(f"{m['kind']} ({m['at'][:10]})" for m in view.record))
+
+
+@app.command()
+@_handled
+def find(
+    words: str = typer.Argument(..., help="Words to look for in titles and lessons (all must match)."),
+    unread: bool = typer.Option(False, "--unread", help="Only what is still unread."),
+    limit: int = typer.Option(api.FIND_LIMIT, "--limit", min=1, help="At most this many."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """Find articles by words in their title or lesson: id, score, band, state, feed, so nobody
+    types a forty-character id.
+
+    \b
+    Examples:
+      bodh find "liquid cooling"
+      bodh find seagrass --unread
+      bodh find "grant" --json
+    """
+    found = _app(verbose)
+    hits = found.find(words, unread=unread, limit=limit)
+    if as_json:
+        _emit({"query": words, "unread": unread, "hits": [h.to_dict() for h in hits]})
+        return
+    if not hits:
+        typer.echo("nothing found")
+        return
+    for h in hits:
+        score = f"{h.score:5.1f}" if h.score is not None else "   - "
+        typer.echo(
+            f"{score}  {h.band or '-':<9} {h.status or '-':<7} {h.title[:60]:<60}  [{h.feed[:24]}]  {h.id}"
+        )
+
+
+@app.command("list")
+@_handled
+def list_command(
+    band: float = typer.Option(api.LIST_BAND, "--band", min=0, max=100, help="This score and above."),
+    folder: str | None = typer.Option(None, "--folder", help="One folder only."),
+    limit: int = typer.Option(api.LIST_LIMIT, "--limit", min=1, help="At most this many."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """Today's reading list: the unread articles at --band and above, best first, each with its
+    lesson, concept and feed (the console's list, in text).
+
+    \b
+    Examples:
+      bodh list
+      bodh list --band 50 --folder Essays
+      bodh list --json
+    """
+    found = _app(verbose)
+    rows = found.reading_list(band=band, folder=folder, limit=limit)
+    if as_json:
+        _emit({"band": band, "folder": folder, "articles": [r.to_dict() for r in rows]})
+        return
+    if not rows:
+        typer.echo(f"nothing unread at {band:.0f} or above" + (f" in {folder}" if folder else ""))
+        return
+    for r in rows:
+        typer.echo(f"{r.score:5.1f}  {r.title[:70]}  [{r.feed[:24]}]")
+        typer.echo(f"       {r.lesson}" + (f"  ({r.concept})" if r.concept else "") + f"\n       {r.url}")
+
+
+# == Cut ==============================================================================
 
 
 @app.command()
@@ -640,196 +804,274 @@ def prune(
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """Cut the worst of what is still unread. Default keeps prune.keep (40). Run again to cut
-    deeper. Shows what would go and asks first, unless --yes or not in a terminal."""
+    """Cut the worst of what is still unread. Default keeps prune.keep (40), spread over
+    concepts. Shows the boundary, the counts by band and folder, the ten best that would go, and
+    asks first. Run again to cut deeper. `bodh undo` reverses it.
+
+    \b
+    Examples:
+      bodh prune --dry-run           what would go, and nothing goes
+      bodh prune                     keep the best 40
+      bodh prune --below 65 --yes    everything under 65, no question
+    """
     if sum(x is not None for x in (keep, fraction, below)) > 1:
         _fail("choose one of --keep, --fraction, --below")
     if keep is not None and keep < 0:
         _fail("--keep must be 0 or more")
     if fraction is not None and not 0 <= fraction <= 1:
         _fail("--fraction is a share between 0 and 1")
-    ctx = _ctx(verbose)
-    lock = ctx.cfg.root / ctx.cfg.data_dir
+    found = _app(verbose)
+    mode = (
+        f"--below {below:g}"
+        if below is not None
+        else f"--fraction {fraction:g}"
+        if fraction is not None
+        else f"keep {keep if keep is not None else found.cfg.prune.keep}"
+    )
     try:
-        with run_lock(lock, "prune"):
-            _, sel = runmod.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=True)
-        _show_prune(sel, dry_run=True)
-        if dry_run or not sel.cut:
+        plan = found.prune_plan(keep=keep, fraction=fraction, below=below)
+        _show_prune(plan, dry_run=dry_run)
+        if dry_run or not plan.cut:
             return
         # the question is asked with the lock released: a run must not be skipped over a prompt
-        if not yes and _interactive() and not typer.confirm(f"Cut these {len(sel.cut)} (undo reverses it)?"):
+        question = (
+            f"Cut these {plan.cut} ({mode})? It marks them read in BazQux; `bodh undo` reverses it; "
+            f"this will be run {plan.next_run_id}"
+        )
+        if not yes and _interactive() and not typer.confirm(question):
             raise typer.Exit(0)
-        with run_lock(lock, "prune"), graceful_sigterm():
-            n, sel = runmod.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
+        n, _sel = found.prune(keep=keep, fraction=fraction, below=below, confirmed=set(plan.cut_ids))
     except KeyboardInterrupt:
         _fail("stopped; the next run finishes the tags and read marks, `bodh undo` reverses the prune", 130)
         return
     if n:
-        typer.echo(f"cut {n}; `bodh undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
+        typer.echo(f"cut {n}; `bodh undo` reverses it (run {store.last_runs(found.conn, 1)[0]['id']})")
 
 
-def _interactive() -> bool:
-    """Someone is at the keyboard (so a question can be asked); a script or launchd is not."""
-    try:
-        return sys.stdin.isatty()
-    except (AttributeError, ValueError):
-        return False
-
-
-def _show_prune(sel: Any, dry_run: bool) -> None:
-    unread_scored = len(sel.cut) + len(sel.survivors)
+def _show_prune(plan: api.PrunePlan, dry_run: bool) -> None:
     verb = "would cut" if dry_run else "cut"
     typer.echo(
-        f"{verb} {len(sel.cut)} of {unread_scored} scored unread articles; boundary {sel.boundary:.0f}"
-        if sel.boundary is not None
-        else f"{verb} {len(sel.cut)} articles"
+        f"{verb} {plan.cut} of {plan.unread_scored} scored unread articles; boundary {plan.boundary:.0f} "
+        "(the lowest score that stays)"
+        if plan.boundary is not None
+        else f"{verb} {plan.cut} articles"
     )
-    if sel.cut:
-        best = sorted(sel.cut, key=lambda r: -float(r["score"]))[:10]
-        typer.echo("the best of what goes (this is the boundary you are choosing):")
-        for r in best:
-            typer.echo(f"  {r['score']:5.1f}  {(r['title'] or '')[:70]}  [{(r['feed_title'] or '')[:25]}]")
+    if not plan.cut:
+        return
+    typer.echo("by band: " + ", ".join(f"{b} {n}" for b, n in plan.by_band.items()))
+    typer.echo("by folder: " + ", ".join(f"{f} {n}" for f, n in list(plan.by_folder.items())[:12]))
+    typer.echo("the best of what goes (this is the boundary you are choosing):")
+    for r in plan.best:
+        typer.echo(f"  {r.score:5.1f}  {r.title[:66]}  [{r.feed[:22]}]")
+        if r.lesson:
+            typer.echo(f"         {r.lesson[:100]}")
 
 
 @app.command()
 @_handled
-def undo(verbose: bool = VERBOSE) -> None:
-    """Reverse the last cut: mark its articles unread again and remove the cut tag."""
-    ctx = _ctx(verbose)
-    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"), graceful_sigterm():
-        run_id, n = runmod.undo_last(ctx)
-    if run_id is None:
+def undo(
+    run_id: int | None = typer.Option(
+        None, "--run", help="The run whose cut to reverse (default: the last cut)."
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Reverse the last cut, or one run's: its articles are unread again, the cut tag removed,
+    and autocut leaves them alone from then on.
+
+    \b
+    Examples:
+      bodh undo
+      bodh undo --run 212
+    """
+    found = _app(verbose)
+    which, n = found.undo(run_id)
+    if which is None:
         typer.echo("nothing to undo")
+    elif n == 0:
+        typer.echo(f"run {which} cut nothing (or its cut was undone already)")
     else:
-        typer.echo(f"restored {n} articles from run {run_id}")
+        typer.echo(f"restored {n} articles from run {which}")
 
 
-@app.command()
+@app.command("clear-old")
 @_handled
-def backup(
-    keep: int = typer.Option(recovery.BACKUPS_KEPT, "--keep", min=1, help="Backups to keep, newest first."),
-    verbose: bool = VERBOSE,
-) -> None:
-    """Copy the database to data/backups/bodh-<date>.db (the run does this once a day too)."""
-    ctx = _ctx(verbose)
-    path = recovery.backup(ctx.conn, ctx.cfg, keep=keep)
-    typer.echo(f"backup written: {path} ({len(recovery.backups(ctx.cfg))} kept)")
-
-
-@app.command()
-@_handled
-def rebuild(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Count what would be written; write nothing."),
+def clear_old(
+    days: int = typer.Option(14, "--days", help="Everything unread older than this many days goes."),
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count, change nothing."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """After a lost database: read the band tags, the cut tag and the stars back from BazQux,
-    so nothing already judged is judged again and nothing already cut is cut again. Rebuilt
-    scores carry the band's threshold and a low confidence: autocut leaves them alone."""
-    ctx = _ctx(verbose)
-    if not dry_run and not yes and not typer.confirm("Rebuild scores and cuts from the tags in BazQux?"):
+    """Mark every unread article older than N days read and tag it `cut`. Stars, the must-read
+    stream, protected folders and rescued articles are exempt. Reversible with `bodh undo`.
+
+    \b
+    Examples:
+      bodh clear-old --days 14 --dry-run
+      bodh clear-old --days 30 --yes
+    """
+    found = _app(verbose)
+    candidates = found.clear_old_count(days)
+    typer.echo(f"{candidates} unread articles older than {days} days (stars and protections exempt)")
+    if dry_run or candidates == 0:
+        return
+    if not yes and not typer.confirm(
+        f"Mark them read? It is reversible with `bodh undo`; this will be run {found.next_run_id()}"
+    ):
         raise typer.Exit(0)
-    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "rebuild"), graceful_sigterm():
-        stats = recovery.rebuild(ctx, dry_run=dry_run)
-    typer.echo(recovery.summary(stats))
+    _, done = found.clear_old(days)
+    typer.echo(f"marked {done} read; `bodh undo` reverses it")
+
+
+@app.command(hidden=True)
+@_handled
+def bankruptcy(
+    older_than: int = typer.Option(14, "--older-than"),
+    yes: bool = typer.Option(False, "--yes"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The name before October 2026 of `clear-old --days N`."""
+    _renamed("bankruptcy --older-than N", "clear-old --days N")
+    clear_old(days=older_than, yes=yes, dry_run=dry_run, verbose=verbose)
+
+
+# == Teach ============================================================================
 
 
 @app.command()
 @_handled
-def keys(
-    action: str = typer.Argument("list", help="list, or set <provider>"),
-    provider: str | None = typer.Argument(
-        None, help="anthropic, openai, gemini, openrouter or openai-compatible"
-    ),
-    keychain: bool = typer.Option(
-        False, "--keychain", help="Store in the system keychain instead of .env (pip install bodh[keychain])."
-    ),
+def mark(
+    article: str = typer.Argument(..., help="The article's id (either form) or its URL."),
+    verdict: str = typer.Argument(..., help="great, good, meh, bad, basic, heavy, more, less or rescue"),
     verbose: bool = VERBOSE,
 ) -> None:
-    """Which provider keys are set (never a value, never a prefix), or set one: `bodh keys set openai`
-    asks for it with hidden input and writes .env with owner-only permissions (`--keychain` for the
-    system keychain). The lookup order is .env, then the environment, then the keychain."""
-    from .llm import secret_field
-    from .providers.base import PROVIDERS, REQUIRED_SECRET
+    """Your verdict on an article from the terminal, the same as its tag in BazQux: a grade
+    (great, good, meh, bad), the level missed (basic, heavy), a steer by its concept (more, less),
+    or `rescue`, which brings a cut article back unread and keeps it from every cut.
 
-    cfg = _config()
-    if action == "list":
-        secrets = load_secrets(cfg.root)
-        for name in PROVIDERS:
-            needed = REQUIRED_SECRET[name]
-            state = "set" if secrets.is_set(secret_field(name)) else "not set"
-            extra = ""
-            if name == "openai-compatible":
-                extra = " (the base URL; OPENAI_COMPATIBLE_API_KEY is optional)"
-            typer.echo(f"{name:<18} {needed:<28} {state}{extra}")
-        return
-    if action != "set" or not provider:
-        _fail("say `bodh keys list` or `bodh keys set <provider>`")
-        return
-    if provider not in PROVIDERS:
-        _fail(f"unknown provider {provider!r}; one of {', '.join(PROVIDERS)}")
-        return
-    env_name = PROVIDERS[provider]
-    value = typer.prompt(f"{env_name}", hide_input=True, default="", show_default=False).strip()
-    if not value:
-        _fail("nothing entered; the key is unchanged")
-        return
-    if keychain:
-        keychain_set(env_name, value)
-        typer.echo(f"{env_name}: stored in the keychain ({len(value)} characters)")
-    else:
-        path = write_env_value(cfg.root, env_name, value)
-        typer.echo(f"{env_name}: written to {path} ({len(value)} characters, owner-only)")
-    if provider == "openai-compatible":
-        url = typer.prompt(
-            "OPENAI_COMPATIBLE_BASE_URL (where the service is, e.g. http://localhost:11434/v1)", default=""
-        ).strip()
-        if url:
-            write_env_value(cfg.root, "OPENAI_COMPATIBLE_BASE_URL", url)
-            typer.echo(f"OPENAI_COMPATIBLE_BASE_URL: written to {cfg.root / '.env'}")
+    \b
+    Examples:
+      bodh mark https://example.org/post great
+      bodh mark 1234 rescue
+    """
+    found = _app(verbose)
+    try:
+        typer.echo(found.mark(article, verdict))
+    except AlreadyRunning:
+        _fail("a run is in progress; try again in a minute (or tag the article in BazQux)", 5)
+
+
+@app.command(hidden=True)
+@_handled
+def label(
+    article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE
+) -> None:
+    """The name before October 2026 of `mark ID great|bad`."""
+    if judgment not in ("star", "junk"):
+        _fail("judgment must be star or junk")
+    _renamed(f"label ID {judgment}", "mark ID " + ("great" if judgment == "star" else "bad"))
+    mark(article=article_id, verdict="great" if judgment == "star" else "bad", verbose=verbose)
 
 
 @app.command()
 @_handled
-def models(
-    action: str = typer.Argument("list", help="list, or compare"),
-    with_model: str | None = typer.Option(
-        None, "--with", help="compare: the second model, as provider/model-id."
-    ),
-    sample: int = typer.Option(
-        50, "--sample", min=1, max=500, help="compare: how many judged unread articles to re-judge."
-    ),
-    yes: bool = typer.Option(False, "--yes", help="compare: skip the confirmation."),
+def steer(
+    direction: str = typer.Argument(..., help="more or less"),
+    phrase: str = typer.Argument(..., help="the concept"),
     verbose: bool = VERBOSE,
 ) -> None:
-    """The roles and their models, the providers with keys present, the prices and the
-    capabilities (`list`); or `compare --with provider/model`: judge a sample of already-judged
-    unread articles with a second model and print the band agreement, the mean difference, the
-    largest disagreements, the cost per 1,000 and the seconds per article for both."""
-    from . import comparing
+    """Tell the judge now that you want more, or less, of a concept: a dated line in the learned
+    profile that it reads from the next run (the `more` and `less` tags do the same by article).
 
-    if action == "list":
-        cfg = _config()
-        typer.echo(comparing.render_models(cfg, load_secrets(cfg.root)))
+    \b
+    Examples:
+      bodh steer more "physical oceanography"
+      bodh steer less "conference announcements"
+    """
+    found = _app(verbose)
+    try:
+        typer.echo(found.steer(direction, phrase))
+    except AlreadyRunning:
+        _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
+
+
+@app.command(hidden=True)
+@_handled
+def want(phrase: str, verbose: bool = VERBOSE) -> None:
+    """The name before October 2026 of `steer more`."""
+    _renamed('want "x"', 'steer more "x"')
+    steer(direction="more", phrase=phrase, verbose=verbose)
+
+
+@app.command(hidden=True)
+@_handled
+def meh(phrase: str, verbose: bool = VERBOSE) -> None:
+    """The name before October 2026 of `steer less`."""
+    _renamed('meh "x"', 'steer less "x"')
+    steer(direction="less", phrase=phrase, verbose=verbose)
+
+
+@app.command()
+@_handled
+def profile(
+    action: str = typer.Argument("show", help="show, revert or edit"), verbose: bool = VERBOSE
+) -> None:
+    """The student profile: show it (about, then learned), go back one version of the learned
+    part, or open about.md in $EDITOR.
+
+    \b
+    Examples:
+      bodh profile
+      bodh profile edit
+      bodh profile revert
+    """
+    if action not in ("show", "revert", "edit"):
+        _fail(f"unknown action {action!r}: say show, revert or edit")
+    found = _app(verbose)
+    if action == "revert":
+        v = found.profile_revert()
+        typer.echo("nothing to revert to" if v is None else f"reverted; now version {v}")
         return
-    if action != "compare":
-        _fail("say `bodh models list` or `bodh models compare --with provider/model`")
+    if action == "edit":
+        path = found.cfg.about_path
+        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        edited = click.edit(before, extension=".md")
+        if edited is None or edited == before:
+            typer.echo("unchanged")
+            return
+        path.write_text(edited, encoding="utf-8")
+        typer.echo(f"wrote {path}; the judge reads it from the next run")
         return
-    if not with_model:
-        _fail("compare needs --with provider/model-id")
+    about, learned = found.profile()
+    typer.echo(about)
+    typer.echo("\n---\n")
+    typer.echo(learned)
+
+
+@app.command()
+@_handled
+def tags(as_json: bool = JSON, verbose: bool = VERBOSE) -> None:
+    """The vocabulary: every tag bodh writes in BazQux and every tag you can add, and what each
+    does. With `bodh why`, this is the explanation of the system.
+
+    \b
+    Examples:
+      bodh tags
+      bodh tags --json
+    """
+    found = _app(verbose)
+    rows = found.tags()
+    if as_json:
+        _emit({"tags": [t.to_dict() for t in rows]})
         return
-    ctx = _ctx(verbose)
-    plan = comparing.plan(ctx, with_model, sample)
-    typer.echo(plan["preview"])
-    if plan["n"] == 0:
-        return
-    if not yes and not typer.confirm("Judge them with both models?"):
-        raise typer.Exit(0)
-    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "compare"), graceful_sigterm():
-        result = comparing.compare(
-            ctx, with_model, sample, on_progress=lambda d, t: typer.echo(f"  {d}/{t}", err=True)
-        )
-    typer.echo(comparing.render_comparison(result))
+    typer.echo("bodh writes:")
+    for t in rows:
+        if t.writer == "bodh":
+            typer.echo(f"  {t.tag:<12} {t.meaning}")
+    typer.echo("you add (the next run reads them; a verdict stays on the article as your record):")
+    for t in rows:
+        if t.writer == "you":
+            typer.echo(f"  {t.tag:<12} {t.group:<8} {t.meaning}")
 
 
 @app.command("eval")
@@ -847,17 +1089,23 @@ def evals_command(
     verbose: bool = VERBOSE,
 ) -> None:
     """Judge the evaluation set for the example student and print the agreement by band and
-    the cost (a few cents, under --cap). The README quotes the figure with its date."""
+    the largest disagreements. A few cents.
+
+    \b
+    Examples:
+      bodh eval
+      bodh eval --model openai/gpt-5-mini --cap 0.20 --write evals/results.json
+    """
     from . import evals
 
-    ctx = _ctx(verbose)
-    items = evals.load_set(set_path or evals.SET_PATH, ctx.cfg.tags.bands)
-    judge_model = model or ctx.cfg.models.judge
+    found = _app(verbose)
+    items = evals.load_set(set_path or evals.SET_PATH, found.cfg.tags.bands)
+    judge_model = model or found.cfg.models.judge
     typer.echo(
-        f"{len(items)} articles; about ${evals.estimate_usd(ctx.cfg, len(items), judge_model):.2f} with {judge_model}"
+        f"{len(items)} articles; about ${evals.estimate_usd(found.cfg, len(items), judge_model):.2f} with {judge_model}"
     )
     summary = evals.run_eval(
-        ctx,
+        found.ctx,
         items,
         model=model,
         cap_usd=cap,
@@ -869,50 +1117,7 @@ def evals_command(
         typer.echo(f"written: {evals.write_results(summary, write)}")
 
 
-@app.command("clear-old")
-@_handled
-def clear_old(
-    days: int = typer.Option(14, "--days", help="Everything unread older than this many days goes."),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Count, change nothing."),
-    verbose: bool = VERBOSE,
-) -> None:
-    """Mark every unread article older than N days read and tag it `cut`. Stars, the must-read
-    stream, protected folders and rescued articles are exempt. Reversible with `bodh undo`."""
-    ctx = _ctx(verbose)
-    candidates, _ = runmod.clear_old(ctx, days, dry_run=True)
-    typer.echo(f"{candidates} unread articles older than {days} days (stars and protections exempt)")
-    if dry_run or candidates == 0:
-        return
-    if not yes and not typer.confirm("Mark them read?"):
-        raise typer.Exit(0)
-    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "clear-old"), graceful_sigterm():
-        _, done = runmod.clear_old(ctx, days, dry_run=False)
-    typer.echo(f"marked {done} read; `bodh undo` reverses it")
-
-
-@app.command(hidden=True)
-@_handled
-def bankruptcy(
-    older_than: int = typer.Option(14, "--older-than"),
-    yes: bool = typer.Option(False, "--yes"),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    verbose: bool = VERBOSE,
-) -> None:
-    """The name before October 2026 of `clear-old --days N`."""
-    _renamed("bankruptcy --older-than N", "clear-old --days N")
-    clear_old(days=older_than, yes=yes, dry_run=dry_run, verbose=verbose)
-
-
-@app.command()
-@_handled
-def status(verbose: bool = VERBOSE) -> None:
-    """The whole system at a glance: what is running, the schedule, the unread, spend, the last runs."""
-    from . import jobs
-
-    ctx = _ctx(verbose)
-    typer.echo(jobs.render_status_text(jobs.status(ctx.cfg, ctx.conn)))
-    typer.echo("\n(`bodh progress` for the unread by folder, `bodh console` for the console)")
+# == Control ==========================================================================
 
 
 @app.command()
@@ -926,42 +1131,17 @@ def stop(
     verbose: bool = VERBOSE,
 ) -> None:
     """Stop the run, prune or catch-up in progress (the same as Ctrl-C in its terminal). With
-    --all, stop everything: the run, the schedule and the console."""
-    from . import jobs
-    from .locks import stop_process
+    --all, stop everything: the run, the schedule and the console. Fail open: what was judged
+    stays; a cut half-written to BazQux is finished by the next run.
 
-    cfg = _config()
-    if everything:
-        for line in jobs.stop_all(cfg):
-            typer.echo(line)
-        return
-    typer.echo(stop_process(cfg.root / cfg.data_dir))
-
-
-@app.command()
-@_handled
-def schedule(
-    action: str = typer.Argument("status", help="status, pause, resume or kick (a run now, via launchd)"),
-    job: str = typer.Option("all", "--job", help="run, weekly, report, console or all"),
-    verbose: bool = VERBOSE,
-) -> None:
-    """The launchd jobs: show them, pause them all (nothing fires until resume), resume, or kick a run."""
-    from . import jobs
-
-    if job == "panel":  # the console's name before October 2026
-        job = "console"
-    if action == "status":
-        for name, label in jobs.JOBS.items():
-            j = jobs.job_state(label)
-            extra = f" · last exit {j['last_exit']}" if j["last_exit"] not in (None, 0) else ""
-            typer.echo(f"{name:<8}{j['state']}{extra}  {j['plist'] or label}")
-        return
-    if action not in ("pause", "resume", "kick"):
-        _fail("action must be status, pause, resume or kick")
-    if job != "all" and job not in jobs.JOBS:
-        _fail("--job must be run, weekly, report, console or all")
-    cfg = _config()
-    typer.echo(jobs.schedule(action, job, cfg.root / cfg.data_dir))
+    \b
+    Examples:
+      bodh stop
+      bodh stop --all
+    """
+    found = _app(verbose)
+    for line in found.stop(everything):
+        typer.echo(line)
 
 
 @app.command(hidden=True)
@@ -974,23 +1154,156 @@ def halt(verbose: bool = VERBOSE) -> None:
 
 @app.command()
 @_handled
+def schedule(
+    action: str = typer.Argument("status", help="status, pause, resume, kick, install or uninstall"),
+    job: str = typer.Option("all", "--job", help="run, weekly, report, console or all"),
+    kind: str | None = typer.Option(
+        None, "--kind", help="install: launchd, systemd or taskschd (default: this machine's)."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="install, uninstall: show what would be written and run."
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The scheduled jobs: show them, pause them all (nothing fires until resume), resume, kick
+    a run now, or install and uninstall them: launchd agents on a Mac, systemd user units on
+    Linux, one Task Scheduler entry running `bodh serve` on Windows.
+
+    \b
+    Examples:
+      bodh schedule                  the four jobs and their state
+      bodh schedule pause            nothing fires until `bodh schedule resume`
+      bodh schedule kick             a run now
+      bodh schedule install          this machine's scheduler, this interpreter
+      bodh schedule install --dry-run
+    """
+    from . import installers, jobs
+
+    if job == "panel":  # the console's name before October 2026
+        job = "console"
+    found = _app(verbose)
+    if action == "status":
+        for name, label in jobs.JOBS.items():
+            j = jobs.job_state(label)
+            extra = f" · last exit {j['last_exit']}" if j["last_exit"] not in (None, 0) else ""
+            typer.echo(f"{name:<8}{j['state']}{extra}  {j['plist'] or label}")
+        return
+    if action in ("install", "uninstall"):
+        do = installers.install if action == "install" else installers.uninstall
+        for line in do(found.cfg.root, kind=kind, dry_run=dry_run):
+            typer.echo(line)
+        return
+    if action not in ("pause", "resume", "kick"):
+        _fail("action must be status, pause, resume, kick, install or uninstall")
+    if job != "all" and job not in jobs.JOBS:
+        _fail("--job must be run, weekly, report, console or all")
+    typer.echo(found.schedule(action, job))
+
+
+@app.command()
+@_handled
+def autocut(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
+    """The automatic cut: on = autocut cuts below the cut-off from the next run; off = scoring-only
+    mode, everything is judged and tagged, nothing is cut. Edits config.yaml in place.
+
+    \b
+    Examples:
+      bodh autocut on
+      bodh autocut off
+    """
+    if state not in ("on", "off"):
+        _fail("say on or off")
+    found = _app(verbose)
+    typer.echo(found.set_autocut(state == "on"))
+
+
+@app.command(hidden=True)
+@_handled
+def enforce(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
+    """The name before October 2026 of `autocut on|off`."""
+    _renamed("enforce", "autocut")
+    autocut(state=state, verbose=verbose)
+
+
+@app.command()
+@_handled
+def console(
+    port: int = typer.Option(8766, "--port"),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`.",
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The console: status, run, stop, schedule, prune, undo, catch-up, log, dashboard, in one page.
+
+    \b
+    Examples:
+      bodh console
+      bodh console --port 8800
+    """
+    import traceback
+
+    from .console import Console, console_log
+
+    found = _app(verbose)
+    typer.echo(
+        f"console on http://{host}:{port}  (Ctrl-C stops it; the schedule keeps it alive when installed)"
+    )
+    try:
+        Console(found.cfg, found.conn, host=host, port=port).serve()
+    except KeyboardInterrupt:
+        raise typer.Exit(0) from None
+    except (
+        Exception
+    ) as exc:  # the console could not start (a port in use, say): the reason goes to console.log
+        console_log(
+            found.cfg.root / found.cfg.data_dir,
+            f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+        )
+        _fail(f"console failed: {exc}")
+
+
+@app.command(hidden=True)
+@_handled
+def panel(
+    port: int = typer.Option(8766, "--port"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The name before October 2026 of `console`."""
+    _renamed("panel", "console")
+    console(port=port, host=host, verbose=verbose)
+
+
+@app.command()
+@_handled
 def safety(action: str = typer.Argument("status", help="status, or reset"), verbose: bool = VERBOSE) -> None:
     """The safety limit: an autocut that would cut nearly everything newly judged trips it, and
-    autocut then cuts nothing until `bodh safety reset` says someone has looked."""
+    autocut then cuts nothing until `bodh safety reset` says someone has looked.
+
+    \b
+    Examples:
+      bodh safety
+      bodh safety reset
+    """
+    from . import cutting as cutmod
 
     if action not in ("status", "reset"):
         _fail("say status or reset")
-    ctx = _ctx(verbose)
-    tripped = cutmod.safety_tripped(ctx.conn)
-    given_up = store.given_up(ctx.conn)
+    found = _app(verbose)
+    conn = found.conn
+    tripped = cutmod.safety_tripped(conn)
+    given_up = store.given_up(conn)
     if action == "reset":
-        if cutmod.reset_safety(ctx.conn):
+        if cutmod.reset_safety(conn):
             typer.echo(
                 f"safety limit reset (it tripped in run {tripped}); autocut cuts again from the next run"
             )
         else:
             typer.echo("the safety limit is not tripped")
-        n = store.reset_judge_failures(ctx.conn)
+        n = store.reset_judge_failures(conn)
         typer.echo(
             f"{given_up} articles the judge had given up on are pending again"
             if given_up
@@ -1013,322 +1326,134 @@ def safety(action: str = typer.Argument("status", help="status, or reset"), verb
         typer.echo("no article has been given up on")
 
 
-@app.command()
-@_handled
-def autocut(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
-    """The automatic cut: on = autocut cuts below the cut-off from the next run; off = scoring-only
-    mode, everything is judged and tagged, nothing is cut. Edits config.yaml in place."""
-    from . import jobs
-
-    if state not in ("on", "off"):
-        _fail("say on or off")
-    cfg = _config()
-    ok, msg = jobs.set_autocut(cfg.root, state == "on")
-    if not ok:
-        _fail(msg)
-    typer.echo(msg)
-
-
-@app.command(hidden=True)
-@_handled
-def enforce(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
-    """The name before October 2026 of `autocut on|off`."""
-    _renamed("enforce", "autocut")
-    autocut(state=state, verbose=verbose)
+# == Housekeeping =====================================================================
 
 
 @app.command()
 @_handled
-def console(
-    port: int = typer.Option(8766, "--port"),
-    host: str = typer.Option(
-        "127.0.0.1",
-        "--host",
-        help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`.",
-    ),
+def backup(
+    keep: int = typer.Option(7, "--keep", min=1, help="Backups to keep, newest first."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """The console: status, run, stop, schedule, prune, undo, catch-up, log, dashboard, in one page."""
-    import traceback
+    """Copy the database to data/backups/bodh-<date>.db (the run does this once a day too).
 
-    from .console import Console, console_log
-
-    ctx = _ctx(verbose)
-    typer.echo(f"console on http://{host}:{port}  (Ctrl-C stops it; launchd keeps it alive when installed)")
-    try:
-        Console(ctx.cfg, ctx.conn, host=host, port=port).serve()
-    except KeyboardInterrupt:
-        raise typer.Exit(0) from None
-    except (
-        Exception
-    ) as exc:  # the console could not start (a port in use, say): the reason goes to console.log
-        console_log(
-            ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-        )
-        _fail(f"console failed: {exc}")
-
-
-@app.command(hidden=True)
-@_handled
-def panel(
-    port: int = typer.Option(8766, "--port"),
-    host: str = typer.Option("127.0.0.1", "--host"),
-    verbose: bool = VERBOSE,
-) -> None:
-    """The name before October 2026 of `console`."""
-    _renamed("panel", "console")
-    console(port=port, host=host, verbose=verbose)
+    \b
+    Examples:
+      bodh backup
+      bodh backup --keep 30
+    """
+    found = _app(verbose)
+    path = found.backup(keep=keep)
+    typer.echo(f"backup written: {path} ({len(found.backups())} kept)")
 
 
 @app.command()
 @_handled
-def why(article_id: str, verbose: bool = VERBOSE) -> None:
-    """One article's score, sub-scores, lesson and state."""
-    ctx = _ctx(verbose)
-    try:
-        aid = normalize_item_id(article_id)
-    except ValueError:
-        aid = article_id
-    row = store.article(ctx.conn, aid)
-    if row is None:
-        _fail("not found")
-        return
-    typer.echo(f"{row['title']}\n{row['url']}\nfeed: {row['feed_title']} · folder: {row['folder']}")
-    if row["score"] is None:
-        typer.echo("not scored yet")
-    else:
-        typer.echo(
-            f"score {row['score']:.1f} (base {row['base_score']:.1f}"
-            + (f", review {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "")
-            + ")"
-        )
-        from .judgment import normalize_flags
+def rebuild(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count what would be written; write nothing."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """After a lost database: read the band tags, the cut tag and the stars back from BazQux,
+    so nothing already judged is judged again and nothing already cut is cut again. Rebuilt
+    scores carry the band's threshold and a low confidence: autocut leaves them alone.
 
-        try:
-            flags = normalize_flags(json.loads(row["flags"] or "[]"))
-        except (TypeError, ValueError):
-            flags = [str(row["flags"])]
-        typer.echo(
-            f"quality {row['quality']} · learning {row['learning']} · fit {row['fit']} · breadth {row['breadth']}"
-            f" · relevance {row['relevance']} · confidence {row['confidence']} · kind {row['kind']} · flags "
-            f"{', '.join(flags) or 'none'} · judged by {row['model']} ({row['prompt_version']})"
-        )
-        typer.echo(f"concept: {row['concept']}\nlesson: {row['lesson']}")
-    typer.echo(
-        f"state: {row['status']}"
-        + (f" ({store.cut_mode_name(row['cut_mode'])} at {row['cut_at']})" if row["cut_mode"] else "")
-        + (" · starred" if row["starred"] else "")
-        + (" · protected" if row["protected"] else "")
-        + (" · new ground" if row["exploration"] else "")
-    )
-    marks = store.feedback_for(ctx.conn, aid)
-    if marks:
-        typer.echo(
-            "your record: " + ", ".join(f"{store.feedback_kind_name(kind)} ({at[:10]})" for kind, at in marks)
-        )
+    \b
+    Examples:
+      bodh rebuild --dry-run
+      bodh rebuild --yes
+    """
+    from . import recovery
 
-
-MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "rescue")
+    found = _app(verbose)
+    if not dry_run and not yes and not typer.confirm("Rebuild scores and cuts from the tags in BazQux?"):
+        raise typer.Exit(0)
+    typer.echo(recovery.summary(found.rebuild(dry_run=dry_run)))
 
 
 @app.command()
 @_handled
-def mark(
-    article_id: str,
-    verdict: str = typer.Argument(..., help="great, good, meh, bad, basic, heavy, more, less or rescue"),
+def weekly(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Propose the rewrite, write nothing."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """Your verdict on an article from the terminal, the same as its tag in BazQux: a grade
-    (great, good, meh, bad), the level missed (basic, heavy), a steer by its concept (more, less),
-    or `rescue`, which brings a cut article back unread and keeps it from every cut."""
-    if verdict not in MARKS:
-        _fail("the verdict must be one of " + ", ".join(MARKS))
-    ctx = _ctx(verbose)
+    """Sunday's job: rewrite the learned profile (kept only if the eval gate passes), write the
+    weekly note, run the drift check.
+
+    \b
+    Examples:
+      bodh weekly
+      bodh weekly --dry-run
+    """
+    found = _app(verbose)
     try:
-        aid = normalize_item_id(article_id)
-    except ValueError:
-        _fail(f"not an article id: {article_id!r} (the long tag:google.com form or the signed number)")
-        return
-    row = store.article(ctx.conn, aid)
-    if row is None:
-        _fail("unknown article; it must have been fetched by a run first")
-        return
-    try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "mark"), graceful_sigterm():
-            if verdict == "rescue":
-                typer.echo(feedback.rescue_one(ctx.client, ctx.conn, ctx.cfg, aid, row))
-            elif verdict in store.STEERS:
-                store.set_verdict(ctx.conn, aid, verdict, store.STEERS)
-                phrase = feedback.steer_phrase(ctx.conn, aid)
-                profiler.steers(ctx.cfg, ctx.conn, [("want" if verdict == "more" else "meh", phrase)])
-                typer.echo(f"recorded {verdict} for: {row['title'][:70]} (steer: {phrase})")
-            else:
-                group = store.GRADES if verdict in store.GRADES else store.LEVELS
-                store.set_verdict(ctx.conn, aid, verdict, group)
-                typer.echo(f"recorded {verdict} for: {row['title'][:70]}")
+        found.weekly(dry_run=dry_run, say=typer.echo)
     except AlreadyRunning:
-        _fail("a run is in progress; try again in a minute (or tag the article in BazQux)", 5)
-
-
-@app.command(hidden=True)
-@_handled
-def label(
-    article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE
-) -> None:
-    """The name before October 2026 of `mark ID great|bad`."""
-    if judgment not in ("star", "junk"):
-        _fail("judgment must be star or junk")
-    _renamed(f"label ID {judgment}", "mark ID " + ("great" if judgment == "star" else "bad"))
-    mark(article_id=article_id, verdict="great" if judgment == "star" else "bad", verbose=verbose)
-
-
-@app.command()
-@_handled
-def steer(
-    direction: str = typer.Argument(..., help="more or less"),
-    phrase: str = typer.Argument(..., help="the concept"),
-    verbose: bool = VERBOSE,
-) -> None:
-    """Tell the judge now that you want more, or less, of a concept: a dated line in the learned
-    profile that it reads from the next run (the `more` and `less` tags do the same by article)."""
-    if direction not in ("more", "less"):
-        _fail("say more or less")
-    _steer("want" if direction == "more" else "meh", phrase, verbose)
-
-
-@app.command(hidden=True)
-@_handled
-def want(phrase: str, verbose: bool = VERBOSE) -> None:
-    """The name before October 2026 of `steer more`."""
-    _renamed('want "x"', 'steer more "x"')
-    _steer("want", phrase, verbose)
-
-
-@app.command(hidden=True)
-@_handled
-def meh(phrase: str, verbose: bool = VERBOSE) -> None:
-    """The name before October 2026 of `steer less`."""
-    _renamed('meh "x"', 'steer less "x"')
-    _steer("meh", phrase, verbose)
-
-
-def _steer(kind: str, phrase: str, verbose: bool) -> None:
-    ctx = _ctx(verbose)
-    try:
-        with (
-            run_lock(ctx.cfg.root / ctx.cfg.data_dir, "steer"),
-            graceful_sigterm(),
-        ):  # learned.md is written: not under a run
-            typer.echo(profiler.steer(ctx.cfg, ctx.conn, kind, phrase))
-    except AlreadyRunning:
-        _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
-
-
-@app.command()
-@_handled
-def profile(action: str = typer.Argument("show", help="show or revert"), verbose: bool = VERBOSE) -> None:
-    """Show the student profile (about, then learned), or go back one version of the learned part."""
-    if action not in ("show", "revert"):
-        _fail(f"unknown action {action!r}: say show or revert")
-    ctx = _ctx(verbose)
-    if action == "revert":
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
-            v = profiler.revert(ctx.cfg, ctx.conn)
-        typer.echo("nothing to revert to" if v is None else f"reverted; now version {v}")
-        return
-    typer.echo(ctx.cfg.read_about())
-    typer.echo("\n---\n")
-    typer.echo(ctx.cfg.read_learned())
-
-
-@app.command()
-@_handled
-def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VERBOSE) -> None:
-    """Sunday's job: rewrite the learned profile (gated), write the weekly note, run the drift check."""
-    ctx = _ctx(verbose)
-    try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"), graceful_sigterm():
-            _weekly(ctx, dry_run)
-    except AlreadyRunning:
-        _fail(
-            "a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later",
-            5,
-        )
-
-
-def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
-    run_id = store.begin_run(ctx.conn, "weekly")
-    try:
-        result = profiler.weekly_rewrite(ctx.cfg, ctx.llm, ctx.conn, run_id, dry_run=dry_run)
-        typer.echo(result["reason"])
-        if result.get("diff"):
-            typer.echo(result["diff"])
-        drift = _drift_check(ctx, run_id)
-        if drift:
-            typer.echo(drift)
-        note = dashboard.weekly_note(ctx.cfg, ctx.conn, result)
-        typer.echo(f"weekly note: {note}")
-        dashboard.render(ctx.cfg, ctx.conn)
-        store.finish_run(
-            ctx.conn, run_id, True, summary=f"weekly: {result['reason']}" + (f"; {drift}" if drift else "")
-        )
-        if not result["applied"] and result.get("gate") and not result["gate"]["passed"]:
-            ctx.heartbeat.fail(f"weekly profile rewrite rejected: {result['reason']}")
-    except (
-        Exception
-    ) as exc:  # the run row and the heartbeat record the failure before the line and the exit code
-        store.finish_run(ctx.conn, run_id, False, error=f"{type(exc).__name__}: {exc}")
-        ctx.heartbeat.fail(f"weekly failed: {exc}")
-        _fail(f"weekly failed: {exc}", exc.exit_code if isinstance(exc, BodhError) else 1)
-
-
-def _drift_check(ctx: runmod.Context, run_id: int) -> str:
-    """Re-score 2% of the week's articles; a large shift means the model behind the API changed."""
-    conn, cfg = ctx.conn, ctx.cfg
-    rows = conn.execute(
-        """SELECT a.*, s.base_score FROM scores s JOIN articles a ON a.id = s.article_id
-           WHERE s.scored_at >= ? AND s.model = ? AND a.text != '' ORDER BY RANDOM() LIMIT ?""",
-        (store.days_ago_iso(7), cfg.models.judge, 30),
-    ).fetchall()
-    if len(rows) < 10:
-        return ""
-    judge = ctx.judge()
-    from .judgment import compose
-
-    diffs = []
-    for i in range(0, len(rows), cfg.judge.articles_per_call):
-        batch = rows[i : i + cfg.judge.articles_per_call]
-        verdicts = judge.judge_batch(batch, run_id)
-        for r in batch:
-            v = verdicts.get(r["id"])
-            if v is not None:
-                diffs.append(compose(v, cfg, judge.expansion_topics) - float(r["base_score"]))
-    if not diffs:
-        return ""
-    mean_shift = sum(diffs) / len(diffs)
-    mean_abs = sum(abs(d) for d in diffs) / len(diffs)
-    msg = f"drift check: {len(diffs)} re-scored, mean shift {mean_shift:+.1f}, mean absolute change {mean_abs:.1f}"
-    if abs(mean_shift) > 8 or mean_abs > 15:
-        ctx.heartbeat.fail(msg + " (above threshold)")
-        return msg + " ABOVE THRESHOLD"
-    return msg
+        _fail("a run is in progress; the weekly job runs again next Sunday, or run it by hand later", 5)
+    except BodhError as exc:
+        _fail(f"weekly failed: {exc}", exc.exit_code)
+    except Exception as exc:  # recorded on the run row and the heartbeat already; one line here
+        _fail(f"weekly failed: {exc}", 1)
 
 
 @app.command("report")
 @_handled
-def report_cmd(days: int = typer.Option(30, "--days"), verbose: bool = VERBOSE) -> None:
-    """The monthly feed report with proposals; written to the dashboard folder."""
-    ctx = _ctx(verbose)
-    path = report.render(ctx.cfg, ctx.conn, days=days)
-    typer.echo(path.read_text(encoding="utf-8"))
+def report_command(
+    days: int = typer.Option(30, "--days", min=1, help="The window."), verbose: bool = VERBOSE
+) -> None:
+    """The feed report with proposals (unsubscribe, move to the strictest folder, protect),
+    written to the dashboard folder and printed.
+
+    \b
+    Examples:
+      bodh report
+      bodh report --days 90
+    """
+    found = _app(verbose)
+    typer.echo(found.report(days=days).read_text(encoding="utf-8"))
 
 
 @app.command("dashboard")
 @_handled
-def dashboard_cmd(verbose: bool = VERBOSE) -> None:
-    """Regenerate the dashboard now."""
-    ctx = _ctx(verbose)
-    typer.echo(str(dashboard.render(ctx.cfg, ctx.conn)))
+def dashboard_command(verbose: bool = VERBOSE) -> None:
+    """Regenerate the dashboard now; prints where it was written.
+
+    \b
+    Examples:
+      bodh dashboard
+    """
+    found = _app(verbose)
+    typer.echo(str(found.dashboard()))
+
+
+@app.command()
+@_handled
+def upgrade(
+    run_it: bool = typer.Option(False, "--run", help="Run the upgrade command instead of printing it."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The upgrade for the way this bodh was installed (pipx, uv, Homebrew, a one-file
+    executable, a checkout, pip): printed, or run with --run. Run `bodh doctor` after.
+
+    \b
+    Examples:
+      bodh upgrade            prints the command
+      bodh upgrade --run
+    """
+    from . import upgrade as upgrademod
+
+    ch = upgrademod.channel()
+    newest = upgrademod.newest_on_pypi()
+    typer.echo(f"bodh {__version__}, {ch.note}; {upgrademod.check_text(newest)}")
+    if ch.command is None:
+        return
+    if not run_it:
+        typer.echo("to upgrade: " + " ".join(ch.command))
+        return
+    code = upgrademod.run(ch)
+    if code != 0:
+        _fail(f"the upgrade command exited {code}", code)
+    typer.echo("upgraded; run `bodh doctor` next")
 
 
 def triage_alias() -> None:

@@ -13,7 +13,14 @@ import pytest
 import yaml
 from conftest import seed_scored
 from fakes import FakeLLM, FakeOpenAIServer, FakeReader, make_item
-from test_cli import ENV_FILE, _env, _fakes, _project, invoke
+from test_cli import (
+    ENV_FILE,
+    _env,
+    _fakes,
+    _project,
+    _secrets_out_of_the_environment,  # noqa: F401  # the autouse fixture: no key outlives a test
+    invoke,
+)
 
 from bodh import comparing, dashboard, progress, run, store
 from bodh.config import load_config, load_secrets
@@ -111,7 +118,6 @@ def test_keys_set_writes_env_owner_only_and_keeps_the_other_lines(tmp_path, monk
     result = invoke(["keys", "set", "openai"], input=OPENAI_KEY + "-2\n")
     assert result.exit_code == 0 and (root / ".env").read_text(encoding="utf-8").count("OPENAI_API_KEY=") == 1
     assert load_secrets(root).value("openai_api_key") == OPENAI_KEY + "-2"
-    os.environ.pop("OPENAI_API_KEY", None)
     # nothing typed: nothing changes
     before = (root / ".env").read_text(encoding="utf-8")
     result = invoke(["keys", "set", "openai"], input="\n")
@@ -127,8 +133,6 @@ def test_keys_set_writes_env_owner_only_and_keeps_the_other_lines(tmp_path, monk
         "OPENAI_COMPATIBLE_API_KEY=ollama\n" in text
         and "OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1\n" in text
     )
-    os.environ.pop("OPENAI_COMPATIBLE_API_KEY", None)
-    os.environ.pop("OPENAI_COMPATIBLE_BASE_URL", None)
 
 
 def test_keys_set_keychain_without_keyring_is_a_config_error(tmp_path, monkeypatch):
@@ -161,7 +165,6 @@ def test_keys_set_keychain_stores_under_the_service_name(tmp_path, monkeypatch):
     assert "GEMINI_API_KEY" not in (root / ".env").read_text(encoding="utf-8")
     # the lookup order: .env, the environment, then the keychain
     assert load_secrets(root).value("gemini_api_key") == "AIza-test-key-0123456789"
-    os.environ.pop("GEMINI_API_KEY", None)
 
 
 # -- models ----------------------------------------------------------------------------

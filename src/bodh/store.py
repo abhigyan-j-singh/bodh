@@ -475,7 +475,7 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Unread articles with a score, joined with state; the pool every cut selects from."""
     return conn.execute(
         """SELECT a.id, a.feed_title, a.folder, a.title, a.url, a.crawled_msec, LENGTH(a.text) AS text_len,
-                  s.score, s.quality, s.concept, s.confidence, s.dupe_of, s.flags,
+                  s.score, s.quality, s.concept, s.lesson, s.scored_at, s.confidence, s.dupe_of, s.flags,
                   s.second_look_score, s.second_look_model,
                   st.starred, st.protected, st.exploration, st.exempt, st.rescued_at
            FROM articles a JOIN state st ON st.article_id = a.id

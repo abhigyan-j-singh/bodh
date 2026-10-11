@@ -564,7 +564,7 @@ def find_root(start: Path | None = None) -> Path:
         return default.resolve()
     raise ConfigError(
         f"no config.yaml in {here} or above it, and none in {DEFAULT_HOME}; "
-        "run from the bodh folder, or set BODH_HOME"
+        "`bodh init` makes a new project; for an existing one, run from its folder or set BODH_HOME"
     )
 
 
