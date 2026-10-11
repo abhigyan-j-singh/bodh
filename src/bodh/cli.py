@@ -55,15 +55,23 @@ def _config() -> Config:
         raise
 
 
+_secret_values: list[str] = []  # what `_fail` must never print, whatever an error message carries
+
+
 def _ctx(verbose: bool = False) -> runmod.Context:
     cfg = _config()
     secrets = load_secrets(cfg.root)
-    logs.setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
+    _secret_values[:] = secrets.values()
+    logs.setup_logging(cfg.root / cfg.data_dir, verbose, secrets=_secret_values)
     conn = store.connect(cfg.db_path)
     return runmod.Context(cfg, secrets, conn)
 
 
 def _fail(msg: str, code: int = 1) -> None:
+    """One line on stderr and the exit code; a secret that found its way into the message
+    (an API echoing a header, a URL with a token) is replaced, never printed."""
+    for value in _secret_values:
+        msg = msg.replace(value, "[secret]")
     typer.echo(f"error: {msg}", err=True)
     raise typer.Exit(code)
 
@@ -86,7 +94,7 @@ def _handled(fn: Any) -> Any:
 
 @app.command()
 @_handled
-def version() -> None:
+def version(verbose: bool = VERBOSE) -> None:
     typer.echo(f"bodh {__version__}")
 
 
@@ -1011,6 +1019,8 @@ def _steer(kind: str, phrase: str, verbose: bool) -> None:
 @_handled
 def profile(action: str = typer.Argument("show", help="show or revert"), verbose: bool = VERBOSE) -> None:
     """Show the student profile (about, then learned), or go back one version of the learned part."""
+    if action not in ("show", "revert"):
+        _fail(f"unknown action {action!r}: say show or revert")
     ctx = _ctx(verbose)
     if action == "revert":
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
@@ -1055,10 +1065,12 @@ def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
         )
         if not result["applied"] and result.get("gate") and not result["gate"]["passed"]:
             ctx.heartbeat.fail(f"weekly profile rewrite rejected: {result['reason']}")
-    except Exception as exc:  # the run row and the heartbeat record the failure before the line and exit 1
+    except (
+        Exception
+    ) as exc:  # the run row and the heartbeat record the failure before the line and the exit code
         store.finish_run(ctx.conn, run_id, False, error=f"{type(exc).__name__}: {exc}")
         ctx.heartbeat.fail(f"weekly failed: {exc}")
-        _fail(f"weekly failed: {exc}")
+        _fail(f"weekly failed: {exc}", exc.exit_code if isinstance(exc, BodhError) else 1)
 
 
 def _drift_check(ctx: runmod.Context, run_id: int) -> str:

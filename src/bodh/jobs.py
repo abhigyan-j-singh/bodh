@@ -228,13 +228,16 @@ def stop_all(cfg: Config) -> list[str]:
     half-written cuts are finished by the next run."""
     notes = [locks.stop_process(cfg.root / cfg.data_dir)]
     notes.append(schedule("pause", "all"))
+    signalled = False
     for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGTERM)
+            signalled = True
             notes.append(f"ended pid {pid}: {cmd[:80]}")
         except OSError as exc:
             notes.append(f"could not end pid {pid}: {exc}")
-    time.sleep(1.0)
+    if signalled:
+        time.sleep(1.0)  # a moment for the processes to end on their own before the hard kill
     for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGKILL)
