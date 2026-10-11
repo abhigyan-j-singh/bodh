@@ -275,7 +275,7 @@ def _edit_cut_enforce(text: str, on: bool) -> str:
         if stripped and not stripped.startswith("#") and not lines[i][0].isspace():
             end = i  # the next top-level key
             break
-    child_indent = None
+    child_indent: int | None = None
     for i in range(cut_at + 1, end):
         stripped = lines[i].strip()
         if not stripped or stripped.startswith("#"):

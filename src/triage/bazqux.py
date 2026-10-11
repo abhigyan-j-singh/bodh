@@ -338,16 +338,16 @@ class BazQuxClient:
         return self.edit_tag(item_ids, remove=label(name))
 
 
-def _int_or_none(value: object) -> int | None:
+def _int_or_none(value: Any) -> int | None:
     """A timestamp as BazQux writes it (an int, a digit string, now and then "1.7e9"), or
     None: a bad timestamp must not drop the item, which would be refetched every run."""
     if value is None or value == "":
         return None
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         try:
-            return int(float(value))  # type: ignore[arg-type]
+            return int(float(value))
         except (TypeError, ValueError, OverflowError):
             return None
 

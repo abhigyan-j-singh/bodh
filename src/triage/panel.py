@@ -117,6 +117,7 @@ class Panel:
         self.env = {**os.environ, "TRIAGE_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
         self._status_cache: tuple[float, dict] | None = None
         self._jobs_cache: tuple[float, dict] | None = None
+        self._config_mtime: float | None = None
 
     # -- data -----------------------------------------------------------------
 

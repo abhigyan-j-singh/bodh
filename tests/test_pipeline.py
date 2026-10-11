@@ -721,11 +721,11 @@ def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
     real = ctx.llm.judge
 
     def slow(*a, **k):
-        _t.sleep(0.03)
+        _t.sleep(0.1)
         return real(*a, **k)
 
     ctx.llm.judge = slow
-    res = pipeline.run(ctx, enforce=False, workers=1, stop_after=_t.monotonic() + 0.1)
+    res = pipeline.run(ctx, enforce=False, workers=1, stop_after=_t.monotonic() + 0.25)
     assert res.ok and 0 < res.scored < 8 and "time limit near" in " ".join(res.notes)
     assert res.pending == 8 - res.scored and store.last_runs(conn, 1)[0]["ok"]
     res = pipeline.run(ctx, enforce=False, workers=4)

@@ -1024,7 +1024,10 @@ class Teacher:
                         queue.clear()
                         return
                     row = queue.pop(0)
-                    fut = pool.submit(self.second_look, store.article(self.conn, row["id"]), run_id)
+                    full = store.article(self.conn, row["id"])
+                    if full is None:
+                        continue
+                    fut = pool.submit(self.second_look, full, run_id)
                     futures[fut] = row
                     running.add(fut)
 

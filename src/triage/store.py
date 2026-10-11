@@ -513,7 +513,7 @@ def rescued_ids(conn: sqlite3.Connection) -> set[str]:
 
 def begin_run(conn: sqlite3.Connection, kind: str) -> int:
     cur = conn.execute("INSERT INTO runs (kind, started_at, ok) VALUES (?, ?, 0)", (kind, utcnow_iso()))
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def finish_run(conn: sqlite3.Connection, run_id: int, ok: bool, **cols: Any) -> None:
@@ -678,7 +678,7 @@ def recent_batches(conn: sqlite3.Connection, n: int = 10) -> list[sqlite3.Row]:
 def save_learner_version(conn: sqlite3.Connection, text: str, reason: str) -> int:
     cur = conn.execute("INSERT INTO learner_versions (text, reason, created_at) VALUES (?, ?, ?)",
                        (text, reason, utcnow_iso()))
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def learner_versions(conn: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:

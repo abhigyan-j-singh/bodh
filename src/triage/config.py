@@ -319,8 +319,8 @@ def load_secrets(root: Path | None = None) -> Secrets:
     # the project's own .env wins over whatever the shell happens to export (a stale key in ~/.zshrc, say)
     load_dotenv(root / ".env", override=True)
     return Secrets(
-        bazqux_email=os.environ.get("BAZQUX_EMAIL", ""),
-        bazqux_password=os.environ.get("BAZQUX_PASSWORD", ""),
-        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        healthcheck_url=os.environ.get("HEALTHCHECK_URL", ""),
+        bazqux_email=SecretStr(os.environ.get("BAZQUX_EMAIL", "")),
+        bazqux_password=SecretStr(os.environ.get("BAZQUX_PASSWORD", "")),
+        anthropic_api_key=SecretStr(os.environ.get("ANTHROPIC_API_KEY", "")),
+        healthcheck_url=SecretStr(os.environ.get("HEALTHCHECK_URL", "")),
     )

@@ -78,6 +78,7 @@ class Context:
         self.conn = conn
         self._client: BazQuxClient | None = None
         self._llm: LLM | None = None
+        self.ref_time: dict[str, int] = {}  # article id -> BazQux timestamp, for newest-first ingest
         self.heartbeat = Heartbeat(secrets.value("healthcheck_url"))
 
     @property
@@ -121,9 +122,8 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
     if not new_ids:
         return 0
     # newest first, and written batch by batch, so a timeout on a huge first pile keeps its progress
-    ref_time = getattr(ctx, "ref_time", {})
-    if ref_time:
-        new_ids.sort(key=lambda i: -ref_time.get(i, 0))
+    if ctx.ref_time:
+        new_ids.sort(key=lambda i: -ctx.ref_time.get(i, 0))
     done = 0
     for start in range(0, len(new_ids), INGEST_BATCH):
         items, _vanished = ctx.client.contents(new_ids[start: start + INGEST_BATCH])
