@@ -36,7 +36,7 @@ from .config import Config, Secrets, keychain_set, load_config, load_secrets, wr
 from .errors import BodhError, ConfigError, LockedError
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
-from .providers.base import same_model
+from .providers.base import model_name, same_model
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def version(verbose: bool = VERBOSE) -> None:
 @app.command()
 @_handled
 def doctor(
-    live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
+    live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call each role's model once."),
     values: bool = typer.Option(False, "--values", help="Print every setting in effect with its source."),
     verbose: bool = VERBOSE,
 ) -> None:
@@ -252,7 +252,7 @@ def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
 
 
 def _doctor_live(cfg: Config, secrets: Secrets, conn: Any, problem: Any) -> None:
-    """Log in to BazQux and call both models once (a few cents); every failure is a line."""
+    """Log in to BazQux and call each role's model once (a few cents); every failure is a line."""
     ctx = runmod.Context(cfg, secrets, conn)
     try:
         _doctor_live_bazqux(ctx, problem)
@@ -291,6 +291,30 @@ def _doctor_live_bazqux(ctx: runmod.Context, problem: Any) -> None:
             typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
 
 
+def _doctor_live_other_roles(ctx: runmod.Context, judge: Any, probe: dict[str, Any], problem: Any) -> None:
+    """The profiler and the quick judge, once each when they are not the models probed already:
+    a few tokens, so a wrong id or a missing key shows here and not on Sunday or in a backlog."""
+    cfg = ctx.cfg
+    probed = {model_name(cfg.models.judge), model_name(cfg.models.reviewer)}
+    if model_name(cfg.models.profiler) not in probed:
+        text = ctx.llm.complete(
+            cfg.models.profiler, "Answer with one word.", "Say ok.", None, "doctor", max_tokens=5
+        )
+        if text.strip():
+            typer.echo(f"profiler ({cfg.models.profiler}): ok")
+        else:
+            problem(f"profiler ({cfg.models.profiler}): call ok, empty answer")
+        probed.add(model_name(cfg.models.profiler))
+    if model_name(cfg.catch_up.model) not in probed:
+        quick_cfg = cfg.model_copy(deep=True)
+        quick_cfg.models.judge = cfg.catch_up.model
+        quick = type(judge)(quick_cfg, ctx.llm, ctx.conn, context=judge.context, purpose="doctor")
+        if quick.judge_batch([probe], None).get("probe"):
+            typer.echo(f"quick judge ({cfg.catch_up.model}): ok")
+        else:
+            problem(f"quick judge ({cfg.catch_up.model}): call ok, no judgment parsed")
+
+
 def _doctor_live_models(ctx: runmod.Context, problem: Any) -> None:
     from .judge import Judge, concept_context
 
@@ -319,6 +343,7 @@ def _doctor_live_models(ctx: runmod.Context, problem: Any) -> None:
         typer.echo(f"review ({cfg.models.reviewer}): ok")
     else:
         problem(f"review ({cfg.models.reviewer}): FAILED")
+    _doctor_live_other_roles(ctx, judge, probe, problem)
     typer.echo(
         f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
     )

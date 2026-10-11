@@ -155,7 +155,8 @@ of the aliases go away in the release after 1.0.0.
 - `bodh keys [list|set <provider>]`: which keys are set, never a value; `set` reads the key
   with hidden input and writes `.env` owner-only, or the system keychain with `--keychain`
   (`pip install bodh[keychain]`). Keys are looked up in `.env`, then the environment, then the
-  keychain. `bodh doctor` names the missing key per provider and the roles that need it.
+  keychain. `bodh doctor` names the missing key per provider and the roles that need it;
+  `doctor --live` probes the profiler and the quick judge too when they are models of their own.
 - `bodh models [list|compare --with provider/model]`: the roles, the keys present, the prices,
   the capabilities; `compare` judges a sample of already-judged unread articles with the judge
   and a second model and prints the band agreement, the mean difference, the largest

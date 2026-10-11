@@ -369,11 +369,24 @@ def test_doctor_live_talks_to_bazqux_and_the_models_and_prints_no_secret(tmp_pat
         "   - Article 1 (Feed A)",
         "judge (claude-sonnet-5-5): ok, probe scored 55/55/55/55/55",
         "review (claude-opus-5-5): ok",
+        "quick judge (claude-haiku-5-5): ok",  # the profiler is the reviewer's model: probed already
     ):
         assert line in result.output, (line, result.output)
+    assert "profiler (" not in result.output
     # the dollar from today and the probe's cents, not yesterday's hundred
     assert "spend today, this doctor run included: $1.0" in result.output and "$101" not in result.output
-    assert llm.calls == [("claude-sonnet-5-5", "teacher"), ("claude-opus-5-5", "second_look")]
+    assert llm.calls == [
+        ("claude-sonnet-5-5", "teacher"),
+        ("claude-opus-5-5", "second_look"),
+        ("claude-haiku-5-5", "doctor"),
+    ]
+    # a profiler of its own gets one short completion
+    (root / "config.yaml").write_text(
+        "timezone: UTC\nfolders:\n  Essays: {}\nmodels:\n  profiler: claude-haiku-4-5\n", encoding="utf-8"
+    )
+    result = invoke(["doctor", "--live"])
+    assert result.exit_code == 0 and "profiler (claude-haiku-4-5): ok" in result.output, result.output
+    assert llm.calls[-2:] == [("claude-haiku-4-5", "doctor"), ("claude-haiku-5-5", "doctor")]
     (root / "config.yaml").write_text("timezone: UTC\nfolders:\n  Essays: {}\n  Nope: {}\n", encoding="utf-8")
     result = invoke(["doctor", "--live"])
     assert result.exit_code == 1 and "config folders not in BazQux: ['Nope']" in result.output

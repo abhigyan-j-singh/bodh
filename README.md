@@ -88,7 +88,7 @@ $EDITOR .env                      # BazQux email and password, Anthropic key (th
                                   # `bodh keys set <provider>` writes a key without showing it)
 $EDITOR profile/about.md          # replace the worked example with fifteen lines about you
 $EDITOR config.yaml               # your folders, what the prune keeps, the cut-off; leave autocut off for the first days
-.venv/bin/bodh doctor --live      # logs in, lists folders, calls both models once (a few cents)
+.venv/bin/bodh doctor --live      # logs in, lists folders, calls each role's model once (a few cents)
 ./install-launchd.sh              # laptop: agents, run while logged in, no sudo
 ./install-launchd.sh --daemon     # an always-on Mac: daemons, run without login (asks for sudo)
 ```
