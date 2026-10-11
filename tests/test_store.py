@@ -111,3 +111,88 @@ def test_text_less_articles_are_refetched_for_a_few_hours_only(conn):
     )
     assert store.unread_without_text(conn) == ["fresh"]
     assert set(store.unread_without_text(conn, within_hours=10_000)) == {"fresh", "old"}
+
+
+# -- time: UTC in the database, local only for the budget's midnight and display ----------
+
+
+def test_budget_midnight_across_dst_and_half_hour_zones(conn):
+    from datetime import datetime, timezone
+
+    def utc(text: str) -> datetime:
+        return datetime.fromisoformat(text).astimezone(timezone.utc)
+
+    # London, the night the clocks go back (25 October 2026, 02:00 BST -> 01:00 GMT): the day
+    # began at 00:00 BST, which is 23:00 UTC the evening before, and is 25 hours long
+    since = store.local_midnight_iso("Europe/London", now=utc("2026-10-25T03:00:00+00:00"))
+    assert since == "2026-10-24T23:00:00+00:00"
+    assert store.local_midnight_iso("Europe/London", now=utc("2026-10-25T23:30:00+00:00")) == since
+    # the night they go forward (29 March 2026, 01:00 GMT -> 02:00 BST): midnight was GMT
+    assert (
+        store.local_midnight_iso("Europe/London", now=utc("2026-03-29T04:00:00+00:00"))
+        == "2026-03-29T00:00:00+00:00"
+    )
+    # Kolkata, +05:30, no DST: at 01:00 local it is still yesterday in UTC, and the day began at 18:30 UTC
+    since = store.local_midnight_iso("Asia/Kolkata", now=utc("2026-10-10T19:30:00+00:00"))
+    assert since == "2026-10-10T18:30:00+00:00"
+    assert store.local_midnight_iso("Asia/Kolkata", now=utc("2026-10-11T18:29:59+00:00")) == since
+    assert (
+        store.local_midnight_iso("Asia/Kolkata", now=utc("2026-10-11T18:30:00+00:00"))
+        == "2026-10-11T18:30:00+00:00"
+    )
+    # what counts as today's spend, by the stored UTC text: at midnight with and without
+    # microseconds counts, a microsecond earlier does not, and a cost at 18:45 UTC on the 10th
+    # is today's in Kolkata though yesterday's in UTC
+    usage = {"input_tokens": 1, "output_tokens": 1, "cache_write": 0, "cache_read": 0}
+    for when, usd in (
+        ("2026-10-10T18:30:00+00:00", 1.0),
+        ("2026-10-10T18:30:00.000001+00:00", 2.0),
+        ("2026-10-10T18:29:59.999999+00:00", 4.0),
+        ("2026-10-10T18:45:00+00:00", 8.0),
+    ):
+        store.record_cost(conn, None, "m", "teacher", usage, usd)
+        conn.execute("UPDATE costs SET created_at = ? WHERE usd = ?", (when, usd))
+    assert store.spent_since(conn, since) == 11.0
+    assert (
+        store.spent_since(conn, store.local_midnight_iso("Etc/UTC", now=utc("2026-10-10T19:30:00+00:00")))
+        == 15.0
+    )
+
+
+def test_every_stored_time_is_utc_iso(cfg, conn):
+    """Every timestamp column in every table holds ISO text with the UTC offset: local time is
+    only ever computed for display and the budget's midnight."""
+    from datetime import datetime, timezone
+
+    from conftest import seed_scored
+    from fakes import FakeLLM, FakeReader, make_item
+
+    from bodh import run
+    from bodh.config import Secrets
+
+    cfg.models.batch = True
+    cfg.judge.articles_per_call = 1
+    item = make_item(1, title="plain", crawled_msec=1_800_000_000_000)
+    ctx = run.Context(cfg, Secrets(), conn)
+    ctx._client = FakeReader([item])
+    ctx._llm = FakeLLM(cfg, conn)
+    run.run(ctx, enforce=False)  # submits a batch
+    ctx.llm.finish_all()
+    run.run(ctx, enforce=True)  # collects it, records costs
+    seed_scored(conn, cfg, [dict(n=2, score=10)])
+    store.mark_cut(conn, [make_item(2).id], 1, "autocut")
+    store.add_feedback(conn, make_item(2).id, "star")
+    checked = 0
+    for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall():
+        columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        stamps = [c for c in columns if c.endswith("_at") or c in ("created_at", "scored_at", "fetched_at")]
+        for col in stamps:
+            for (value,) in conn.execute(f"SELECT {col} FROM {table} WHERE {col} IS NOT NULL").fetchall():
+                parsed = datetime.fromisoformat(value)
+                assert parsed.tzinfo is not None and parsed.utcoffset() == timezone.utc.utcoffset(None), (
+                    table,
+                    col,
+                    value,
+                )
+                checked += 1
+    assert checked >= 10

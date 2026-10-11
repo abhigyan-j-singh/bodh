@@ -692,9 +692,11 @@ def spent_since(conn: sqlite3.Connection, since_iso: str) -> float:
     return float(row[0] or 0.0) if row else 0.0
 
 
-def local_midnight_iso(tz_name: str) -> str:
+def local_midnight_iso(tz_name: str, now: datetime | None = None) -> str:
+    """The start of today in the student's zone, as the UTC ISO text the costs table stores:
+    the daily budget's day begins at local midnight, DST changes and half-hour zones included."""
     tz = ZoneInfo(tz_name)
-    local_now = datetime.now(tz)
+    local_now = (now or utcnow()).astimezone(tz)
     midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     return midnight.astimezone(timezone.utc).isoformat()
 
