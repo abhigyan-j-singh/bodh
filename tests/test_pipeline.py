@@ -747,3 +747,21 @@ def test_bankruptcy_dry_run_records_no_run_row(cfg, conn):
     client.unread = [i.id for i in items]
     candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=False)
     assert done == 1 and client.read[-1] == [items[1].id]
+
+
+def test_refresh_protection_is_linear(cfg, conn):
+    """set(prot) was rebuilt inside a comprehension for every unread row: 23 s at 20,000."""
+    import time as _t
+
+    from conftest import make_item
+
+    now = store.utcnow_iso()
+    ids = [make_item(n).id for n in range(1, 50_001)]
+    with store.transaction(conn):
+        conn.executemany("INSERT INTO articles (id, title, folder, fetched_at) VALUES (?, 'a', 'F', ?)", [(i, now) for i in ids])
+        conn.executemany("INSERT INTO state (article_id, status) VALUES (?, 'unread')", [(i,) for i in ids])
+    ctx = pipeline.Context(cfg, Secrets(), conn)
+    t0 = _t.monotonic()
+    pipeline.refresh_protection(ctx, set(ids[:25_000]), set(ids[:10]))
+    assert _t.monotonic() - t0 < 2.0
+    assert conn.execute("SELECT COUNT(*) FROM state WHERE protected = 1").fetchone()[0] == 25_000

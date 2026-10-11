@@ -179,12 +179,11 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         if f:
             f["pending"] += 1
     if inflight_teacher:
-        marks = ",".join("?" * len(inflight_teacher))
-        for r in conn.execute(f"SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
-                              tuple(inflight_teacher)):
+        for r in store.fetch_in(conn, "SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
+                                inflight_teacher):
             f = by_name.get(r["folder"] or "(no folder)")
             if f:
-                f["inflight"] = int(r["n"])
+                f["inflight"] += int(r["n"])
 
     batches = [dict(b) for b in store.recent_batches(conn, 8)]
     for b in batches:
