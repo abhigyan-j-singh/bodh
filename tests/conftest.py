@@ -44,7 +44,7 @@ def _no_real_launchd(monkeypatch):
 
     monkeypatch.setattr(control, "_plist_path", lambda label: (None, ""))
     monkeypatch.setattr(control, "launchctl_available", lambda: False)
-    monkeypatch.setattr(control, "stray_processes", lambda: [])
+    monkeypatch.setattr(control, "stray_processes", lambda root=None: [])
 
 
 @pytest.fixture

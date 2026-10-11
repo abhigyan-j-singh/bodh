@@ -60,3 +60,99 @@ def test_setup_logging_rotates_and_skips_stderr_when_not_a_terminal(cfg, tmp_pat
         assert len(logging.getLogger().handlers) == 2  # -v always shows the log in the terminal
     finally:
         logging.getLogger().handlers.clear()
+
+
+def test_run_lock_is_not_refused_by_status_probes(cfg):
+    """The control room probes twice every 3 s; a probe that took the lock for an instant
+    refused a launchd run its lock now and then (2,035 of 20,000 attempts in the audit's probe)."""
+    import threading
+
+    data_dir = cfg.root / cfg.data_dir
+    stop = threading.Event()
+    probes = {"n": 0, "true": 0}
+
+    def probe():
+        while not stop.is_set():
+            probes["n"] += 1
+            probes["true"] += ops.run_in_progress(data_dir)
+
+    t = threading.Thread(target=probe)
+    t.start()
+    try:
+        refused = 0
+        for _ in range(300):
+            try:
+                with ops.run_lock(data_dir, "run"):
+                    pass
+            except ops.AlreadyRunning:
+                refused += 1
+    finally:
+        stop.set()
+        t.join()
+    assert refused == 0 and probes["n"] > 0
+
+
+def test_pid_file_and_liveness(cfg, monkeypatch):
+    data_dir = cfg.root / cfg.data_dir
+    pid_path = data_dir / "triage.pid"
+    with ops.run_lock(data_dir, "blast"):
+        pid, kind, started = pid_path.read_text(encoding="utf-8").split()
+        assert int(pid) == __import__("os").getpid() and kind == "blast"
+        assert ops.run_in_progress(data_dir) and ops.running_process(data_dir)["kind"] == "blast"
+        assert (data_dir / "triage.lock").stat().st_size == 0   # never truncated, never written
+        with __import__("pytest").raises(ops.AlreadyRunning):
+            with ops.run_lock(data_dir, "run"):
+                pass
+    assert not pid_path.exists() and not ops.run_in_progress(data_dir)
+    # a stale pid file (a crash) names a process that no longer exists: not running
+    pid_path.write_text("999999999 run 1700000000\n", encoding="utf-8")
+    assert not ops.run_in_progress(data_dir) and ops.running_process(data_dir) is None
+    # a reused pid (alive, but not holding the lock): not running either
+    pid_path.write_text(f"{__import__('os').getpid()} run 1700000000\n", encoding="utf-8")
+    assert not ops.run_in_progress(data_dir)
+
+
+def test_running_process_never_signals_on_windows(monkeypatch):
+    import os
+
+    calls = []
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    monkeypatch.setattr(ops, "_pid_alive_windows", lambda pid: pid == 4242)
+    assert ops.pid_alive(4242) and not ops.pid_alive(4243) and calls == []
+
+
+def test_sigterm_ends_a_run_like_ctrl_c(cfg):
+    """launchctl bootout sends SIGTERM; it used to kill the run with no run row finished and
+    the pid file left behind."""
+    import signal
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    data_dir = cfg.root / cfg.data_dir
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    code = (
+        f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path\n"
+        "from triage.ops import run_lock, graceful_sigterm\n"
+        f"with run_lock(Path({str(data_dir)!r}), 'run'), graceful_sigterm():\n"
+        "    print('locked', flush=True)\n"
+        "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        print('interrupted', flush=True)\n"
+    )
+    with subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True) as proc:
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
+        time.sleep(0.2)
+        proc.send_signal(signal.SIGTERM)
+        out = proc.stdout.read()
+        proc.wait(timeout=10)
+    assert "interrupted" in out and proc.returncode == 0
+    assert not (data_dir / "triage.pid").exists()
+
+
+def test_time_limit_without_sigalrm_is_a_noop(monkeypatch):
+    import signal
+
+    monkeypatch.delattr(signal, "SIGALRM", raising=False)
+    with ops.time_limit(1):
+        pass

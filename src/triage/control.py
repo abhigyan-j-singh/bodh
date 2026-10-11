@@ -91,13 +91,23 @@ def job_state(label: str) -> dict:
     return out
 
 
-def schedule(action: str, which: str = "all") -> str:
+def schedule(action: str, which: str = "all", data_dir: Path | None = None) -> str:
     """'pause' unloads the jobs (the plists stay; nothing fires until 'resume'); 'resume' loads
-    them; 'kick' starts a run now. ``which`` is a job name or 'all' (pause and resume only)."""
+    them; 'kick' starts a run now. ``which`` is a job name or 'all' (pause and resume only).
+    A kick is refused while a run holds the lock (``data_dir`` given): launchctl's kickstart
+    -k would kill it, and the new one would exit at once on the lock anyway."""
     if action == "kick":
         which = "run" if which == "all" else which
+        if data_dir is not None and which == "run":
+            proc = ops.running_process(data_dir)
+            if proc is not None:
+                return (f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `triage stop` "
+                        "it first")
     names = list(JOBS) if which == "all" else [which]
-    return "\n".join(_schedule_one(action, name) for name in names)
+    lines = [_schedule_one(action, name) for name in names]
+    if action == "pause" and which == "all":
+        lines.append("the control room is paused too; `triage schedule resume` brings everything back")
+    return "\n".join(lines)
 
 
 def _schedule_one(action: str, which: str) -> str:
@@ -148,11 +158,12 @@ def panel_state(cfg: Config) -> dict:
     return {"up": up, "url": f"http://{host}:{port}", "pid": info.get("pid"), "note": note}
 
 
-def stray_processes() -> list[tuple[int, str]]:
-    """triage commands still alive on this machine (run, prune, blast, panel …), except this one."""
+def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
+    """triage commands of this checkout still alive on this machine (run, prune, blast,
+    panel …), except this one. Anchored to the checkout's path: a halt from one checkout must
+    not end another's control room, or an editor whose arguments mention the path."""
     try:
-        res = subprocess.run(["pgrep", "-fl", r"\.venv/bin/triage|-m triage\.cli"], capture_output=True, text=True,
-                             timeout=10)
+        res = subprocess.run(["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return []
     out = []
@@ -163,20 +174,29 @@ def stray_processes() -> list[tuple[int, str]]:
     return out
 
 
+def stray_pattern(root: Path | None) -> str:
+    """The pgrep pattern for this checkout's own commands, anchored at the start of the
+    command line so a path merely mentioned in another program's arguments does not match."""
+    if root is not None:
+        return rf"^{re.escape(str(root))}/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
+    return r"^\S*/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
+
+
 def halt(cfg: Config) -> list[str]:
-    """Stop everything: pause every launchd job, interrupt the run that holds the lock, end
-    any other triage process (the control room included). Nothing is lost: judged articles
-    stay judged, half-written cuts are finished by the next run."""
-    notes = [schedule("pause", "all")]
-    notes.append(ops.stop_process(cfg.root / cfg.data_dir))
-    for pid, cmd in stray_processes():
+    """Stop everything: interrupt the run that holds the lock (so it finishes its run row and
+    pings the heartbeat), then pause every launchd job, then end any other triage process of
+    this checkout (the control room included). Nothing is lost: judged articles stay judged,
+    half-written cuts are finished by the next run."""
+    notes = [ops.stop_process(cfg.root / cfg.data_dir)]
+    notes.append(schedule("pause", "all"))
+    for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGTERM)
             notes.append(f"ended pid {pid}: {cmd[:80]}")
         except OSError as exc:
             notes.append(f"could not end pid {pid}: {exc}")
     time.sleep(1.0)
-    for pid, cmd in stray_processes():
+    for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGKILL)
             notes.append(f"killed pid {pid}: {cmd[:80]}")
@@ -276,7 +296,8 @@ def _edit_cut_enforce(text: str, on: bool) -> str:
 
 # -- the whole picture ------------------------------------------------------------
 
-def status(cfg: Config, conn: sqlite3.Connection) -> dict:
+def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> dict:
+    """The whole picture. ``jobs`` lets a caller pass launchd's answers from a cache."""
     data_dir = cfg.root / cfg.data_dir
     proc = ops.running_process(data_dir)
     snap = progress.snapshot(conn, cfg)
@@ -284,13 +305,15 @@ def status(cfg: Config, conn: sqlite3.Connection) -> dict:
     runs = [dict(r) for r in store.last_runs(conn, 15)]
     last_ok = next((r for r in runs if r["ok"] and r["kind"] == "run"), None)
     last_err = next((r for r in runs if not r["ok"] and (r["error"] or r["finished_at"])), None)
-    jobs = {name: job_state(label) for name, label in JOBS.items()}
+    if jobs is None:
+        jobs = {name: job_state(label) for name, label in JOBS.items()}
     spend_today = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     now = time.time()
     next_run = None
     if proc is None and jobs["run"]["loaded"] and jobs["run"]["state"] != "running":
         interval = jobs["run"]["interval"] or 1800
-        last_start = _parse_ts(runs[0]["started_at"]) if runs else None
+        last_timer_run = next((r for r in runs if r["kind"] == "run"), None)  # a prune or an undo is not the timer
+        last_start = _parse_ts(last_timer_run["started_at"]) if last_timer_run else None
         if last_start:
             next_run = max(0.0, interval - (now - last_start))
     return {

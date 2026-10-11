@@ -72,11 +72,9 @@ def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
         if 0 <= i < bins:
             counts[i] += 1
     data_dir = cfg.root / cfg.data_dir
-    running = ops.run_in_progress(data_dir)
-    lock = data_dir / "triage.lock"
-    run_started = None
-    if running and lock.exists():
-        run_started = datetime.fromtimestamp(lock.stat().st_mtime, tz=timezone.utc).isoformat()
+    proc = ops.running_process(data_dir)   # the pid file is the one source of "since when"
+    running = proc is not None
+    run_started = datetime.fromtimestamp(proc["started"], tz=timezone.utc).isoformat() if proc else None
     phase = store.kv_get(conn, "phase") if running else None
     # no log tail here: this dict is written to progress.json and the dashboard, which may be
     # published; the terminal and the control room fetch the log on their own (log_tail)

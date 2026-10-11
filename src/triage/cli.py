@@ -28,7 +28,7 @@ import typer
 from . import __version__, dashboard, learner, pipeline, report, store
 from .config import Config, ConfigError, load_config, load_secrets
 from .ids import normalize_item_id
-from .ops import AlreadyRunning, RunTimeout, run_lock, setup_logging, time_limit
+from .ops import AlreadyRunning, RunTimeout, graceful_sigterm, run_lock, setup_logging, time_limit
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
@@ -68,9 +68,16 @@ def version() -> None:
 
 @app.command()
 def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models.")) -> None:
-    """Connectivity and configuration checks. Run after every update."""
+    """Connectivity and configuration checks. Run after every update. Exits 1 when a check
+    fails, so an installer stops on a broken install."""
     cfg = _config()
     secrets = load_secrets(cfg.root)
+    problems: list[str] = []
+
+    def problem(text: str) -> None:
+        problems.append(text)
+        typer.echo(text)
+
     typer.echo(f"root: {cfg.root}")
     typer.echo(f"models: teacher={cfg.models.teacher} second_look={cfg.models.second_look} learner={cfg.models.learner}"
                f" budget=${cfg.models.daily_budget_usd}/day")
@@ -78,9 +85,12 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
             else f"synchronous ({cfg.scoring.workers} calls at once)")
     typer.echo(f"mode: {mode} · prompt {cfg.scoring.prompt_version} · {cfg.scoring.batch_size} articles per call"
                f" · articles older than {cfg.scoring.max_age_days} days are never scored")
-    typer.echo(f"cut: target {cfg.cut.target_unread}, floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run,"
-               f" folders {list(cfg.cut.folders) or 'none'}")
-    typer.echo(f"seed: {'found' if cfg.read_seed() else 'MISSING (profile/seed.md)'}")
+    typer.echo(f"cut: {'enforcing' if cfg.cut.enforce else 'shadow mode'}, target {cfg.cut.target_unread}, "
+               f"floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run, folders {list(cfg.cut.folders) or 'none'}")
+    if cfg.read_seed():
+        typer.echo("seed: found")
+    else:
+        problem("seed: MISSING (profile/seed.md): the teacher cannot judge for a student it knows nothing about")
     typer.echo(f"learner model: {'found' if cfg.read_learner() else 'missing (will start empty)'}")
     from .teacher import PROMPTS_DIR, load_prompt
 
@@ -89,15 +99,31 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
             load_prompt(name, cfg.root)
             typer.echo(f"prompt {name}: ok")
         except Exception as exc:  # noqa: BLE001
-            typer.echo(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
-    typer.echo(f"bazqux credentials: {'set' if secrets.is_set('bazqux_email') and secrets.is_set('bazqux_password') else 'MISSING'}")
-    typer.echo(f"anthropic key: {'set' if secrets.is_set('anthropic_api_key') else 'MISSING'}")
+            problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
+    if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
+        typer.echo("bazqux credentials: set")
+    else:
+        problem("bazqux credentials: MISSING (BAZQUX_EMAIL, BAZQUX_PASSWORD in .env)")
+    if secrets.is_set("anthropic_api_key"):
+        typer.echo("anthropic key: set")
+    else:
+        problem("anthropic key: MISSING (ANTHROPIC_API_KEY in .env)")
     hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
     conn = store.connect(cfg.db_path)
-    typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles)")
-    if not live:
-        return
+    typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles, "
+               f"schema v{store.schema_version(conn)})")
+    if live and not problems:
+        _doctor_live(cfg, secrets, conn, problem)
+    elif live:
+        typer.echo("live checks skipped until the problems above are fixed")
+    if problems:
+        typer.echo(f"\n{len(problems)} problem(s); see above", err=True)
+        raise typer.Exit(1)
+    typer.echo("ok")
+
+
+def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
     ctx = pipeline.Context(cfg, secrets, conn)
     try:
         ctx.client.user_info()
@@ -110,16 +136,20 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
         tags = ctx.client.tags()
         typer.echo(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
         want = f"user/-/label/{cfg.cut.must_read_stream}"
-        typer.echo(f"must-read stream '{cfg.cut.must_read_stream}': {'present' if want in tags else 'not found (create it in BazQux)'}")
+        if want in tags:
+            typer.echo(f"must-read stream '{cfg.cut.must_read_stream}': present")
+        else:
+            problem(f"must-read stream '{cfg.cut.must_read_stream}': not found (create it in BazQux, or name yours in "
+                    "cut.must_read_stream)")
         unknown = [f for f in cfg.cut.folders if f not in folders]
         if unknown:
-            typer.echo(f"warning: config folders not in BazQux: {unknown}")
+            problem(f"config folders not in BazQux: {unknown}")
         if unread:
             items, _ = ctx.client.contents([r.id for r in unread[:3]])
             for it in items:
                 typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"bazqux: FAILED ({exc})")
+        problem(f"bazqux: FAILED ({exc})")
     try:
         from .teacher import Teacher, concept_context
 
@@ -129,12 +159,18 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
                  "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once."}
         verdicts = teacher.judge_batch([probe], None)  # type: ignore[list-item]
         v = verdicts.get("probe")
-        typer.echo(f"teacher ({cfg.models.teacher}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}" if v else "teacher: call ok, no verdict parsed")
+        if v:
+            typer.echo(f"teacher ({cfg.models.teacher}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}")
+        else:
+            problem(f"teacher ({cfg.models.teacher}): call ok, no verdict parsed")
         second = teacher.second_look(probe, None)  # type: ignore[arg-type]
-        typer.echo(f"second look ({cfg.models.second_look}): {'ok' if second is not None else 'FAILED'}")
-        typer.echo(f"spend for this doctor run: ${store.spent_since(conn, store.days_ago_iso(0)):.4f} (today total)")
+        if second is not None:
+            typer.echo(f"second look ({cfg.models.second_look}): ok")
+        else:
+            problem(f"second look ({cfg.models.second_look}): FAILED")
+        typer.echo(f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}")
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"models: FAILED ({exc})")
+        problem(f"models: FAILED ({exc})")
 
 
 @app.command()
@@ -146,7 +182,7 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
     """One full pass. This is what launchd runs every 30 minutes."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), time_limit(pipeline.RUN_TIMEOUT_SECONDS):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), graceful_sigterm(), time_limit(pipeline.RUN_TIMEOUT_SECONDS):
             res = pipeline.run(ctx, score_limit=limit, enforce=(ctx.cfg.cut.enforce and not shadow),
                                workers=workers, sync=sync)
     except AlreadyRunning:
@@ -259,7 +295,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
         last_line["n"] = done
 
     try:
-        with run_lock(cfg.root / cfg.data_dir, "blast"):
+        with run_lock(cfg.root / cfg.data_dir, "blast"), graceful_sigterm():
             total = pipeline.blast(ctx, workers=workers, chunk=chunk, all_ages=all_ages, budget=budget,
                                    on_progress=show, model=model, max_seconds=max_seconds)
     except AlreadyRunning:
@@ -290,7 +326,7 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         _fail("choose one of --keep, --fraction, --below")
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "prune"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "prune"), graceful_sigterm():
             n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=dry_run)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
@@ -316,7 +352,7 @@ def undo(verbose: bool = typer.Option(False, "-v")) -> None:
     """Reverse the last cut: mark its articles unread again and remove the cut tag."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"), graceful_sigterm():
             run_id, n = pipeline.undo_last(ctx)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
@@ -341,7 +377,7 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
     if not yes and not typer.confirm("Mark them read?"):
         raise typer.Exit(0)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "bankruptcy"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "bankruptcy"), graceful_sigterm():
             _, done = pipeline.bankruptcy(ctx, older_than, dry_run=False)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
@@ -384,7 +420,8 @@ def schedule(action: str = typer.Argument("status", help="status, pause, resume 
         _fail("action must be status, pause, resume or kick")
     if job != "all" and job not in control.JOBS:
         _fail("--job must be run, weekly, report, panel or all")
-    typer.echo(control.schedule(action, job))
+    cfg = _config()
+    typer.echo(control.schedule(action, job, cfg.root / cfg.data_dir))
 
 
 @app.command()
@@ -527,7 +564,7 @@ def meh(phrase: str) -> None:
 def _nudge(kind: str, phrase: str) -> None:
     ctx = _ctx()
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "nudge"):   # learner.md is written: not under a run
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "nudge"), graceful_sigterm():   # learner.md is written: not under a run
             typer.echo(learner.nudge(ctx.cfg, ctx.conn, kind, phrase))
     except AlreadyRunning:
         _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
@@ -539,7 +576,7 @@ def profile(action: str = typer.Argument("show", help="show or revert")) -> None
     ctx = _ctx()
     if action == "revert":
         try:
-            with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"):
+            with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
                 v = learner.revert(ctx.cfg, ctx.conn)
         except AlreadyRunning:
             _fail("a run is in progress; try again in a minute", 5)
@@ -556,7 +593,7 @@ def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = typ
     """Sunday's job: rewrite the learner model (gated), write the weekly note, run the drift check."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"), graceful_sigterm():
             _weekly(ctx, dry_run)
     except AlreadyRunning:
         _fail("a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later", 5)

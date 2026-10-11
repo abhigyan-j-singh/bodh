@@ -131,8 +131,8 @@ def near_misses(conn: sqlite3.Connection, days: int = 7, limit: int = 20) -> lis
 def feeds(conn: sqlite3.Connection, days: int = 30, limit: int = 40) -> list[sqlite3.Row]:
     since = store.days_ago_iso(days)
     return conn.execute(
-        """SELECT a.feed_title, a.folder, COUNT(*) n, AVG(s.score) mean_score,
-                  AVG(CASE WHEN st.status = 'cut' THEN 1.0 ELSE 0.0 END) cut_share,
+        """SELECT a.feed_title, a.folder, COUNT(*) n, COUNT(s.score) judged, AVG(s.score) mean_score,
+                  AVG(CASE WHEN st.status = 'cut' AND st.cut_mode != 'bankruptcy' THEN 1.0 ELSE 0.0 END) cut_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='read') THEN 1.0 ELSE 0.0 END) read_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='star') THEN 1.0 ELSE 0.0 END) star_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='rescue') THEN 1.0 ELSE 0.0 END) rescue_share

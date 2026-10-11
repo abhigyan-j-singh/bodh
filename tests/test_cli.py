@@ -43,3 +43,16 @@ def test_weekly_want_meh_and_revert_take_the_lock(tmp_path, monkeypatch):
     result = runner.invoke(app, ["want", "reefs"])
     assert result.exit_code == 0 and "wants more on reefs" in result.output
     assert "wants more on reefs" in (root / "profile" / "learner.md").read_text(encoding="utf-8")
+
+
+def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
+    root = _project(tmp_path, monkeypatch)
+    for name in ("BAZQUX_EMAIL", "BAZQUX_PASSWORD", "ANTHROPIC_API_KEY", "HEALTHCHECK_URL"):
+        monkeypatch.delenv(name, raising=False)
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1 and "MISSING" in result.output and "problem(s)" in result.output
+    (root / ".env").write_text("BAZQUX_EMAIL=a@b.c\nBAZQUX_PASSWORD=pw\nANTHROPIC_API_KEY=sk-ant-test\n", encoding="utf-8")
+    (root / "profile" / "seed.md").write_text("# Seed\nStudent: test.\n", encoding="utf-8")
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0 and result.output.rstrip().endswith("ok"), result.output
+    assert "sk-ant-test" not in result.output and "pw" not in result.output.split("credentials")[1][:20]

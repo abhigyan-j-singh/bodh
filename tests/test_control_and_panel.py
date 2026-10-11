@@ -272,3 +272,99 @@ def test_panel_enforce_lever_fails_closed(conn, cfg, tmp_path):
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
     res = panel.run_action("enforce_on", {})
     assert res["ok"] and panel.cfg.cut.enforce is True
+
+
+def test_halt_stops_before_pausing(conn, cfg, monkeypatch):
+    """Pausing launchd first sent SIGTERM to the running job with no handler: no run row, no
+    heartbeat, a pid file left behind. The run is interrupted first, then the schedule."""
+    order = []
+    monkeypatch.setattr(ops, "stop_process", lambda data_dir, wait=20.0: order.append("stop") or "nothing is running")
+    monkeypatch.setattr(control, "schedule", lambda action, which="all", data_dir=None: order.append(f"{action} {which}") or "paused")
+    control.halt(cfg)
+    assert order == ["stop", "pause all"]
+
+
+def test_schedule_kick_refuses_while_running(conn, cfg):
+    data_dir = cfg.root / cfg.data_dir
+    with ops.run_lock(data_dir, "blast"):
+        msg = control.schedule("kick", "run", data_dir)
+    assert msg.startswith("not kicked") and "blast" in msg
+    assert "not installed" in control.schedule("kick", "run", data_dir)   # idle: launchd (absent here) is asked
+    assert "control room is paused too" in control.schedule("pause", "all", data_dir)
+
+
+def test_stray_processes_only_this_checkout(tmp_path):
+    r"""The old pattern (`\.venv/bin/triage|-m triage\.cli`, unanchored) matched another checkout's
+    control room and an editor whose arguments carried the path."""
+    import re
+
+    pattern = re.compile(control.stray_pattern(tmp_path))
+    lines = {
+        101: f"{tmp_path}/.venv/bin/triage panel --port 8766",
+        102: "/Users/other/triage/.venv/bin/triage run",
+        103: f"vim {tmp_path}/.venv/bin/triage",
+        104: "/usr/bin/python3 -m triage.cli run",
+        105: f"{tmp_path}/.venv/bin/triage",
+    }
+    assert {pid for pid, cmd in lines.items() if pattern.search(cmd)} == {101, 104, 105}
+
+
+def test_next_run_uses_last_timer_run(conn, cfg, monkeypatch):
+    monkeypatch.setattr(control, "job_state", lambda label: {"label": label, "installed": True, "loaded": True,
+                                                              "state": "waiting", "last_exit": 0, "pid": None,
+                                                              "mode": "agent", "plist": "x", "interval": 1800})
+    run_id = store.begin_run(conn, "run")
+    conn.execute("UPDATE runs SET started_at = ? WHERE id = ?", (store.days_ago_iso(0).replace("+00:00", "+00:00"), run_id))
+    store.finish_run(conn, run_id, True, summary="run")
+    conn.execute("UPDATE runs SET started_at = ? WHERE id = ?",
+                 ((store.utcnow() - __import__("datetime").timedelta(minutes=20)).isoformat(), run_id))
+    prune_id = store.begin_run(conn, "prune")           # a prune just now must not reset the countdown
+    store.finish_run(conn, prune_id, True, summary="prune")
+    st = control.status(cfg, conn)
+    assert st["next_run_in"] is not None and 500 < st["next_run_in"] < 700
+
+
+def test_panel_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
+    import socket
+
+    seed_scored(conn, cfg, [dict(n=1, score=90)])
+    (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 33\n", encoding="utf-8")
+    cfg.cut.enforce = False
+    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        panel.port = sock.getsockname()[1]
+    threading.Thread(target=panel.serve, daemon=True).start()
+    base = f"http://127.0.0.1:{panel.port}"
+    for _ in range(50):
+        try:
+            _get(base + "/api/status")
+            break
+        except OSError:
+            time.sleep(0.1)
+    for host in ("evil.example.com", "evil.example.com:8766", "127.0.0.1.evil.example"):
+        req = urllib.request.Request(base + "/api/status", headers={"Host": host})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            raise AssertionError(host)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+        req = urllib.request.Request(base + "/api/action", data=b"{}", method="POST",
+                                     headers={"Host": host, "X-Triage": "panel", "Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            raise AssertionError(host)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+    for host in ("127.0.0.1", "localhost:1234", "mac.tail1234.ts.net", "[::1]:80"):
+        req = urllib.request.Request(base + "/api/status", headers={"Host": host})
+        assert urllib.request.urlopen(req, timeout=10).status == 200, host
+    assert panel.host_allowed("[::1]") and not panel.host_allowed("") and not panel.host_allowed("ts.net.evil.com")
+    # the page carries the configured target as the prune default
+    page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
+    assert "id='keep' type='number' value='33'" in page
+    # status is served from a short cache; an action refreshes it
+    first = _get(base + "/api/status")["now"]
+    assert _get(base + "/api/status")["now"] == first
+    _post(base + "/api/action", {"action": "undo"})
+    assert _get(base + "/api/status")["now"] != first

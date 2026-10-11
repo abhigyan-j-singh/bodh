@@ -42,3 +42,39 @@ def test_verdicts_panel_and_disagreements(conn, cfg):
     assert {r["id"] for r in dis} == {ids[1], ids[2]}
     html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
     assert "Your verdicts" in html and "disagree most" in html and "Article 2" in html
+
+
+def test_proposal_thresholds(conn, cfg):
+    """An unscored feed used to get mean 0, and bankruptcy cuts counted toward the cut share:
+    after a day-0 bankruptcy the first report proposed unsubscribing from every big feed."""
+    from conftest import make_item
+
+    from triage.config import FolderPolicy
+
+    now = store.utcnow_iso()
+    # 60 unscored articles of one feed, all bankrupted
+    ids = []
+    for n in range(1, 61):
+        item = make_item(n, feed="Big Unscored")
+        store.upsert_article(conn, item, None)
+        ids.append(item.id)
+    run_id = store.begin_run(conn, "bankruptcy")
+    store.mark_cut(conn, ids, run_id, "bankruptcy")
+    # 50 scored junk articles of another feed, cut by the floor
+    junk = seed_scored(conn, cfg, [dict(n=100 + i, score=10, feed="Junk Feed") for i in range(50)])
+    store.mark_cut(conn, junk, run_id, "floor")
+    conn.execute("UPDATE articles SET fetched_at = ?", (now,))
+    rows = {r["feed_title"]: r for r in dashboard.feeds(conn)}
+    assert rows["Big Unscored"]["judged"] == 0 and rows["Big Unscored"]["cut_share"] == 0.0
+    assert report.proposal(rows["Big Unscored"], cfg) == ""
+    assert report.proposal(rows["Junk Feed"], cfg).startswith("unsubscribe")
+    # the strict folder comes from config: none configured, no "move to" proposal
+    cfg.cut.folders = {}
+    assert report.strictest_folder(cfg) is None
+    cfg.cut.folders = {"Torrent": FolderPolicy(auto_cut_below=70), "Always": FolderPolicy(protected=True)}
+    assert report.strictest_folder(cfg) == "Torrent"
+    big = seed_scored(conn, cfg, [dict(n=1000 + i, score=40, feed="Loud Feed") for i in range(300)])
+    store.mark_cut(conn, big[:200], run_id, "floor")
+    conn.execute("UPDATE articles SET fetched_at = ?", (now,))
+    row = {r["feed_title"]: r for r in dashboard.feeds(conn)}["Loud Feed"]
+    assert report.proposal(row, cfg).startswith("move to Torrent")
