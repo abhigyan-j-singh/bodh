@@ -85,7 +85,27 @@ CREATE TABLE IF NOT EXISTS inflight (
   PRIMARY KEY (article_id, purpose)
 );
 CREATE INDEX IF NOT EXISTS inflight_batch ON inflight(batch_id);
+CREATE INDEX IF NOT EXISTS articles_fetched_at ON articles(fetched_at);
+CREATE INDEX IF NOT EXISTS articles_crawled ON articles(crawled_msec);
+CREATE INDEX IF NOT EXISTS scores_scored_at ON scores(scored_at);
+CREATE INDEX IF NOT EXISTS scores_model ON scores(model);
+CREATE INDEX IF NOT EXISTS state_cut_at ON state(cut_at);
+CREATE INDEX IF NOT EXISTS state_cut_run ON state(cut_run_id);
+CREATE INDEX IF NOT EXISTS costs_created_at ON costs(created_at);
+CREATE INDEX IF NOT EXISTS feedback_kind_at ON feedback(kind, at);
 """
+
+# the indexes the periods, the pending query and the concept lists walk; added by _migrate_5
+INDEXES = {
+    "articles_fetched_at": "articles(fetched_at)",
+    "articles_crawled": "articles(crawled_msec)",
+    "scores_scored_at": "scores(scored_at)",
+    "scores_model": "scores(model)",
+    "state_cut_at": "state(cut_at)",
+    "state_cut_run": "state(cut_run_id)",
+    "costs_created_at": "costs(created_at)",
+    "feedback_kind_at": "feedback(kind, at)",
+}
 
 
 def utcnow() -> datetime:
@@ -114,7 +134,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # existed); each numbered step below brings it one version on, inside one transaction, and
 # is written so that running it on a database that already has the change is harmless.
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SCHEMA_VERSION_KEY = "schema_version"
 
 # The kv keys, named by the glossary. The names before October 2026 are moved by _migrate_4.
@@ -160,7 +180,14 @@ def _migrate_4(conn: sqlite3.Connection) -> None:
         kv_set(conn, SAFETY_KEY, tripped)
 
 
-MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4}
+def _migrate_5(conn: sqlite3.Connection) -> None:
+    """Indexes for the queries that walk a year of articles by time (the periods of the
+    progress views, the pending query, the concept lists). Harmless to older code."""
+    for name, columns in INDEXES.items():
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {columns}")
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4, 5: _migrate_5}
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -578,7 +605,7 @@ def mark_cut(conn: sqlite3.Connection, ids: Iterable[str], run_id: int, mode: st
 
 
 @contextmanager
-def _bulk(conn: sqlite3.Connection) -> Iterator[None]:
+def bulk(conn: sqlite3.Connection) -> Iterator[None]:
     """One transaction around a bulk write, unless the caller already holds one (then the
     rows join it): autocommit would fsync once per row, 3.5 s for 20,000 flags."""
     if conn.in_transaction:
@@ -586,6 +613,9 @@ def _bulk(conn: sqlite3.Connection) -> Iterator[None]:
         return
     with transaction(conn):
         yield
+
+
+_bulk = bulk
 
 
 def cut_pending_now_exempt(conn: sqlite3.Connection) -> list[str]:
@@ -619,13 +649,14 @@ def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool, 
     by any path); ``exempt`` (an undo) keeps it clear of autocut, so the next run
     does not repeat the cut that was just reversed; a prune may still take it."""
     now = utcnow_iso()
-    conn.executemany(
-        """UPDATE state SET status = 'unread', cut_run_id = NULL, cut_mode = NULL, cut_at = NULL,
-                            cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at),
-                            exempt = MAX(exempt, ?)
-           WHERE article_id = ?""",
-        [(now if rescued else None, 1 if exempt else 0, i) for i in ids],
-    )
+    with bulk(conn):
+        conn.executemany(
+            """UPDATE state SET status = 'unread', cut_run_id = NULL, cut_mode = NULL, cut_at = NULL,
+                                cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at),
+                                exempt = MAX(exempt, ?)
+               WHERE article_id = ?""",
+            [(now if rescued else None, 1 if exempt else 0, i) for i in ids],
+        )
 
 
 def status_ids(conn: sqlite3.Connection, status: str) -> set[str]:
@@ -760,6 +791,18 @@ def add_feedback(conn: sqlite3.Connection, article_id: str, kind: FeedbackKind) 
         (article_id, kind, utcnow_iso()),
     )
     return cur.rowcount > 0
+
+
+def add_feedback_many(conn: sqlite3.Connection, ids: Iterable[str], kind: FeedbackKind) -> int:
+    """The same for many articles in one transaction; returns how many were new."""
+    now = utcnow_iso()
+    new = 0
+    with bulk(conn):
+        for aid in ids:
+            new += conn.execute(
+                "INSERT OR IGNORE INTO feedback (article_id, kind, at) VALUES (?, ?, ?)", (aid, kind, now)
+            ).rowcount
+    return new
 
 
 def set_verdict(conn: sqlite3.Connection, article_id: str, kind: str, group: Iterable[str]) -> bool:

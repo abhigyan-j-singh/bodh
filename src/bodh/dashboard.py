@@ -311,14 +311,24 @@ def _section_head(cfg: Config, d: dict[str, Any]) -> str:
     )
 
 
-def _section_progress(cfg: Config, conn: sqlite3.Connection) -> str:
+def _section_progress(cfg: Config, conn: sqlite3.Connection, snap: dict[str, Any] | None) -> str:
     from . import progress
 
     try:
-        return progress.render_html(progress.snapshot(conn, cfg))
+        return progress.render_html(snap if snap is not None else progress.snapshot(conn, cfg))
     except Exception:  # the progress section must never break the page the rest of the run depends on
         log.exception("dashboard: the progress section failed to render")
         return "<p class='bad'>the progress section failed to render</p>"
+
+
+def _snapshot(cfg: Config, conn: sqlite3.Connection) -> dict[str, Any] | None:
+    from . import progress
+
+    try:
+        return progress.snapshot(conn, cfg)
+    except Exception:  # the same: the section says so, the live file is not written
+        log.exception("dashboard: the progress snapshot failed")
+        return None
 
 
 def _section_flow(cfg: Config, d: dict[str, Any]) -> str:
@@ -486,10 +496,11 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     from . import progress
 
     d = data(cfg, conn)
+    snap = _snapshot(cfg, conn)  # once: the page's progress section and progress.json share it
     body = "\n".join(
         [
             _section_head(cfg, d),
-            _section_progress(cfg, conn),
+            _section_progress(cfg, conn, snap),
             _section_flow(cfg, d),
             _section_calibration(d),
             _section_verdicts(d),
@@ -519,7 +530,8 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
         ),
         encoding="utf-8",
     )
-    progress.write_live(cfg, conn)
+    if snap is not None:
+        progress.write_live(cfg, conn, snap=snap)
     return path
 
 

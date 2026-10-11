@@ -16,6 +16,7 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     v1 = store.SCHEMA.replace("  exempt INTEGER DEFAULT 0,\n", "").replace(
         "  judge_failures INTEGER DEFAULT 0,\n", ""
     )
+    v1 = "\n".join(line for line in v1.splitlines() if not any(name in line for name in store.INDEXES))
     old.executescript(v1)
     old.execute("INSERT INTO state (article_id, status) VALUES ('a', 'unread')")
     # the kv keys before October 2026, as the old code left them
@@ -40,6 +41,9 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     assert (
         store.kv_get(conn, store.SAFETY_KEY) == "42" and store.kv_get(conn, store.LEGACY_SAFETY_KEY) == "42"
     )
+    # migration 5: the time indexes, harmless to older code
+    indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert set(store.INDEXES) <= indexes
     assert store.migrate(conn) == store.SCHEMA_VERSION  # idempotent
     conn.close()
     fresh = store.connect(tmp_path / "fresh.db")

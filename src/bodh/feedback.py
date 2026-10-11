@@ -48,9 +48,9 @@ def collect(
     }
     known = store.known_ids(conn)
     # stars: explicit, the strongest signal, and a protection
-    new_stars = [aid for aid in starred_now & known if store.add_feedback(conn, aid, "star")]
-    store.set_flags(conn, [aid for aid in starred_now & known], starred=1)
-    stats["stars"] = len(new_stars)
+    with store.bulk(conn):
+        stats["stars"] = store.add_feedback_many(conn, sorted(starred_now & known), "star")
+        store.set_flags(conn, [aid for aid in starred_now & known], starred=1)
     stats["returned"] = _collect_returned(conn, unread_now)
     ours_unread = store.status_ids(conn, "unread")
     _collect_reads(conn, cfg, ours_unread, unread_now, stats)
@@ -112,10 +112,12 @@ def _collect_reads(
     feeds = Counter(r["feed_title"] for r in recent)
     bulk = len(recent) >= cfg.safety.mark_all_read_threshold and len(feeds) >= 3
     kind: store.FeedbackKind = "dismiss" if bulk else "read"
-    for r in recent:
-        store.add_feedback(conn, r["id"], kind)
-    store.set_flags(conn, recent_ids, status=("dismissed" if bulk else "read"), read_at=store.utcnow_iso())
-    store.set_flags(conn, expired, status="expired")
+    with store.bulk(conn):
+        store.add_feedback_many(conn, recent_ids, kind)
+        store.set_flags(
+            conn, recent_ids, status=("dismissed" if bulk else "read"), read_at=store.utcnow_iso()
+        )
+        store.set_flags(conn, expired, status="expired")
     stats["dismissed" if bulk else "reads"] = len(recent)
     stats["expired"] = len(expired)
 
@@ -143,11 +145,10 @@ def _collect_rescues(
     rescued = sorted((ours_cut_marked & unread_now) | set(wrong_cut))
     if rescued:
         client.untag(rescued, cfg.tags.cut)
-        store.restore_unread(conn, rescued, rescued=True)
-        for aid in rescued:
-            store.add_feedback(conn, aid, "rescue")
-    for aid in wrong_ids:
-        store.add_feedback(conn, aid, "wrong")
+        with store.bulk(conn):
+            store.restore_unread(conn, rescued, rescued=True)
+            store.add_feedback_many(conn, rescued, "rescue")
+    store.add_feedback_many(conn, wrong_ids, "wrong")
     for name, ids in tagged.items():
         if ids:
             client.untag(ids, name)

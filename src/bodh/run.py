@@ -213,8 +213,10 @@ class _Run:
         return self.res.run_id
 
     def phase(self, text: str) -> None:
+        """The phase goes to the database at once (the console reads it there); the live file
+        follows unless it was written in the last second (a snapshot walks the whole store)."""
         progress.set_phase(self.conn, text)
-        progress.write_live(self.cfg, self.conn)
+        progress.write_live(self.cfg, self.conn, min_interval=0.0 if not text else 1.0)
 
 
 def run(

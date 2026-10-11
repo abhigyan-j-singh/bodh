@@ -10,7 +10,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -258,30 +258,35 @@ def _folders(
 ) -> list[dict[str, Any]]:
     """Per folder: unread, judged, 70 and above, cut, pending, with the model, the cut-off."""
     skip = cfg.unjudged_folders()
+    # the cuts first (every folder, a year of them, counted through the status index), then
+    # the unread pile, which is small: one pass over the whole table per phase was 130 ms at
+    # 50,000 articles
+    cuts = {
+        r["folder"]: int(r["n"] or 0)
+        for r in conn.execute(
+            "SELECT a.folder, COUNT(*) n FROM state st JOIN articles a ON a.id = st.article_id "
+            "WHERE st.status = 'cut' GROUP BY a.folder"
+        )
+    }
     folders = []
+    seen: set[str | None] = set()
     for r in conn.execute(
         """SELECT a.folder,
-                  SUM(st.status = 'unread') unread,
-                  SUM(st.status = 'unread' AND s.prompt_version = ?) judged,
-                  SUM(st.status = 'unread' AND s.score >= 70) good,
-                  SUM(st.status = 'cut') cut
-           FROM articles a JOIN state st ON st.article_id = a.id LEFT JOIN scores s ON s.article_id = a.id
+                  COUNT(*) unread,
+                  SUM(s.prompt_version = ?) judged,
+                  SUM(s.score >= 70) good
+           FROM state st JOIN articles a ON a.id = st.article_id LEFT JOIN scores s ON s.article_id = a.id
+           WHERE st.status = 'unread'
            GROUP BY a.folder ORDER BY unread DESC""",
         (cfg.judge.prompt_version,),
     ):
+        seen.add(r["folder"])
         folders.append(
-            {
-                "folder": r["folder"] or "(no folder)",
-                "unread": int(r["unread"] or 0),
-                "judged": int(r["judged"] or 0),
-                "good": int(r["good"] or 0),
-                "cut": int(r["cut"] or 0),
-                "pending": 0,
-                "inflight": 0,
-                "floor": cfg.cutoff_for(r["folder"]),
-                "scored": (r["folder"] or "") not in skip,
-            }
+            _folder_row(cfg, skip, r["folder"], r["unread"], r["judged"], r["good"], cuts.get(r["folder"], 0))
         )
+    for folder, n in cuts.items():
+        if folder not in seen:
+            folders.append(_folder_row(cfg, skip, folder, 0, 0, 0, n))
     by_name: dict[str, dict[str, Any]] = {str(f["folder"]): f for f in folders}
     for row in pending_rows:
         f = by_name.get(row["folder"] or "(no folder)")
@@ -299,6 +304,22 @@ def _folders(
     return folders
 
 
+def _folder_row(
+    cfg: Config, skip: Iterable[str], folder: str | None, unread: Any, judged: Any, good: Any, cut: int
+) -> dict[str, Any]:
+    return {
+        "folder": folder or "(no folder)",
+        "unread": int(unread or 0),
+        "judged": int(judged or 0),
+        "good": int(good or 0),
+        "cut": cut,
+        "pending": 0,
+        "inflight": 0,
+        "floor": cfg.cutoff_for(folder),
+        "scored": (folder or "") not in skip,
+    }
+
+
 def _batches(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     batches = [dict(b) for b in store.recent_batches(conn, 8)]
     for b in batches:
@@ -312,14 +333,17 @@ def _batches(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 _last_live_write = [0.0]  # when the live file was last written (monotonic), for the throttle
 
 
-def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0) -> Path | None:
-    """progress.json next to the dashboard, for its progress section to poll. Never raises."""
+def write_live(
+    cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0, snap: dict[str, Any] | None = None
+) -> Path | None:
+    """progress.json next to the dashboard, for its progress section to poll. Never raises.
+    A caller that just took a snapshot passes it, so the database is not walked twice."""
     now = time.monotonic()
     if min_interval and now - _last_live_write[0] < min_interval:
         return None
     try:
-        snap = snapshot(conn, cfg)
-        snap["now"] = snap["now"].isoformat()
+        snap = dict(snap) if snap is not None else snapshot(conn, cfg)
+        snap["now"] = snap["now"].isoformat() if not isinstance(snap["now"], str) else snap["now"]
         out_dir = cfg.root / cfg.dashboard_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / LIVE_FILE
