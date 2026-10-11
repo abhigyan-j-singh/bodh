@@ -46,7 +46,6 @@ cut:
   folders:                         # your BazQux folders; others use default_floor
     "World News & Politics": { auto_cut_below: 70 }
     "Sports": { auto_cut_below: 70 }
-    "Fashion & Lifestyle": { auto_cut_below: 70 }
     "Aggregators": { auto_cut_below: 60 }
     "Comics & Fun": { protected: true, score: false }   # never sent to the teacher, never cut
 
