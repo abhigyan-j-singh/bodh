@@ -3,15 +3,9 @@
 from __future__ import annotations
 
 from bodh.ids import resolve_ordinal, short_to_long
-from bodh.judge import (
-    Judge,
-    JudgmentIn,
-    Verdict,
-    _fmt_date,
-    _mentions_cache_ttl,
-    _mentions_structured_outputs,
-    parse_judgments,
-)
+from bodh.judge import Judge, _fmt_date
+from bodh.judgment import JudgmentIn, Verdict, parse_judgments
+from bodh.llm import _mentions_cache_ttl, _mentions_structured_outputs
 
 
 def test_parser_tolerates_null_fields():
@@ -109,7 +103,7 @@ def test_prompt_home_flag_follows_the_config(cfg, conn):
     assert "outside the student's own field" in text
     cfg.judge.home_angle = "  "  # whitespace is off, like "": no flag in the prompt, no bonus in compose
     assert cfg.model_validate(cfg.model_dump()).judge.home_angle == ""
-    from bodh.judge import normalize_flags
+    from bodh.judgment import normalize_flags
 
     assert normalize_flags(["india_angle", "funding_round_non_infra", "primary_source"]) == [
         "home_angle",

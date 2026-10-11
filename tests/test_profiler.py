@@ -66,7 +66,7 @@ def test_git_commit_without_identity_logs_and_returns_false(tmp_path, monkeypatc
 def test_gate_check_never_writes_the_learner_file(cfg, conn):
     """The gate used to write the proposed text to learned.md and rely on a finally to put the
     old one back; a kill in between made the ungated text the live model."""
-    from bodh.judge import JudgeError
+    from bodh.llm import JudgeError
 
     class ExplodingLLM:
         plain_json = False

@@ -25,7 +25,9 @@ from pathlib import Path
 
 from bodh import store
 from bodh.config import Config, load_config, load_secrets
-from bodh.judge import LLM, Judge, compose, concept_context
+from bodh.judge import Judge, concept_context
+from bodh.judgment import compose
+from bodh.llm import LLM
 
 ARCHIVE_QUERY = """
 SELECT id, feed, title, url, summary, fetched_at, decision, quality AS old_quality

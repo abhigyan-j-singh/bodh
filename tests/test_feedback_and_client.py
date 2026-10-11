@@ -160,7 +160,7 @@ def test_costs_can_be_recorded_from_worker_threads(conn):
 
 
 def test_duplicate_index(conn, cfg):
-    from bodh.judge import DupIndex
+    from bodh.judgment import DupIndex
 
     seed_scored(
         conn,

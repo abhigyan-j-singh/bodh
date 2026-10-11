@@ -12,7 +12,7 @@ from conftest import FakeClient, make_item
 
 from bodh import profiler, run, store
 from bodh.config import Secrets
-from bodh.judge import Verdict
+from bodh.judgment import Verdict
 from bodh.readers.bazqux import Subscription
 
 
@@ -696,7 +696,7 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
 def test_vanished_batch_is_closed_as_lost(cfg, conn):
     """A batch deleted in the console (or submitted under a rotated key) used to fail every
     run forever as a ModelConfigError; it is closed as lost and its articles are pending again."""
-    from bodh.judge import BatchNotFound
+    from bodh.llm import BatchNotFound
 
     cfg.judge.articles_per_call = 2
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
@@ -873,7 +873,7 @@ def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
     transaction it waited on that transaction's lock until it timed out, and every run after
     failed on the same batch."""
     from bodh import store as storemod
-    from bodh.judge import LLM
+    from bodh.llm import LLM
 
     cfg.judge.articles_per_call = 1
     ctx, client, items = build(cfg, conn, ["junk a"], batch=True)

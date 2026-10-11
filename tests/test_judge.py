@@ -10,7 +10,9 @@ from conftest import make_item
 
 from bodh import store
 from bodh.config import Secrets
-from bodh.judge import Judge, ModelConfigError, Verdict
+from bodh.judge import Judge
+from bodh.judgment import Verdict
+from bodh.llm import ModelConfigError
 
 
 class CountingLLM:
@@ -124,7 +126,7 @@ def test_second_looks_record_each_result_as_it_lands(cfg, conn):
 
 
 def test_secrets_shape_for_llm(cfg, conn):
-    from bodh.judge import LLM, JudgeError
+    from bodh.llm import LLM, JudgeError
 
     with pytest.raises(JudgeError):
         LLM(cfg, Secrets(), conn)
