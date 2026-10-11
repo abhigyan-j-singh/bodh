@@ -83,5 +83,8 @@ def test_stray_pattern_covers_both_command_names(tmp_path):
 def test_version_is_single_sourced():
     import importlib.metadata
 
-    assert importlib.metadata.version("viveka-rss") == __version__
+    try:
+        assert importlib.metadata.version("viveka-rss") == __version__
+    except importlib.metadata.PackageNotFoundError:
+        pass  # a PYTHONPATH=src run without the package installed: the file check below still holds
     assert "version" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8").split("[project.optional")[0].replace('dynamic = ["version"]', "")
