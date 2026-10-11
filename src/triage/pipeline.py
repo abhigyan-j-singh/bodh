@@ -247,9 +247,15 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
                 psel = cutmod.select_prune(conn, cfg)
                 res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, run_id, "prune")
                 res.boundary = psel.boundary
+                feedback.prune_request_done(conn)
                 res.notes.append("prune tag seen: pruned to target")
         else:
             res.notes.append("shadow mode: nothing cut")
+            if res.feedback.get("prune_requested"):
+                res.notes.append("prune requested by tag; it waits for an enforcing run")
+        if res.feedback.get("suspect_flip"):
+            res.notes.append(f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
+                             "as read until the next run sees the same")
 
         res.spend_usd = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
         store.finish_run(conn, run_id, True, unread_upstream=res.unread_upstream, new=res.new, scored=res.scored,

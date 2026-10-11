@@ -568,3 +568,30 @@ def test_must_read_protection_survives_label_failure(cfg, conn):
     client.labels[cfg.cut.must_read_stream] = [items[0].id]
     res = pipeline.run(ctx, enforce=True)
     assert res.cut_floor == 0 and store.article(conn, items[0].id)["protected"] == 1
+
+
+def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
+    cfg.cut.target_unread = 1
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold a", "plain b", "plain c"])
+    client.labels[cfg.tags.prune] = [items[1].id]
+    res = pipeline.run(ctx, enforce=False)                      # shadow: the tag is removed, the request kept
+    assert res.cut_prune == 0 and "waits for an enforcing run" in " ".join(res.notes)
+    assert any(name == cfg.tags.prune for name, _ in client.untagged)
+    client.labels[cfg.tags.prune] = []
+    real = client.starred_ids
+
+    def broken():
+        raise RuntimeError("BazQux down")
+
+    client.starred_ids = broken
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)                         # a failed run keeps it too
+    assert store.kv_get(conn, "prune_requested") is not None and client.read == []
+    client.starred_ids = real
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_prune == 2 and store.kv_get(conn, "prune_requested") is None
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_prune == 0                                   # applied once

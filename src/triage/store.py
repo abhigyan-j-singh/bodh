@@ -7,7 +7,7 @@ import html
 import json
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -198,6 +198,32 @@ def unread_without_text(conn: sqlite3.Connection) -> list[str]:
 
 def known_ids(conn: sqlite3.Connection) -> set[str]:
     return {r[0] for r in conn.execute("SELECT id FROM articles")}
+
+
+IN_CHUNK = 900  # ids per `IN (...)`: SQLite caps the variables in one statement
+
+
+def in_chunks(ids: Iterable[str], size: int = IN_CHUNK) -> Iterator[list[str]]:
+    """``ids`` in lists small enough for one ``IN (...)`` clause."""
+    batch: list[str] = []
+    for i in ids:
+        batch.append(i)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def fetch_in(conn: sqlite3.Connection, sql: str, ids: Iterable[str], before: tuple = (),
+             after: tuple = ()) -> list[sqlite3.Row]:
+    """Run ``sql`` (with ``{marks}`` where the ids go) once per chunk of ids and gather the rows,
+    so a mark-all-read of a big pile never exceeds the variable limit."""
+    rows: list[sqlite3.Row] = []
+    for chunk in in_chunks(ids):
+        marks = ",".join("?" * len(chunk))
+        rows.extend(conn.execute(sql.format(marks=marks), (*before, *chunk, *after)).fetchall())
+    return rows
 
 
 def scored_ids(conn: sqlite3.Connection, prompt_version: str | None = None) -> set[str]:
