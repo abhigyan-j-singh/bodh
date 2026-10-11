@@ -1,5 +1,6 @@
-"""SQLite store: an audit cache, not the system of record. BazQux's tags can
-rebuild the scored set; this file makes the dashboard, undo and feedback cheap."""
+"""SQLite store: the system's memory of what it judged, cut and learned, next to BazQux,
+which stays the only source of truth for what is read and tagged. (A rebuild of the
+scored set from the bucket tags in BazQux is planned, not written: `triage rebuild`.)"""
 
 from __future__ import annotations
 
@@ -436,17 +437,42 @@ def set_flags(conn: sqlite3.Connection, ids: Iterable[str], **cols: Any) -> None
     if not cols:
         return
     assignments = ", ".join(f"{k} = ?" for k in cols)
-    conn.executemany(f"UPDATE state SET {assignments} WHERE article_id = ?",
-                     [(*cols.values(), i) for i in ids])
+    rows = [(*cols.values(), i) for i in ids]
+    if not rows:
+        return
+    with _bulk(conn):
+        conn.executemany(f"UPDATE state SET {assignments} WHERE article_id = ?", rows)
 
 
 def mark_cut(conn: sqlite3.Connection, ids: Iterable[str], run_id: int, mode: str) -> None:
     now = utcnow_iso()
-    conn.executemany(
-        """UPDATE state SET status = 'cut', cut_run_id = ?, cut_mode = ?, cut_at = ?,
-                            cut_tagged = 0, read_marked = 0 WHERE article_id = ?""",
-        [(run_id, mode, now, i) for i in ids],
-    )
+    rows = [(run_id, mode, now, i) for i in ids]
+    if not rows:
+        return
+    with _bulk(conn):
+        conn.executemany(
+            """UPDATE state SET status = 'cut', cut_run_id = ?, cut_mode = ?, cut_at = ?,
+                                cut_tagged = 0, read_marked = 0 WHERE article_id = ?""",
+            rows,
+        )
+
+
+@contextmanager
+def _bulk(conn: sqlite3.Connection) -> Iterator[None]:
+    """One transaction around a bulk write, unless the caller already holds one (then the
+    rows join it): autocommit would fsync once per row, 3.5 s for 20,000 flags."""
+    if conn.in_transaction:
+        yield
+        return
+    with transaction(conn):
+        yield
+
+
+def cut_pending_now_exempt(conn: sqlite3.Connection) -> list[str]:
+    """Cuts not yet written to BazQux whose article is starred or protected by now."""
+    return [r[0] for r in conn.execute(
+        "SELECT article_id FROM state WHERE status = 'cut' AND (cut_tagged = 0 OR read_marked = 0) "
+        "AND (starred = 1 OR protected = 1)")]
 
 
 def cut_pending(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:

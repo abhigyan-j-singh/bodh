@@ -730,3 +730,20 @@ def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
     assert res.pending == 8 - res.scored and store.last_runs(conn, 1)[0]["ok"]
     res = pipeline.run(ctx, enforce=False, workers=4)
     assert res.pending == 0
+
+
+def test_bankruptcy_dry_run_records_no_run_row(cfg, conn):
+    ctx, client, items = build(cfg, conn, ["old a", "old b"])
+    pipeline.run(ctx, enforce=False)
+    client.unread_ids = lambda: [__import__("triage.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1) for i in items]
+    before = len(store.last_runs(conn, 50))
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=True)
+    assert candidates == 2 and done == 0 and len(store.last_runs(conn, 50)) == before and client.read == []
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=False)
+    assert done == 2 and len(store.last_runs(conn, 50)) == before + 1 and len(client.read[0]) == 2
+    # a rescued article is spared by bankruptcy
+    pipeline.undo_last(ctx)
+    store.restore_unread(conn, [items[0].id], rescued=True)
+    client.unread = [i.id for i in items]
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=False)
+    assert done == 1 and client.read[-1] == [items[1].id]

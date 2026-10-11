@@ -234,7 +234,16 @@ def apply_cut(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, ids: 
 
 def finish_pending_cuts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config) -> tuple[int, int]:
     """Tag first, then mark read. A crash between the two leaves a tagged unread
-    article that the next run finishes here."""
+    article that the next run finishes here. An article starred or protected since it was
+    chosen (the student got to it first) is restored instead."""
+    changed = store.cut_pending_now_exempt(conn)
+    if changed:
+        log.info("cut: %d pending cuts restored: starred or protected since", len(changed))
+        store.restore_unread(conn, changed, rescued=False)
+        try:
+            client.untag(changed, cfg.tags.cut)
+        except Exception:  # noqa: BLE001 — the tag is cosmetic; the read state is what matters
+            log.warning("cut: could not remove the cut tag from %d restored articles", len(changed))
     untagged, unmarked = store.cut_pending(conn)
     if untagged:
         client.tag(untagged, cfg.tags.cut)
@@ -295,17 +304,12 @@ def bankruptcy(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, olde
     if dry_run or not ids:
         return len(ids), 0
     now = store.utcnow_iso()
-    known = store.known_ids(conn)
-    for aid in ids:
-        if aid not in known:
-            conn.execute(
-                """INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)""",
-                (aid, "(bankruptcy: not fetched)", now),
-            )
-            conn.execute(
-                """INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)""",
-                (aid, now),
-            )
-    store.mark_cut(conn, ids, run_id, "bankruptcy")
+    unknown = [aid for aid in ids if aid not in store.known_ids(conn)]
+    with store.transaction(conn):
+        conn.executemany("INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)",
+                         [(aid, "(bankruptcy: not fetched)", now) for aid in unknown])
+        conn.executemany("INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)",
+                         [(aid, now) for aid in unknown])
+        store.mark_cut(conn, ids, run_id, "bankruptcy")
     finish_pending_cuts(client, conn, cfg)
     return len(ids), len(ids)

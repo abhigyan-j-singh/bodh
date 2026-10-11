@@ -231,7 +231,7 @@ code on their next start. Prompts live in `src/triage/prompts/`; a copy in `./pr
 | "requests failed: … output_config" | The teacher model rejected structured outputs; triage switches itself to plain JSON (`plain_json` in the kv table) | The failed requests are resubmitted next run |
 | "floor would cut … stopping before any write" | The prompt or model misbehaved; `triage why` on a few new articles | Nothing is cut this run |
 | Rescues above 5% in a week | The floor is too high for your taste; it drops to 25 on its own and alerts | Manual prune unaffected |
-| Database lost | Run once; bucket tags in BazQux rebuild the scored set, unread articles are re-scored | Costs a few dollars |
+| Database lost | Restore `data/triage.db` from a backup; without one, the next runs re-judge the unread pile (the bucket tags in BazQux stay, a `triage rebuild` from them is planned) | Costs a few dollars |
 
 Logs: `~/Library/Logs/triage/triage.log`. State: `data/triage.db` (an audit cache; BazQux is the
 record). Learner model history: `git log` in `profile/`.

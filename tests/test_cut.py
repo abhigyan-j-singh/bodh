@@ -156,3 +156,19 @@ def test_saved_count_excludes_old_failures(conn, cfg):
     sel = cut.select_floor(conn, cfg, teacher=NoLooks(), run_id=None)  # type: ignore[arg-type]
     assert sel.cut_ids == [ids[1]] and sel.saved_by_second_look == 0 and sel.kept_after_failed_look == 1
     assert ids[0] in {r["id"] for r in sel.survivors}
+
+
+def test_finish_pending_cuts_respects_a_new_star(conn, cfg):
+    """A star added after mark_cut (a crash in between, or the student was quicker) used to be
+    tagged and marked read anyway."""
+    ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12), dict(n=3, score=14)])
+    run_id = store.begin_run(conn, "run")
+    store.mark_cut(conn, ids, run_id, "floor")
+    store.set_flags(conn, ids[:1], starred=1)        # starred since
+    store.set_flags(conn, ids[1:2], protected=1)     # moved into Must read since
+    client = FakeClient()
+    untagged, unmarked = cut.finish_pending_cuts(client, conn, cfg)
+    assert (untagged, unmarked) == (1, 1) and client.read == [[ids[2]]]
+    assert store.status_ids(conn, "unread") == {ids[0], ids[1]} and store.status_ids(conn, "cut") == {ids[2]}
+    assert (cfg.tags.cut, sorted(ids[:2])) in [(n, sorted(i)) for n, i in client.untagged]
+    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0

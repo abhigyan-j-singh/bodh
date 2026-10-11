@@ -127,15 +127,16 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
     done = 0
     for start in range(0, len(new_ids), INGEST_BATCH):
         items, _vanished = ctx.client.contents(new_ids[start: start + INGEST_BATCH])
-        for item in items:
-            folder = folders.get(item.feed_stream_id)
-            if folder is None:
-                # BazQux also lists folders among an item's categories as user/<id>/label/<name>
-                for cat in item.categories:
-                    if "/label/" in cat:
-                        folder = cat.rsplit("/label/", 1)[-1]
-                        break
-            store.upsert_article(ctx.conn, item, folder)
+        with store.transaction(ctx.conn):  # one fsync per batch of 200, not per article
+            for item in items:
+                folder = folders.get(item.feed_stream_id)
+                if folder is None:
+                    # BazQux also lists folders among an item's categories as user/<id>/label/<name>
+                    for cat in item.categories:
+                        if "/label/" in cat:
+                            folder = cat.rsplit("/label/", 1)[-1]
+                            break
+                store.upsert_article(ctx.conn, item, folder)
         done += len(items)
         if done and done % 2000 == 0:
             log.info("ingest: %d of %d fetched", done, len(new_ids))
@@ -449,13 +450,19 @@ def undo_last(ctx: Context) -> tuple[int | None, int]:
 
 
 def bankruptcy(ctx: Context, older_than_days: int, dry_run: bool) -> tuple[int, int]:
+    """A dry run counts and records nothing; a real one is a run of its own, undoable."""
+    refusal = "could not read the Must read stream; bankruptcy refused rather than cut a protected article"
+    if dry_run:
+        protected = protected_ids(ctx)
+        if protected is None:
+            raise BazQuxError(refusal)
+        return cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id=0, dry_run=True)
     run_id = store.begin_run(ctx.conn, "bankruptcy")
     try:
         protected = protected_ids(ctx)
         if protected is None:
-            raise BazQuxError("could not read the Must read stream; bankruptcy refused rather than cut a protected article")
-        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected,
-                                             run_id, dry_run=dry_run)
+            raise BazQuxError(refusal)
+        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id)
         store.finish_run(ctx.conn, run_id, True, cut_prune=done,
                          summary=f"bankruptcy: {candidates} older than {older_than_days}d, {done} marked read")
         return candidates, done
