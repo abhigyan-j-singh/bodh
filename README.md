@@ -18,7 +18,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | `DASHBOARD_PLAN.md` | The specification of the dashboard: the five questions, the design system, every panel, the chart rules, the data contract, the quality bar; replaces Phase 7 of the open-source plan | yes, until the release |
 | `src/triage/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/triage/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
-| `tests/` | 57 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
+| `tests/` | the test suite, with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
 | `launchd/`, `install.sh`, `install-launchd.sh`, `laptop-install.sh` | Install and schedule on a Mac | yes |
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates: copy to `config.yaml`, `.env`, `profile/` | yes |
 | `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
@@ -36,20 +36,21 @@ folders in `config.yaml`; nothing in the code is tied to one account.
 | `triage run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag scored ones `score-90` … `score-0`, apply the automatic floor (with an Opus 5.5 second look on close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `cut.enforce: false`. `--sync` waits for every model call instead of batching. |
 | `triage blast` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending. `--model claude-haiku-5-5` uses the fastest model as a stand-in (20x cheaper; it never touches the teacher's judgments, and the teacher re-judges what it rates 50 or more on the next runs, `scoring.rejudge_min_score`). `--all-ages` includes the articles older than the scoring window; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes. Scores and tags, cuts nothing; Ctrl-C and run again to continue. |
 | `triage progress [--watch]` | How far the teacher has got: judged, in flight, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
-| `triage prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). `--dry-run` shows the boundary first. Run it again to cut deeper. |
-| `triage undo` | Reverse the last cut. |
+| `triage prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). It shows the boundary and what would go, then asks (`--yes` skips the question; `--dry-run` only shows). Run it again to cut deeper. |
+| `triage undo` | Reverse the last cut. What comes back is left alone by the automatic floor from then on. |
+| `triage safety [reset]` | The breaker (a floor that would cut nearly everything newly judged trips it, and the floor stays off until a person resets it) and the articles the teacher gave up on. |
 | `triage bankruptcy --older-than 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
 | `triage status`, `triage why ID` | The whole system at a glance: what is running, the launchd jobs, the control room, the pile, spend, the last runs; why one article got its score. |
 | `triage panel` | The control room in the browser (`http://127.0.0.1:8766`, kept alive by launchd): the same status live, buttons for run, stop, pause/resume the schedule, enforce on/off, prune (dry run first), undo, bankruptcy, blast, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
 | `triage stop` | Stop the run, prune or blast in progress, the same as Ctrl-C in its terminal. Fail open: what was judged stays; a cut half-written to BazQux is finished by the next run. |
 | `triage halt` | Stop everything: pause all four launchd jobs, interrupt the run in progress, end every other triage process including the control room. `triage schedule resume` brings the jobs back. |
-| `triage schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume; `--job run` for one), resume, or kick a run now. |
+| `triage schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume, the control room included; `--job run` for one), resume, or kick a run now (refused while a run holds the lock). |
 | `triage enforce on\|off` | Flip the automatic floor in config.yaml: on cuts from the next run, off is shadow mode. |
 | `triage want "x"`, `triage meh "x"` | Nudge the learner model now instead of waiting for Sunday (the `more` and `less` tags do the same from BazQux). |
 | `triage weekly` | Sunday: rewrite the learner model from the week's reading (kept only if the eval gate passes), write the weekly note, run the drift check. |
-| `triage report` | Monthly feed report with proposals (unsubscribe, move to Firehose, protect). |
+| `triage report` | Monthly feed report with proposals (unsubscribe, move to the strictest folder, protect). |
 | `triage replay --archive … --golden …` | Judge a sample of FeedBrain's archive offline; check the gate before anything goes live. |
-| `triage doctor [--live]` | Configuration and connectivity checks. Run after every update. |
+| `triage doctor [--live]` | Configuration and connectivity checks; exit code 1 when one fails. Run after every update. |
 
 ## Install
 
@@ -154,8 +155,10 @@ scheduled run), the launchd jobs, the pile, spend, today's counts, the last runs
 dashboard underneath, refreshed every three seconds. The buttons start the same commands you would
 type, as child processes whose output streams into the page; the ones that change BazQux ask first.
 Stop interrupts whatever holds the run lock, started from the page or not. The server listens on
-127.0.0.1 only and accepts actions only from its own page; Tailscale adds the identity check on the
-tailnet. From the terminal the same levers are `triage status`, `stop`, `halt`, `schedule`, `enforce`.
+127.0.0.1 only, answers only to a Host of 127.0.0.1, localhost or a `*.ts.net` name (a page that
+rebinds a DNS name to this machine gets nothing), and accepts actions only from its own page;
+Tailscale adds the identity check on the tailnet. From the terminal the same levers are `triage
+status`, `stop`, `halt`, `schedule`, `enforce`, `safety`.
 
 The installer waits up to 15 s for the page to answer and, if it does not, prints the job's state and
 the last lines of `~/Library/Logs/triage/panel.err.log` and `data/panel.log`, where the server writes
@@ -182,8 +185,9 @@ tailscale serve status            # shows the https URL, open it on the Mac or t
 
 The progress panel is live: the page polls `progress.json` every 4 seconds, which every run (and
 `triage blast`) rewrites as it goes, so the bars, the rate, the ETA, the phase ("judging 400 of 1,200"),
-the folder table, the batches and the log tail move while you watch; the dot pulses while a run holds the
-lock. The polling needs the page served over http (`tailscale serve`, or `python3 -m http.server 8765`
+the folder table and the batches move while you watch; the dot pulses while a run holds the
+lock. The log stays out of this page and of `progress.json` (both may be published); the control
+room and `triage progress` show it. The polling needs the page served over http (`tailscale serve`, or `python3 -m http.server 8765`
 in the `dashboard` folder); opened as a file it shows the numbers as of the last render.
 
 Panels: progress (judged, in flight, pending, by folder; batches; cost per 1,000), flow, calibration
@@ -231,9 +235,11 @@ code on their next start. Prompts live in `src/triage/prompts/`; a copy in `./pr
 | "daily model budget … reached" | `models.daily_budget_usd` in config.yaml | Scoring pauses until midnight; nothing is cut |
 | "in flight" stays high for hours | `triage progress`: a batch still in progress; the API finishes most within the hour, all within 24 | Articles stay unread until judged; a batch not seen to end in 26 h is given up on and resubmitted |
 | "requests failed: … output_config" | The teacher model rejected structured outputs; triage switches itself to plain JSON (`plain_json` in the kv table) | The failed requests are resubmitted next run |
-| "floor would cut … stopping before any write" | The prompt or model misbehaved; `triage why` on a few new articles | Nothing is cut this run |
+| "floor would cut … stopping before any write" | The prompt or model misbehaved; `triage why` on a few new articles, then `triage safety reset` | Nothing is cut, this run or the next, until the reset |
+| "came back with no judgment" in a batch note | The model answered without a judgment, three times for the same articles and they are left alone; `triage safety` counts them | They stay unread, unjudged, until `triage safety reset` |
+| "gone upstream at once; not believed" | BazQux answered with an empty or truncated unread list, or you marked everything read | Nothing recorded this run; the next run within three hours decides |
 | Rescues above 5% in a week | The floor is too high for your taste; it drops to 25 on its own and alerts | Manual prune unaffected |
-| Database lost | Run once; bucket tags in BazQux rebuild the scored set, unread articles are re-scored | Costs a few dollars |
+| Database lost | Restore `data/triage.db` from a backup; without one, the next runs re-judge the unread pile (the bucket tags in BazQux stay, a `triage rebuild` from them is planned) | Costs a few dollars |
 
 Logs: `~/Library/Logs/triage/triage.log`. State: `data/triage.db` (an audit cache; BazQux is the
 record). Learner model history: `git log` in `profile/`.
@@ -241,6 +247,6 @@ record). Learner model history: `git log` in `profile/`.
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # 57 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
+.venv/bin/pytest -q        # the suite: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, locks, the panel, pipeline end to end
 .venv/bin/ruff check src tests
 ```
