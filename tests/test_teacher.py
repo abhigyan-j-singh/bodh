@@ -52,7 +52,7 @@ def _pending(conn, n: int) -> None:
 
 
 def test_score_pending_at_most_workers_in_flight_and_deadline_starts_no_new_call(cfg, conn):
-    cfg.scoring.batch_size = 1
+    cfg.judge.articles_per_call = 1
     _pending(conn, 12)
     llm = CountingLLM(delay=0.03)
     teacher = Teacher(cfg, llm, conn)  # type: ignore[arg-type]
@@ -71,7 +71,7 @@ def test_score_pending_at_most_workers_in_flight_and_deadline_starts_no_new_call
 def test_score_pending_model_config_error_cancels_queue(cfg, conn):
     """A rejected key used to let the pool run through its queued calls (17 rejected calls in
     a blast); the first rejection empties the queue."""
-    cfg.scoring.batch_size = 1
+    cfg.judge.articles_per_call = 1
     _pending(conn, 10)
     llm = CountingLLM(delay=0.01, fail_with=ModelConfigError("rejected"))
     teacher = Teacher(cfg, llm, conn)  # type: ignore[arg-type]
@@ -86,7 +86,7 @@ def test_second_looks_record_each_result_as_it_lands(cfg, conn):
     every paid look away and the next run paid again."""
     from conftest import seed_scored
 
-    cfg.cut.default_floor = 35
+    cfg.autocut.cutoff = 35
     ids = seed_scored(conn, cfg, [dict(n=i, score=30) for i in range(1, 4)])
     conn.execute("UPDATE articles SET text = ?", ("x" * 5000,))
     rows = store.unread_scored(conn)

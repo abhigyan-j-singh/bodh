@@ -19,9 +19,9 @@ def strictest_folder(cfg: Config) -> str | None:
     """The folder with the highest automatic floor above the default (`News` in the example config),
     where a high-volume, low-keep feed belongs; None when the config has no such folder."""
     best: tuple[int, str] | None = None
-    for name, policy in cfg.cut.folders.items():
-        floor = policy.auto_cut_below
-        if floor is not None and not policy.protected and floor > cfg.cut.default_floor:
+    for name, policy in cfg.folders.items():
+        floor = policy.cutoff
+        if floor is not None and not policy.protected and floor > cfg.autocut.cutoff:
             if best is None or floor > best[0]:
                 best = (floor, name)
     return best[1] if best else None

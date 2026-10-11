@@ -74,7 +74,7 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
     results: list[dict] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    batches = [rows[i: i + cfg.scoring.batch_size] for i in range(0, len(rows), cfg.scoring.batch_size)]
+    batches = [rows[i: i + cfg.judge.articles_per_call] for i in range(0, len(rows), cfg.judge.articles_per_call)]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = {pool.submit(teacher.judge_batch, b, run_id): b for b in batches}
         for fut in as_completed(futures):
@@ -93,7 +93,7 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
                                 "lesson": v.lesson, "old_decision": r["old_decision"],
                                 "starred": r["id"] in starred_ids})
     scored = [r for r in results if "score" in r]
-    floor = cfg.cut.default_floor
+    floor = cfg.autocut.cutoff
     below_floor = [r for r in scored if r["score"] < floor and r["confidence"] != "low"]
     starred_scored = [r for r in scored if r["starred"]]
     starred_below = [r for r in starred_scored if r["score"] < floor]
@@ -136,7 +136,7 @@ def main() -> None:
     secrets = load_secrets(cfg.root)
     conn = store.connect(cfg.db_path)
     llm = LLM(cfg, secrets, conn)
-    rep = replay(cfg, llm, conn, args.archive, args.golden, sample=args.sample, workers=args.workers or cfg.scoring.workers)
+    rep = replay(cfg, llm, conn, args.archive, args.golden, sample=args.sample, workers=args.workers or cfg.limits.parallel_calls)
     if rep["would_cut_share"] is None:
         print("nothing scored")
     else:

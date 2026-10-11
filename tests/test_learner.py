@@ -77,7 +77,7 @@ def test_gate_check_never_writes_the_learner_file(cfg, conn):
     from bodh import store
 
     store.add_feedback(conn, ids[0], "star")
-    path = cfg.learner_path
+    path = cfg.learned_path
     before, mtime = path.read_text(encoding="utf-8"), path.stat().st_mtime_ns
     import pytest
 
@@ -136,4 +136,4 @@ def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
                     "lab's next decade goes.\n\n## Expansion topics for next week\n- x\n")
 
     result = learner.weekly_rewrite(cfg, CopyingLLM(), conn, None)  # type: ignore[arg-type]
-    assert not result["applied"] and "repeated the seed" in result["reason"]
+    assert not result["applied"] and "repeated the student's own description" in result["reason"]

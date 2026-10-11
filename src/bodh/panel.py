@@ -1,8 +1,8 @@
-"""The control room: one page with the whole state of the system and the levers, served
-on the Mac (`bodh panel`, kept alive by launchd) and reachable from the phone over
-Tailscale. Status refreshes every 3 seconds; actions start the same commands you would
-type (`bodh run`, `prune`, `undo`, `blast` …) as child processes and stream their
-output; Stop interrupts whatever run holds the lock. No framework, one file."""
+"""The console: one page with the whole state of the system and the levers, served on the
+Mac (`bodh console`, kept alive by launchd) and reachable from the phone over Tailscale.
+Status refreshes every 3 seconds; actions start the same commands you would type (`bodh
+run`, `prune`, `undo`, `catch-up` …) as child processes and stream their output; Stop
+interrupts whatever run holds the lock. No framework, one file."""
 
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ ACTIONS = {
     "prune_dry": (["prune", "--dry-run"], False),
     "prune": (["prune", "--yes"], True),
     "undo": (["undo"], False),
-    "bankruptcy_dry": (["bankruptcy", "--dry-run"], False),
-    "bankruptcy": (["bankruptcy", "--yes"], True),
-    "blast": (["blast", "--yes"], True),
+    "clear_old_dry": (["clear-old", "--dry-run"], False),
+    "clear_old": (["clear-old", "--yes"], True),
+    "catch_up": (["catch-up", "--yes"], True),
     "weekly": (["weekly"], True),
     "report": (["report"], False),
     "dashboard": (["dashboard"], False),
@@ -178,9 +178,9 @@ class Panel:
         if action in ("schedule_pause", "schedule_resume", "schedule_kick"):
             msg = control.schedule(action.split("_", 1)[1], params.get("job", "run"), self.cfg.root / self.cfg.data_dir)
             return {"ok": not msg.startswith("not kicked"), "message": msg}
-        if action in ("enforce_on", "enforce_off"):
+        if action in ("autocut_on", "autocut_off", "enforce_on", "enforce_off"):   # enforce_*: the names before October 2026
             # the file is the truth: the page shows what the next run will read, never a wish
-            ok, msg = control.set_enforce(self.cfg.root, action == "enforce_on")
+            ok, msg = control.set_autocut(self.cfg.root, action.endswith("_on"))
             if ok:
                 self._config_mtime = None
                 self._reload_config()
@@ -228,7 +228,7 @@ class Panel:
                 url = urlsplit(self.path)
                 if url.path in ("/", "/index.html"):
                     page = (PAGE.replace("__ROOT__", html.escape(str(panel.cfg.root)))
-                                .replace("__KEEP__", str(panel.cfg.cut.target_unread)))
+                                .replace("__KEEP__", str(panel.cfg.prune.keep)))
                     self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     try:
@@ -259,7 +259,7 @@ class Panel:
                 if not panel.host_allowed(self.headers.get("Host")):
                     self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
                     return
-                if self.headers.get("X-Bodh") != "panel":  # a page of ours, not a stray form from another site
+                if self.headers.get("X-Bodh") not in ("console", "panel"):  # a page of ours, not a stray form from another site
                     self._send(403, b'{"ok":false,"message":"forbidden"}')
                     return
                 length = int(self.headers.get("Content-Length") or 0)
@@ -326,9 +326,9 @@ def _extra_args(action: str, params: dict) -> list[str]:
             out += ["--keep", str(int(params["keep"]))]
         if params.get("below"):
             out += ["--below", str(float(params["below"]))]
-    if action in ("bankruptcy", "bankruptcy_dry"):
-        out += ["--older-than", str(int(params.get("days") or 14))]
-    if action == "blast":
+    if action in ("clear_old", "clear_old_dry"):
+        out += ["--days", str(int(params.get("days") or 14))]
+    if action == "catch_up":
         if params.get("model"):
             out += ["--model", str(params["model"])]
         if params.get("all_ages"):
@@ -343,7 +343,7 @@ def _extra_args(action: str, params: dict) -> list[str]:
 
 
 PAGE = r"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>bodh control room</title>
+<title>bodh console</title>
 <style>
 body{font:15px/1.45 -apple-system,system-ui,sans-serif;max-width:1100px;margin:18px auto;padding:0 14px;color:#222;background:#fff}
 h1{font-size:20px;margin:0 0 2px}h2{font-size:16px;margin:22px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
@@ -364,7 +364,7 @@ th{color:#555;font-weight:600}.num{text-align:right}
 iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
 .msg{margin:6px 0;font-size:14px}.flash{background:#fff3b0;transition:background 1.5s}
 </style></head><body>
-<h1>bodh control room</h1>
+<h1>bodh console</h1>
 <div class='muted'>__ROOT__ · <span id='clock'></span></div>
 
 <div class='state'><span id='dot' class='dot'></span><span id='state'>loading…</span></div>
@@ -377,8 +377,8 @@ iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
   <button class='danger' onclick="act('stop')" id='b-stop'>Stop</button>
   <button onclick="act('schedule_pause')">Pause schedule</button>
   <button onclick="act('schedule_resume')">Resume schedule</button>
-  <button onclick="confirmAct('enforce_on','Turn the automatic floor on? From the next run, articles under their folder floor are marked read in BazQux (second look and breakers apply).')">Enforce on</button>
-  <button onclick="act('enforce_off')">Enforce off</button>
+  <button onclick="confirmAct('autocut_on','Turn autocut on? From the next run, articles under their folder\'s cut-off are marked read in BazQux (the review and the safety limits apply).')">Autocut on</button>
+  <button onclick="act('autocut_off')">Autocut off</button>
 </div>
 <div class='actions'>
   keep <input id='keep' type='number' value='__KEEP__'>
@@ -386,14 +386,14 @@ iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
   <button class='danger' onclick="confirmAct('prune','Prune to the number kept? Everything else that is scored and unread is marked read in BazQux. Undo reverses it.')">Prune</button>
   <button class='danger' onclick="confirmAct('undo','Undo the last cut? Its articles are marked unread again.')">Undo last cut</button>
   older than <input id='days' type='number' value='14'>
-  <button onclick="act('bankruptcy_dry')">Bankruptcy: dry run</button>
-  <button class='danger' onclick="confirmAct('bankruptcy','Mark everything older than that many days read? Stars and protected articles are exempt. Undo reverses it.')">Bankruptcy</button>
+  <button onclick="act('clear_old_dry')">Clear old: dry run</button>
+  <button class='danger' onclick="confirmAct('clear_old','Mark everything older than that many days read? Stars and protected articles are exempt. Undo reverses it.')">Clear old</button>
 </div>
 <div class='actions'>
-  model <select id='model'><option value=''>teacher (config)</option><option value='claude-haiku-5-5'>claude-haiku-5-5 (fastest)</option><option value='claude-sonnet-5-5'>claude-sonnet-5-5</option></select>
+  model <select id='model'><option value=''>quick judge (config)</option><option value='claude-haiku-5-5'>claude-haiku-5-5 (fastest)</option><option value='claude-sonnet-5-5'>claude-sonnet-5-5</option></select>
   workers <input id='workers' type='number' value='8'>
   <label><input id='allages' type='checkbox' style='width:auto'> all ages</label>
-  <button onclick="confirmAct('blast','Judge everything pending now, synchronously, with the chosen model?')">Blast</button>
+  <button onclick="confirmAct('catch_up','Judge everything pending now, synchronously, with the chosen model?')">Catch-up</button>
   <button onclick="act('weekly')">Weekly rewrite</button>
   <button onclick="act('report')">Feed report</button>
   <button onclick="act('doctor')">Doctor</button>
@@ -429,7 +429,7 @@ async function act(action, extra){
     all_ages: document.getElementById('allages').checked}, extra || {});
   msg('working: ' + action + ' …');
   try {
-    var r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json','X-Bodh':'panel'}, body: JSON.stringify(p)});
+    var r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json','X-Bodh':'console'}, body: JSON.stringify(p)});
     var d = await r.json();
     msg(d.message || (d.ok ? 'done' : 'failed'), !d.ok);
     if (d.output !== undefined) { document.getElementById('cmd').textContent = '· ' + action; document.getElementById('out').textContent = d.output || '(no output)'; }
@@ -447,14 +447,14 @@ function apply(d){
   else st.innerHTML = 'idle · <b>' + esc(d.mode) + ' mode</b>' + (d.next_run_in != null ? ' · next scheduled run in ' + mins(d.next_run_in) : ' · schedule ' + esc(d.jobs.run.state));
   document.getElementById('b-stop').disabled = !running;
   var p = d.pile, s = d.spend, cfg = d.config, cp = d.cuts_pending;
-  var k = [['unread', n(p.unread)], ['judged', n(p.judged)], ['in flight', n(p.inflight)], ['pending', n(p.pending)],
-           ['await re-judge', n(p.rejudge)], ['target / floor', cfg.target + ' / ' + cfg.floor],
+  var k = [['unread', n(p.unread)], ['judged', n(p.judged)], ['with the model', n(p.inflight)], ['pending', n(p.pending)],
+           ['await re-judge', n(p.rejudge)], ['keep / cut-off', cfg.target + ' / ' + cfg.floor],
            ['spend today', '$' + Number(s.today).toFixed(2) + ' <small>of $' + cfg.budget + '</small>'], ['7 days', '$' + Number(s.week).toFixed(2)],
            ['per 1,000', s.per_1000 == null ? '–' : '$' + Number(s.per_1000).toFixed(2)], ['cache hits', s.cache_hit == null ? '–' : Math.round(s.cache_hit*100) + '%'],
            ['judged today', n(d.today.judged)], ['cut today', n(d.today.cut)]];
   if (cp.untagged || cp.unmarked) k.push(['cuts to write', n(cp.untagged) + ' tag · ' + n(cp.unmarked) + ' read']);
   document.getElementById('kpis').innerHTML = k.map(function(x){ return '<div class="kpi"><small>' + x[0] + '</small><b>' + x[1] + '</b></div>'; }).join('');
-  var jb = ''; ['run','weekly','report','panel'].forEach(function(name){ var j = d.jobs[name];
+  var jb = ''; ['run','weekly','report','console'].forEach(function(name){ var j = d.jobs[name];
     var cls = !j.installed ? 'muted' : (j.state === 'running' ? 'ok' : (j.last_exit ? 'bad' : ''));
     jb += '<tr><td>' + name + ' <span class="muted">' + esc(j.label) + '</span></td><td class="' + cls + '">' + esc(j.state) + '</td><td>' + (j.last_exit == null ? '–' : j.last_exit) + '</td><td class="muted">' + esc(j.plist || '') + '</td></tr>'; });
   document.getElementById('jobs').innerHTML = jb;
@@ -470,7 +470,7 @@ function apply(d){
 }
 async function refresh(){
   try { var r = await fetch('/api/status', {cache:'no-store'}); apply(await r.json()); fails = 0; }
-  catch (e) { if (++fails > 3) msg('cannot reach the panel server', true); }
+  catch (e) { if (++fails > 3) msg('cannot reach the console', true); }
 }
 setInterval(refresh, 3000); refresh();
 setInterval(function(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 1000);

@@ -8,8 +8,8 @@ from bodh.config import FolderPolicy
 
 
 def test_prune_keep_with_concept_cap(conn, cfg):
-    cfg.cut.target_unread = 4
-    cfg.cut.concept_cap = 0.5  # at most 2 per concept among 4 survivors
+    cfg.prune.keep = 4
+    cfg.prune.max_share_per_concept = 0.5  # at most 2 per concept among 4 survivors
     specs = [dict(n=i, score=90 - i, concept="gpus") for i in range(1, 6)]  # five gpu articles, 89..85
     specs += [dict(n=10, score=70, concept="history"), dict(n=11, score=60, concept="cooling")]
     seed_scored(conn, cfg, specs)
@@ -34,10 +34,10 @@ def test_prune_fraction_and_below_and_protection(conn, cfg):
 
 
 def test_floor_respects_folders_confidence_and_cap(conn, cfg):
-    cfg.cut.default_floor = 35
-    cfg.cut.folders = {"Always read": FolderPolicy(protected=True), "Firehose": FolderPolicy(auto_cut_below=70)}
-    cfg.cut.max_cuts_per_run = 2
-    cfg.cut.exploration_share = 0.0
+    cfg.autocut.cutoff = 35
+    cfg.folders = {"Always read": FolderPolicy(protected=True), "Firehose": FolderPolicy(cutoff=70)}
+    cfg.autocut.max_per_run = 2
+    cfg.autocut.new_ground_share = 0.0
     ids = seed_scored(conn, cfg, [
         dict(n=1, score=10),                                   # cut
         dict(n=2, score=20, confidence="low"),                 # left alone
@@ -55,14 +55,14 @@ def test_floor_respects_folders_confidence_and_cap(conn, cfg):
 
 
 def test_floor_breaker_trips_on_mass_cut(conn, cfg):
-    cfg.breakers.min_new_for_breaker = 5
+    cfg.safety.min_judged = 5
     ids = seed_scored(conn, cfg, [dict(n=i, score=5) for i in range(1, 11)])
     with pytest.raises(cut.BreakerTripped):
         cut.select_floor(conn, cfg, teacher=None, run_id=None, newly_scored=set(ids))
 
 
 def test_floor_exploration_reserves_novel_quality(conn, cfg):
-    cfg.cut.exploration_share = 0.5
+    cfg.autocut.new_ground_share = 0.5
     ids = seed_scored(conn, cfg, [
         dict(n=1, score=30, quality=70, concept="unknown field"),   # novel, decent quality -> reserved
         dict(n=2, score=30, quality=20, concept="junk topic"),      # low quality -> cut
@@ -102,8 +102,8 @@ def test_crash_between_tag_and_read_is_finished_next_run(conn, cfg):
 
 
 def test_rescued_article_survives_floor_and_prune(conn, cfg):
-    cfg.cut.exploration_share = 0.0
-    cfg.cut.target_unread = 1
+    cfg.autocut.new_ground_share = 0.0
+    cfg.prune.keep = 1
     ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12), dict(n=3, score=90)])
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[:1], run_id, "floor")
@@ -115,7 +115,7 @@ def test_rescued_article_survives_floor_and_prune(conn, cfg):
 
 
 def test_undo_is_not_reversed_by_the_next_floor(conn, cfg):
-    cfg.cut.exploration_share = 0.0
+    cfg.autocut.new_ground_share = 0.0
     ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12)])
     client = FakeClient()
     run_id = store.begin_run(conn, "run")
@@ -123,12 +123,12 @@ def test_undo_is_not_reversed_by_the_next_floor(conn, cfg):
     assert cut.undo(client, conn, cfg, run_id) == 2
     assert cut.select_floor(conn, cfg, teacher=None, run_id=None).cut_ids == []   # not cut again
     assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0        # an undo is not a rescue
-    cfg.cut.target_unread = 0
+    cfg.prune.keep = 0
     assert set(cut.select_prune(conn, cfg).cut_ids) == set(ids)                  # a prune may still take them
 
 
 def test_breaker_blocks_the_floor_until_cleared(conn, cfg):
-    cfg.breakers.min_new_for_breaker = 5
+    cfg.safety.min_judged = 5
     ids = seed_scored(conn, cfg, [dict(n=i, score=5) for i in range(1, 11)])
     with pytest.raises(cut.BreakerTripped):
         cut.select_floor(conn, cfg, teacher=None, run_id=7, newly_scored=set(ids))
@@ -143,7 +143,7 @@ def test_breaker_blocks_the_floor_until_cleared(conn, cfg):
 def test_saved_count_excludes_old_failures(conn, cfg):
     """An article kept after a failed second look in an earlier run was counted as a save on
     every later run."""
-    cfg.cut.exploration_share = 0.0
+    cfg.autocut.new_ground_share = 0.0
     ids = seed_scored(conn, cfg, [dict(n=1, score=30), dict(n=2, score=10)])
     store.record_second_look_failure(conn, ids[0])
 

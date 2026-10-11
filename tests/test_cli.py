@@ -106,3 +106,73 @@ def test_label_bad_id_and_verbose_everywhere(tmp_path, monkeypatch):
                  ["profile", "show", "-v"], ["report", "-v"], ["dashboard", "-v"], ["stop", "-v"]):
         result = runner.invoke(app, args)
         assert "No such option" not in result.output, (args, result.output)
+
+
+def test_mark_records_verdicts_steers_and_rescues(tmp_path, monkeypatch):
+    """`bodh mark ID great|…|rescue` is the tag from the terminal: grades and levels are recorded
+    in their exclusive groups, a steer writes the dated line, and a rescue brings a cut article
+    back unread in BazQux and here and keeps it from every cut."""
+    from conftest import FakeClient, seed_scored
+
+    from bodh import pipeline, store
+    from bodh.config import load_config
+
+    root = _project(tmp_path, monkeypatch)
+    monkeypatch.setattr("bodh.learner.git_commit", lambda *a, **k: True)
+    cfg = load_config(root)
+    conn = store.connect(cfg.db_path)
+    ids = seed_scored(conn, cfg, [dict(n=1, score=80, concept="reefs"), dict(n=2, score=20)])
+    store.mark_cut(conn, ids[1:], 7, "autocut")
+    store.set_flags(conn, ids[1:], cut_tagged=1, read_marked=1)
+    conn.close()
+    client = FakeClient(unread=ids[:1])
+    monkeypatch.setattr(pipeline.Context, "client", property(lambda self: client))
+    assert runner.invoke(app, ["mark", "1", "great"]).exit_code == 0
+    assert runner.invoke(app, ["mark", "1", "heavy"]).exit_code == 0
+    result = runner.invoke(app, ["mark", "1", "more"])
+    assert result.exit_code == 0 and "steer: reefs" in result.output
+    result = runner.invoke(app, ["mark", "2", "rescue"])
+    assert result.exit_code == 0 and "rescued" in result.output
+    assert runner.invoke(app, ["mark", "1", "maybe"]).exit_code == 1
+    assert "not an article id" in runner.invoke(app, ["mark", "not-an-id", "great"]).output
+    conn = store.connect(cfg.db_path)
+    assert store.verdicts(conn, store.GRADES) == {ids[0]: "great"} and store.verdicts(conn, store.LEVELS) == {ids[0]: "heavy"}
+    assert store.verdicts(conn, store.STEERS) == {ids[0]: "more"}
+    assert "wants more on reefs" in (root / "profile" / "learner.md").read_text(encoding="utf-8")
+    row = store.article(conn, ids[1])
+    assert row["status"] == "unread" and row["rescued_at"] and client.unread_marked == [[ids[1]]]
+    assert ("cut", [ids[1]]) in client.untagged
+    assert {k for k, _ in store.feedback_for(conn, ids[1])} == {"rescue", "wrong"}
+    conn.close()
+
+
+def test_renamed_commands_print_the_new_name_and_work(tmp_path, monkeypatch):
+    """The command names before October 2026 run for one release, after one line naming the
+    new command; the new names and `stop --all` work."""
+    root = _project(tmp_path, monkeypatch)
+    monkeypatch.setattr("bodh.learner.git_commit", lambda *a, **k: True)
+    for old, new, expect in (
+        (["want", "reefs"], "steer more", "wants more on reefs"),
+        (["meh", "crypto"], "steer less", "wants less of crypto"),
+        (["enforce", "off"], "autocut", "scoring-only"),
+        (["bankruptcy", "--dry-run"], "clear-old", None),
+        (["blast"], "catch-up", None),
+        (["score"], "run --shadow", None),
+        (["halt"], "stop --all", "everything is stopped"),
+    ):
+        result = runner.invoke(app, old)
+        assert f"is now `bodh {new}" in result.output, (old, result.output)
+        if expect:
+            assert expect in result.output, (old, result.output)
+    assert "wants more on reefs" in (root / "profile" / "learner.md").read_text(encoding="utf-8")
+    result = runner.invoke(app, ["steer", "sideways", "x"])
+    assert result.exit_code == 1 and "say more or less" in result.output
+    result = runner.invoke(app, ["autocut", "on"])
+    assert result.exit_code == 0 and "autocut cuts" in result.output
+    result = runner.invoke(app, ["stop", "--all"])
+    assert result.exit_code == 0 and "everything is stopped" in result.output
+    help_text = runner.invoke(app, ["--help"]).output
+    for hidden in ("blast", "bankruptcy", "halt", "enforce", "panel", "label", "want", "meh", "score"):
+        assert f"  {hidden} " not in help_text and f"│ {hidden} " not in help_text, hidden
+    for shown in ("catch-up", "clear-old", "console", "mark", "steer", "autocut"):
+        assert shown in help_text, shown

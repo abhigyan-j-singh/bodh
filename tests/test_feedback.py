@@ -13,7 +13,7 @@ from bodh import feedback, store
 def test_empty_upstream_unread_list_is_not_a_bulk_dismiss(conn, cfg):
     """One empty (or truncated) answer from BazQux used to flip the whole pool to dismissed, a
     negative that taught the profile the pool was disliked. It takes two runs in a row now."""
-    cfg.breakers.bulk_dismiss_threshold = 30
+    cfg.safety.mark_all_read_threshold = 30
     ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 5}", crawled_msec=None) for i in range(1, 41)])
     client = FakeClient()
     stats = feedback.collect(client, conn, cfg, unread_now=set(), starred_now=set())
@@ -51,7 +51,7 @@ def test_read_dismissed_expired_marked_unread_again_return_to_unread(conn, cfg):
     # and they are in the pool the cuts select from
     from bodh import cut
 
-    cfg.cut.target_unread = 0
+    cfg.prune.keep = 0
     assert set(cut.select_prune(conn, cfg).cut_ids) == set(ids)
 
 
@@ -74,7 +74,7 @@ def test_wrong_on_uncut_article_is_not_a_rescue(conn, cfg):
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[1:], run_id, "floor")
     store.set_flags(conn, ids[1:], cut_tagged=1, read_marked=1)
-    client = FakeClient(labels={cfg.tags.wrong: ids})
+    client = FakeClient(labels={cfg.tags.rescue: ids})
     stats = feedback.collect(client, conn, cfg, unread_now={ids[0]}, starred_now=set())
     assert stats["rescues"] == 1
     assert store.feedback_ids(conn, "rescue") == {ids[1]} and store.feedback_ids(conn, "wrong") == set(ids)

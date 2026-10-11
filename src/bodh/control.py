@@ -1,7 +1,7 @@
 """The whole system in one view, and the levers: what is running, what launchd will do
-next, what the last runs did, the pile, the spend; start a run, stop it, pause or resume
-the schedule, flip enforce, prune, undo. Used by `bodh status`-style commands and by
-the control room (`bodh panel`)."""
+next, what the last runs did, the unread, the spend; start a run, stop it, pause or resume
+the schedule, autocut on or off, prune, undo. Used by `bodh status` and by the console
+(`bodh console`)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ JOBS = {
     "run": "bodh.run",
     "weekly": "bodh.weekly",
     "report": "bodh.report",
-    "panel": "bodh.console",
+    "console": "bodh.console",
 }
 # the labels an install from before the rename used; the installer boots them out
 OLD_JOBS = ["com.antriksh.triage", "com.antriksh.triage.weekly", "com.antriksh.triage.report", "com.antriksh.triage.panel"]
@@ -108,7 +108,7 @@ def schedule(action: str, which: str = "all", data_dir: Path | None = None) -> s
     names = list(JOBS) if which == "all" else [which]
     lines = [_schedule_one(action, name) for name in names]
     if action == "pause" and which == "all":
-        lines.append("the control room is paused too; `bodh schedule resume` brings everything back")
+        lines.append("the console is paused too; `bodh schedule resume` brings everything back")
     return "\n".join(lines)
 
 
@@ -137,7 +137,7 @@ def _schedule_one(action: str, which: str) -> str:
 # -- the control room's own state ------------------------------------------------
 
 def panel_state(cfg: Config) -> dict:
-    """Is the control room answering? From data/panel.json (written by `bodh panel`) and a
+    """Is the console answering? From data/panel.json (written by `bodh console`) and a
     one-second connection attempt; the last line of data/panel.log explains a failure."""
     data_dir = cfg.root / cfg.data_dir
     info: dict = {}
@@ -161,8 +161,8 @@ def panel_state(cfg: Config) -> dict:
 
 
 def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
-    """bodh commands of this checkout still alive on this machine (run, prune, blast,
-    panel …), except this one. Anchored to the checkout's path: a halt from one checkout must
+    """bodh commands of this checkout still alive on this machine (run, prune, catch-up,
+    console …), except this one. Anchored to the checkout's path: a halt from one checkout must
     not end another's control room, or an editor whose arguments mention the path."""
     try:
         res = subprocess.run(["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10)
@@ -190,7 +190,7 @@ def stray_pattern(root: Path | None) -> str:
 def halt(cfg: Config) -> list[str]:
     """Stop everything: interrupt the run that holds the lock (so it finishes its run row and
     pings the heartbeat), then pause every launchd job, then end any other bodh process of
-    this checkout (the control room included). Nothing is lost: judged articles stay judged,
+    this checkout (the console included). Nothing is lost: judged articles stay judged,
     half-written cuts are finished by the next run."""
     notes = [ops.stop_process(cfg.root / cfg.data_dir)]
     notes.append(schedule("pause", "all"))
@@ -217,12 +217,13 @@ def halt(cfg: Config) -> list[str]:
 
 # -- config levers --------------------------------------------------------------
 
-def set_enforce(root: Path, on: bool) -> tuple[bool, str]:
-    """Flip `cut.enforce` in config.yaml in place, keeping every other line (and every
-    comment) as it is. The key is found under the `cut:` section whatever its spelling
-    (true, True, yes, "false" …), added there when missing, and the result is read back:
-    the edit counts only if the loaded configuration differs in that one value and nothing
-    else. Returns (ok, message)."""
+def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
+    """Flip `autocut.enabled` in config.yaml in place, keeping every other line (and every
+    comment) as it is. The key is found under its section whatever its spelling (true, True,
+    yes, "false" …), added there when missing, and the result is read back: the edit counts
+    only if the loaded configuration differs in that one value and nothing else. A file that
+    still uses the old layout (`cut: enforce:`) is edited under the old names, so the file
+    keeps loading as it did. Returns (ok, message)."""
     path = root / "config.yaml"
     try:
         text = path.read_text(encoding="utf-8")
@@ -231,71 +232,79 @@ def set_enforce(root: Path, on: bool) -> tuple[bool, str]:
         return False, f"config.yaml could not be read: {exc}"
     if not isinstance(before, dict):
         return False, "config.yaml does not hold a mapping of sections; edit it by hand"
-    new_text = _edit_cut_enforce(text, on)
+    section, key = "autocut", "enabled"
+    if "autocut" not in before and isinstance(before.get("cut"), dict) and "enforce" in before["cut"]:
+        section, key = "cut", "enforce"   # the layout before October 2026, read for one release
+    new_text = _edit_flag(text, section, key, on)
     try:
         after = yaml.safe_load(new_text) or {}
     except yaml.YAMLError as exc:
         return False, f"the edit would break config.yaml ({exc}); edit it by hand"
     expected = copy.deepcopy(before)
-    expected.setdefault("cut", {})
-    if not isinstance(expected["cut"], dict):
-        return False, "the `cut:` section is not a mapping; edit config.yaml by hand"
-    expected["cut"]["enforce"] = on
+    expected.setdefault(section, {})
+    if not isinstance(expected[section], dict):
+        return False, f"the `{section}:` section is not a mapping; edit config.yaml by hand"
+    expected[section][key] = on
     if after != expected:
-        return False, "could not find a place for cut.enforce in config.yaml; edit it by hand"
+        return False, f"could not find a place for {section}.{key} in config.yaml; edit it by hand"
     try:
         path.write_text(new_text, encoding="utf-8")
     except OSError as exc:
         return False, f"config.yaml could not be written: {exc}"
-    return True, f"cut.enforce is now {'true: the floor cuts from the next run' if on else 'false: shadow mode, nothing is cut'}"
+    return True, (f"{section}.{key} is now "
+                  + ("true: autocut cuts below the cut-off from the next run" if on
+                     else "false: scoring-only mode, nothing is cut"))
+
+
+set_enforce = set_autocut   # the name before October 2026
 
 
 _SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")                      # a top-level `name:` line
-_ENFORCE_RE = re.compile(r"^(?P<indent>\s+)(?P<key>['\"]?enforce['\"]?:)(?P<rest>.*)$")
 
 
-def _edit_cut_enforce(text: str, on: bool) -> str:
-    """The text of config.yaml with cut.enforce set, by lines: the `enforce:` line directly
-    under `cut:` is rewritten (its trailing comment kept), inserted after `cut:` when there is
-    none, or a `cut:` section is appended when there is none."""
+def _edit_flag(text: str, section: str, key: str, on: bool) -> str:
+    """The text of config.yaml with `section.key` set, by lines: the `key:` line directly under
+    `section:` is rewritten (its trailing comment kept), inserted after `section:` when there
+    is none, or a `section:` block is appended when there is none."""
     value = "true" if on else "false"
+    key_re = re.compile(rf"^(?P<indent>\s+)(?P<key>['\"]?{re.escape(key)}['\"]?:)(?P<rest>.*)$")
     lines = text.splitlines(keepends=True)
-    cut_at = None
+    section_at = None
     for i, line in enumerate(lines):
         m = _SECTION_RE.match(line.rstrip("\n"))
-        if m and m.group(1) == "cut":
-            cut_at = i
+        if m and m.group(1) == section:
+            section_at = i
             break
-        if line.startswith("cut:"):
-            return text  # `cut: { ... }` on one line: not a shape to edit blind; the caller's check refuses
-    if cut_at is None:
+        if line.startswith(f"{section}:"):
+            return text  # `section: { ... }` on one line: not a shape to edit blind; the caller's check refuses
+    if section_at is None:
         tail = "" if not text or text.endswith("\n") else "\n"
-        return text + f"{tail}\ncut:\n  enforce: {value}\n"
+        return text + f"{tail}\n{section}:\n  {key}: {value}\n"
     end = len(lines)
-    for i in range(cut_at + 1, len(lines)):
+    for i in range(section_at + 1, len(lines)):
         stripped = lines[i].strip()
         if stripped and not stripped.startswith("#") and not lines[i][0].isspace():
             end = i  # the next top-level key
             break
     child_indent: int | None = None
-    for i in range(cut_at + 1, end):
+    for i in range(section_at + 1, end):
         stripped = lines[i].strip()
         if not stripped or stripped.startswith("#"):
             continue
         indent = len(lines[i]) - len(lines[i].lstrip())
         if child_indent is None:
             child_indent = indent
-        m = _ENFORCE_RE.match(lines[i].rstrip("\n"))
+        m = key_re.match(lines[i].rstrip("\n"))
         if m and indent == child_indent:
             rest = m.group("rest")
             comment = ""
             hash_at = rest.find(" #")
             if hash_at >= 0:
                 comment = rest[hash_at:]
-            lines[i] = f"{m.group('indent')}enforce: {value}{comment}\n"
+            lines[i] = f"{m.group('indent')}{key}: {value}{comment}\n"
             return "".join(lines)
     indent = " " * (child_indent if child_indent else 2)
-    lines.insert(cut_at + 1, f"{indent}enforce: {value}\n")
+    lines.insert(section_at + 1, f"{indent}{key}: {value}\n")
     return "".join(lines)
 
 
@@ -324,7 +333,7 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> d
     return {
         "now": store.utcnow_iso(),
         "panel": panel_state(cfg),
-        "mode": "enforce" if cfg.cut.enforce else "shadow",
+        "mode": "autocut" if cfg.autocut.enabled else "scoring-only",
         "breaker_tripped": store.kv_get(conn, "breaker_tripped"),
         "batch_mode": cfg.models.batch,
         "running": None if proc is None else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
@@ -332,9 +341,9 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> d
         "launchctl": launchctl_available(),
         "next_run_in": next_run,
         "config": {
-            "teacher": cfg.models.teacher, "second_look": cfg.models.second_look, "learner": cfg.models.learner,
-            "budget": cfg.models.daily_budget_usd, "target": cfg.cut.target_unread, "floor": cfg.cut.default_floor,
-            "max_age_days": cfg.scoring.max_age_days, "folders": {k: v.model_dump() for k, v in cfg.cut.folders.items()},
+            "judge": cfg.models.judge, "reviewer": cfg.models.reviewer, "profiler": cfg.models.profiler,
+            "budget": cfg.models.daily_budget_usd, "target": cfg.prune.keep, "floor": cfg.autocut.cutoff,
+            "max_age_days": cfg.limits.max_age_days, "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
             "root": str(cfg.root), "heartbeat": bool(os.environ.get("HEALTHCHECK_URL")),
         },
         "pile": {
@@ -380,10 +389,10 @@ def render_status_text(st: dict) -> str:
         nxt = st["next_run_in"]
         when = f"next scheduled run in about {nxt / 60:.0f} min" if nxt is not None else "no scheduled run pending"
         lines.append(f"○ idle · {when}")
-    lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'shadow' else ' (the floor cuts)'} · "
-                 f"{'batch' if st['batch_mode'] else 'synchronous'} judging · teacher {st['config']['teacher']}")
+    lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'scoring-only' else ' (autocut cuts below the cut-off)'} · "
+                 f"{'batch' if st['batch_mode'] else 'synchronous'} judging · judge {st['config']['judge']}")
     if st.get("breaker_tripped"):
-        lines.append(f"BREAKER TRIPPED in run {st['breaker_tripped']}: the floor cuts nothing until `bodh safety reset`")
+        lines.append(f"SAFETY LIMIT TRIPPED in run {st['breaker_tripped']}: autocut cuts nothing until `bodh safety reset`")
     j = st["jobs"]
     def jstate(name: str) -> str:
         s = j[name]
@@ -391,19 +400,19 @@ def render_status_text(st: dict) -> str:
             return "not installed"
         extra = f", last exit {s['last_exit']}" if s["last_exit"] not in (None, 0) else ""
         return f"{s['state']}{extra}"
-    lines.append(f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · panel {jstate('panel')}")
+    lines.append(f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · console {jstate('console')}")
     pn = st.get("panel") or {}
     if pn.get("up"):
-        lines.append(f"control room: up at {pn['url']}")
+        lines.append(f"console: up at {pn['url']}")
     else:
         why = f" · last: {pn['note']}" if pn.get("note") else ""
-        lines.append(f"control room: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
-                     "start it with `bodh panel` (foreground) or ./install-launchd.sh")
+        lines.append(f"console: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
+                     "start it with `bodh console` (foreground) or ./install-launchd.sh")
     p = st["pile"]
-    lines.append(f"pile: unread {p['unread']:,} · judged {p['judged']:,} · in flight {p['inflight']:,} · pending {p['pending']:,}"
+    lines.append(f"unread {p['unread']:,} · judged {p['judged']:,} · with the model {p['inflight']:,} · pending {p['pending']:,}"
                  + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")
-                 + (f" · {p['rejudge']:,} await the teacher's re-judgment" if p["rejudge"] else "")
-                 + f" · target {st['config']['target']} · floor {st['config']['floor']}")
+                 + (f" · {p['rejudge']:,} await the judge's second reading" if p["rejudge"] else "")
+                 + f" · prune keeps {st['config']['target']} · cut-off {st['config']['floor']}")
     c = st["cuts_pending"]
     if c["untagged"] or c["unmarked"]:
         lines.append(f"cuts not yet written to BazQux: {c['untagged']:,} to tag, {c['unmarked']:,} to mark read "
@@ -422,5 +431,5 @@ def render_status_text(st: dict) -> str:
     lines.append("last runs:")
     for r in st["runs"][:10]:
         ok = "ok " if r["ok"] else ("…  " if not r["finished_at"] else "ERR")
-        lines.append(f"  {(r['started_at'] or '')[:16]} {ok} {r['kind']:<10} {(r['summary'] or r['error'] or '')[:150]}")
+        lines.append(f"  {(r['started_at'] or '')[:16]} {ok} {store.run_kind_name(r['kind']):<10} {(r['summary'] or r['error'] or '')[:150]}")
     return "\n".join(lines)

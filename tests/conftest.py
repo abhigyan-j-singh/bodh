@@ -97,8 +97,8 @@ def seed_scored(conn: sqlite3.Connection, cfg: Config, specs: Iterable[dict]) ->
         verdict = {"quality": s.get("quality", int(s["score"])), "learning": int(s["score"]), "fit": int(s["score"]),
                    "breadth": int(s["score"]), "relevance": int(s["score"]), "lesson": "l", "concept": s.get("concept", "c"),
                    "kind": "reporting", "flags": [], "dupe_of": s.get("dupe_of"), "confidence": s.get("confidence", "high")}
-        store.record_score(conn, item.id, verdict, s["score"], s["score"], cfg.tags.bucket_for(s["score"]),
-                           cfg.scoring.prompt_version, "test")
+        store.record_score(conn, item.id, verdict, s["score"], s["score"], cfg.tags.band_for(s["score"]),
+                           cfg.judge.prompt_version, "test")
         flags = {}
         if s.get("starred"):
             flags["starred"] = 1

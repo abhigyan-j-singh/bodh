@@ -80,14 +80,14 @@ def test_prompt_home_flag_follows_the_config(cfg, conn):
 
     raw = load_prompt("teacher.v2", cfg.root)
     assert "<<home_flag>>" in raw and "india" not in raw.lower() and "AI infrastructure" not in raw
-    cfg.scoring.home_angle = ""
+    cfg.judge.home_angle = ""
     assert "home (" not in fill_prompt(raw, cfg) and "<<" not in fill_prompt(raw, cfg)
-    cfg.scoring.home_angle = "India"
+    cfg.judge.home_angle = "India"
     text = Teacher(cfg, StubLLM(), conn).system_text  # type: ignore[arg-type]
     assert "home (an angle on the student's home ground, India)" in text and "<<" not in text
     assert "outside the student's own field" in text
-    cfg.scoring.home_angle = "  "   # whitespace is off, like "": no flag in the prompt, no bonus in compose
-    assert cfg.model_validate(cfg.model_dump()).scoring.home_angle == ""
+    cfg.judge.home_angle = "  "   # whitespace is off, like "": no flag in the prompt, no bonus in compose
+    assert cfg.model_validate(cfg.model_dump()).judge.home_angle == ""
     from bodh.teacher import normalize_flags
 
     assert normalize_flags(["india_angle", "funding_round_non_infra", "primary_source"]) == ["home_angle", "funding_offfield", "primary_source"]

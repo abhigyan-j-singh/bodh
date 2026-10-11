@@ -1,7 +1,7 @@
-"""The learner model: a short seed the student writes once, and learner.md, which
-the system rewrites every week from what the student actually read, starred,
-rescued and cut. Guardrails: bounded movement, an eval gate on the starred set,
-a git commit per version, and a one-command revert."""
+"""The student profile: profile/about.md, which the student writes once, and
+profile/learned.md, which the profiler rewrites every week from what the student
+actually read, starred, rescued and cut. Guardrails: bounded movement, an eval gate
+on the starred set, a git commit per version, and a one-command revert."""
 
 from __future__ import annotations
 
@@ -55,12 +55,12 @@ def nudge(cfg: Config, conn: sqlite3.Connection, kind: str, phrase: str) -> str:
 
 def nudges(cfg: Config, conn: sqlite3.Connection, items: list[tuple[str, str]]) -> list[str]:
     """Several nudges (the `more` and `less` tags of one run, say) in one version."""
-    text = cfg.read_learner()
+    text = cfg.read_learned()
     stamp = store.utcnow().strftime("%Y-%m-%d")
     lines = [f"- {stamp}: the student {'wants more on' if kind == 'want' else 'wants less of'} {phrase.strip()}"
              for kind, phrase in items]
-    if "## Nudges" not in text:
-        text = text.rstrip() + "\n\n## Nudges\n"
+    if "## Steers" not in text and "## Nudges" not in text:   # "Nudges": the heading before October 2026
+        text = text.rstrip() + "\n\n## Steers\n"
     text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
     reason = "; ".join(f"{kind} {phrase.strip()[:40]}" for kind, phrase in items)
     _write_version(cfg, conn, text, f"nudge: {reason}")
@@ -68,12 +68,12 @@ def nudges(cfg: Config, conn: sqlite3.Connection, items: list[tuple[str, str]]) 
 
 
 def _write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str) -> int:
-    cfg.learner_path.parent.mkdir(parents=True, exist_ok=True)
-    if not store.learner_versions(conn, 1) and cfg.learner_path.exists():
-        store.save_learner_version(conn, cfg.read_learner(), "initial")
-    cfg.learner_path.write_text(text.rstrip() + "\n", encoding="utf-8")
+    cfg.learned_path.parent.mkdir(parents=True, exist_ok=True)
+    if not store.learner_versions(conn, 1) and cfg.learned_path.exists():
+        store.save_learner_version(conn, cfg.read_learned(), "initial")
+    cfg.learned_path.write_text(text.rstrip() + "\n", encoding="utf-8")
     version = store.save_learner_version(conn, text, reason)
-    git_commit(cfg.learner_path.parent, f"learner v{version}: {reason}")
+    git_commit(cfg.learned_path.parent, f"learned profile v{version}: {reason}")
     return version
 
 
@@ -94,15 +94,15 @@ def git_commit(repo_dir: Path, message: str) -> bool:
                                 capture_output=True, text=True)
         if result.returncode == 0 or "nothing to commit" in (result.stdout + result.stderr):
             return True
-        log.warning("learner: git commit in %s failed: %s", repo_dir, (result.stderr or result.stdout).strip()[:300])
+        log.warning("profile: git commit in %s failed: %s", repo_dir, (result.stderr or result.stdout).strip()[:300])
         return False
     except (OSError, subprocess.SubprocessError) as exc:
-        log.warning("learner: git commit skipped (%s)", exc)
+        log.warning("profile: git commit skipped (%s)", exc)
         return False
 
 
 def revert(cfg: Config, conn: sqlite3.Connection) -> int | None:
-    """Back one version: the previous learner text is written and committed again."""
+    """Back one version: the previous learned profile is written and committed again."""
     versions = store.learner_versions(conn, n=2)
     if len(versions) < 2:
         return None
@@ -118,7 +118,7 @@ def diff(old: str, new: str) -> str:
 
 def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None,
                    dry_run: bool = False) -> dict:
-    """Rewrite learner.md from the week's evidence; keep it only if the eval gate passes."""
+    """Rewrite profile/learned.md from the week's evidence; keep it only if the eval gate passes."""
     result = {"applied": False, "reason": "", "diff": "", "words": 0}
     since = store.days_ago_iso(7)
     positives = store.feedback_since(conn, store.POSITIVE_KINDS, since)
@@ -126,11 +126,11 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     levels = store.feedback_since(conn, store.LEVELS, since)
     steers = store.feedback_since(conn, store.STEERS, since)
     if len(positives) < 5:
-        result["reason"] = f"only {len(positives)} positives this week; learner model kept as is"
+        result["reason"] = f"only {len(positives)} positives this week; learned profile kept as is"
         return result
 
-    current = cfg.read_learner()
-    seed = cfg.read_seed()
+    current = cfg.read_learned()
+    about = cfg.read_about()
     evidence = ["# Positives (starred, great, good, read, rescued)"]
     evidence += [_evidence_line(r) for r in positives[:120]]
     evidence += ["", "# Negatives (bad, meh, dismissed)"]
@@ -142,9 +142,10 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
         evidence += ["", "# Steers (more: the student asked for more of this; less: for less)"]
         evidence += [_evidence_line(r) for r in steers[:40]]
     user_text = (
-        f"# Seed\n{seed}\n\n# Current learner model\n{current}\n\n# This week's evidence\n" + "\n".join(evidence)
+        f"# About the student\n{about}\n\n# Current learned profile\n{current}\n\n# This week's evidence\n"
+        + "\n".join(evidence)
     )
-    new_text = llm.complete(cfg.models.learner, load_prompt("learner.v1", cfg.root), user_text, run_id, "learner_rewrite",
+    new_text = llm.complete(cfg.models.profiler, load_prompt("profiler.v1", cfg.root), user_text, run_id, "learner_rewrite",
                             max_tokens=1500)
     new_text = _strip_fences(new_text)
     words = len(new_text.split())
@@ -152,8 +153,8 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     if words > MAX_WORDS or "## Expansion topics" not in new_text:
         result["reason"] = f"rewrite rejected: {words} words or missing sections"
         return result
-    if repeats_seed(new_text, seed):
-        result["reason"] = "rewrite rejected: it repeated the seed"
+    if repeats_about(new_text, about):
+        result["reason"] = "rewrite rejected: it repeated the student's own description"
         return result
 
     gate = gate_check(cfg, llm, conn, run_id, new_text)
@@ -172,13 +173,17 @@ def weekly_rewrite(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int 
     return result
 
 
-def repeats_seed(new_text: str, seed: str) -> bool:
-    """The rewrite may not carry the seed into the learner model: its heading, or any full
-    line of it (the prompt forbids both; a copied seed doubles the cached prefix for nothing)."""
+def repeats_about(new_text: str, about: str) -> bool:
+    """The rewrite may not carry the student's own description into the learned profile: its
+    heading, or any full line of it (the prompt forbids both; a copy doubles the cached prefix
+    for nothing)."""
     low = new_text.lower()
-    if "# seed" in low:
+    if "# about the student" in low or "# seed" in low:
         return True
-    return any(len(line) >= 40 and line in low for line in (ln.strip().lower() for ln in seed.splitlines()))
+    return any(len(line) >= 40 and line in low for line in (ln.strip().lower() for ln in about.splitlines()))
+
+
+repeats_seed = repeats_about   # the name before October 2026
 
 
 def _evidence_line(r: sqlite3.Row) -> str:
@@ -196,7 +201,7 @@ def _strip_fences(text: str) -> str:
 
 
 def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, new_learner: str) -> dict:
-    """With the proposed learner model in place, no recently loved article (starred, `great`,
+    """With the proposed learned profile in place, no recently loved article (starred, `great`,
     rescued with `wrong`) may score below its folder's automatic floor. Up to 30 articles,
     one or two calls."""
     rows = conn.execute(
@@ -207,19 +212,19 @@ def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | No
     ).fetchall()
     if not rows:
         return {"passed": True, "detail": "no starred articles to check against", "checked": 0, "below": []}
-    # the proposed model is handed to the teacher in memory: learner.md is not touched, so a
+    # the proposed profile is handed to the judge in memory: learned.md is not touched, so a
     # kill or an overlapping run during the check cannot leave the ungated text as the live model
     teacher = Teacher(cfg, llm, conn, context=concept_context(conn, cfg), expansion_topics=expansion_topics(new_learner),
                       learner_text=new_learner)
     below: list[str] = []
-    for i in range(0, len(rows), cfg.scoring.batch_size):
-        batch = rows[i: i + cfg.scoring.batch_size]
+    for i in range(0, len(rows), cfg.judge.articles_per_call):
+        batch = rows[i: i + cfg.judge.articles_per_call]
         verdicts = teacher.judge_batch(batch, run_id)
         for row in batch:
             v = verdicts.get(row["id"])
             if v is None:
                 continue
-            floor = cfg.cut.floor_for(row["folder"]) or cfg.cut.default_floor
+            floor = cfg.cutoff_for(row["folder"]) or cfg.autocut.cutoff
             if compose(v, cfg, teacher.expansion_topics) < floor:
                 below.append(row["title"][:80])
     passed = not below

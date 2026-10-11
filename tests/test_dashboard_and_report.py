@@ -69,9 +69,9 @@ def test_proposal_thresholds(conn, cfg):
     assert report.proposal(rows["Big Unscored"], cfg) == ""
     assert report.proposal(rows["Junk Feed"], cfg).startswith("unsubscribe")
     # the strict folder comes from config: none configured, no "move to" proposal
-    cfg.cut.folders = {}
+    cfg.folders = {}
     assert report.strictest_folder(cfg) is None
-    cfg.cut.folders = {"Torrent": FolderPolicy(auto_cut_below=70), "Always": FolderPolicy(protected=True)}
+    cfg.folders = {"Torrent": FolderPolicy(cutoff=70), "Always": FolderPolicy(protected=True)}
     assert report.strictest_folder(cfg) == "Torrent"
     big = seed_scored(conn, cfg, [dict(n=1000 + i, score=40, feed="Loud Feed") for i in range(300)])
     store.mark_cut(conn, big[:200], run_id, "floor")

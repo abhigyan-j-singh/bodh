@@ -103,7 +103,7 @@ def test_request_params_shapes(cfg, conn):
 
 
 def test_has_more_to_read(cfg):
-    cfg.scoring.opening_chars = 1000
+    cfg.judge.text_chars = 1000
     assert not has_more_to_read({"text": "x" * 1100}, cfg)
     assert has_more_to_read({"text": "x" * 1300}, cfg)
     assert has_more_to_read({"text_len": 5000}, cfg) and not has_more_to_read({"text_len": None}, cfg)
@@ -117,7 +117,7 @@ def test_teacher_prefix_is_stable_and_concepts_travel_with_the_articles(cfg, con
             return {"system": system_text, "user": user_text}
 
     t = Teacher(cfg, StubLLM(), conn, context="Read: gpus: 3")  # type: ignore[arg-type]
-    assert "gpus: 3" not in t.system_text and "# Seed" in t.system_text and "# Learner model" in t.system_text
+    assert "gpus: 3" not in t.system_text and "# About the student" in t.system_text and "# Learned profile" in t.system_text
     text = t._user_text([{"id": "a", "text": "body", "url": "", "feed_title": "f", "folder": None, "title": "T",
                           "author": None, "published": None}], 100)
     assert text.startswith("# Concepts\nRead: gpus: 3") and "[1]\n" in text and "title: T" in text
@@ -141,7 +141,7 @@ def test_unscored_unread_filters(conn, cfg):
 
 
 def test_progress_views_render(conn, cfg):
-    cfg.cut.folders = {"Comics": FolderPolicy(protected=True, score=False)}
+    cfg.folders = {"Comics": FolderPolicy(protected=True, judge=False)}
     seed_scored(conn, cfg, [dict(n=1, score=90, folder="Essays"), dict(n=2, score=20, folder="Essays"),
                                   dict(n=3, score=40, folder="News", confidence="low")])
     store.upsert_article(conn, make_item(10, title="pending one", crawled_msec=4_000_000_000_000), "News")
@@ -251,7 +251,7 @@ def test_many_workers_share_the_database_safely(conn, cfg):
 
     for n in range(1, 241):
         store.upsert_article(conn, make_item(n, title=f"article number {n}", crawled_msec=1_800_000_000_000 + n), None)
-    cfg.scoring.batch_size = 5
+    cfg.judge.articles_per_call = 5
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
     llm._client = StubClient()
     teacher = Teacher(cfg, llm, conn)

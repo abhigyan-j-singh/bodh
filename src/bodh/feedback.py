@@ -1,6 +1,6 @@
 """Feedback, collected from BazQux state and from the student's tags. With no labelling
 chores: stars, inferred reads, rescues (a cut article marked unread again, or tagged
-`wrong`), and a `prune` tag asking for one more step. With a tag, the student's verdict:
+`rescue`), and a `prune` tag asking for one more step. With a tag, the student's verdict:
 a grade (`great`, `good`, `meh`, `bad`), the level missed (`basic`, `heavy`), or a steer
 (`more`, `less`) that the teacher sees from the next run. Verdict tags stay on the article
 as the student's own record; each is recorded once."""
@@ -12,6 +12,7 @@ import sqlite3
 import time
 from collections import Counter
 from datetime import datetime, timedelta
+from typing import Any
 
 from . import store
 from .bazqux import BazQuxClient
@@ -67,7 +68,7 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
         recent_ids = {r["id"] for r in recent}
         expired = [r["id"] for r in rows if r["id"] not in recent_ids]
         feeds = Counter(r["feed_title"] for r in recent)
-        bulk = len(recent) >= cfg.breakers.bulk_dismiss_threshold and len(feeds) >= 3
+        bulk = len(recent) >= cfg.safety.mark_all_read_threshold and len(feeds) >= 3
         kind = "dismiss" if bulk else "read"
         for r in recent:
             store.add_feedback(conn, r["id"], kind)
@@ -76,13 +77,17 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
         stats["dismissed" if bulk else "reads"] = len(recent)
         stats["expired"] = len(expired)
 
-    # rescues: a cut article that is unread again was marked unread by the student; a `wrong`
+    # rescues: a cut article that is unread again was marked unread by the student; a `rescue`
     # tag on a cut article asks for the same, whether or not the cut has reached BazQux yet (a
-    # cut whose read mark failed is still unread there, carrying the tag). `wrong` on anything
+    # cut whose read mark failed is still unread there, carrying the tag). `rescue` on anything
     # else is a strong positive with no rescue in it (there was no cut to reverse).
     ours_cut_marked = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = 'cut' AND read_marked = 1")}
     ours_cut = store.status_ids(conn, "cut")
-    wrong_ids = [aid for aid in client.label_ids(cfg.tags.wrong) if aid in known]
+    # the rescue tag under its name and, for as long as people may have it on articles, the old one
+    tagged: dict[str, list[str]] = {}
+    for name in cfg.tags.rescue_tags():
+        tagged[name] = [aid for aid in client.label_ids(name) if aid in known]
+    wrong_ids = sorted({aid for ids in tagged.values() for aid in ids})
     wrong_cut = [aid for aid in wrong_ids if aid in ours_cut]
     to_unread = [aid for aid in wrong_cut if aid not in unread_now]
     if to_unread:
@@ -95,8 +100,9 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
             store.add_feedback(conn, aid, "rescue")
     for aid in wrong_ids:
         store.add_feedback(conn, aid, "wrong")
-    if wrong_ids:
-        client.untag(wrong_ids, cfg.tags.wrong)
+    for name, ids in tagged.items():
+        if ids:
+            client.untag(ids, name)
     stats["rescues"] = len(rescued)
 
     # verdicts: grades, levels and steers, from the tags left on the articles
@@ -182,6 +188,29 @@ def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config
     return stats
 
 
+def rescue_one(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, article_id: str, row: Any) -> str:
+    """`bodh mark ID rescue`: the same as the rescue tag, now. A cut article comes back unread in
+    BazQux and here, is never cut again by any path, and counts as the strongest positive; an
+    article that was never cut gets the positive only. Returns the line to print."""
+    if row["status"] == "cut":
+        client.mark_unread([article_id])
+        try:
+            client.untag([article_id], cfg.tags.cut)
+        except Exception:  # noqa: BLE001 — the tag is cosmetic; the read state is what matters
+            log.warning("feedback: could not remove the cut tag from %s", article_id)
+        store.restore_unread(conn, [article_id], rescued=True)
+        store.add_feedback(conn, article_id, "rescue")
+        store.add_feedback(conn, article_id, "wrong")
+        return f"rescued: {(row['title'] or '')[:70]} is unread again and will not be cut"
+    store.add_feedback(conn, article_id, "wrong")
+    return f"recorded as a strong positive (it was not cut): {(row['title'] or '')[:70]}"
+
+
+def steer_phrase(conn: sqlite3.Connection, article_id: str) -> str:
+    """The phrase a steer by article carries into the learned profile: its concept, with the title."""
+    return _steer_phrase(conn, article_id)
+
+
 def _steer_phrase(conn: sqlite3.Connection, article_id: str) -> str:
     row = conn.execute(
         "SELECT a.title, s.concept FROM articles a LEFT JOIN scores s ON s.article_id = a.id WHERE a.id = ?",
@@ -202,7 +231,7 @@ def rescue_rate_week(conn: sqlite3.Connection, min_cuts: int = MIN_CUTS_FOR_RESC
     reversal say nothing about the floor; nor does a week with fewer than ``min_cuts`` cuts."""
     since = store.days_ago_iso(7)
     cuts = conn.execute(
-        "SELECT COUNT(*) FROM state WHERE (cut_at >= ? AND cut_mode IN ('floor', 'prune')) OR rescued_at >= ?",
+        "SELECT COUNT(*) FROM state WHERE (cut_at >= ? AND cut_mode IN ('autocut', 'floor', 'prune')) OR rescued_at >= ?",
         (since, since),
     ).fetchone()[0]
     rescues = conn.execute("SELECT COUNT(*) FROM feedback WHERE kind = 'rescue' AND at >= ?", (since,)).fetchone()[0]

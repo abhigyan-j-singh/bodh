@@ -84,7 +84,7 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
         return sel
     candidates: list[sqlite3.Row] = []
     for row in pool:
-        floor = cfg.cut.floor_for(row["folder"])
+        floor = cfg.cutoff_for(row["folder"])
         if (floor is None or not eligible(row) or row["exploration"] or row["exempt"]
                 or row["confidence"] == "low"):
             sel.survivors.append(row)
@@ -95,10 +95,10 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
             sel.survivors.append(row)
 
     # breaker: a model or prompt failure shows up as nearly everything new being junk
-    if newly_scored is not None and len(newly_scored) >= cfg.breakers.min_new_for_breaker:
+    if newly_scored is not None and len(newly_scored) >= cfg.safety.min_judged:
         new_candidates = sum(1 for r in candidates if r["id"] in newly_scored)
         share = new_candidates / len(newly_scored)
-        if share > cfg.breakers.max_cut_share:
+        if share > cfg.safety.max_cut_share:
             store.kv_set(conn, BREAKER_KEY, str(run_id if run_id is not None else "?"))
             raise BreakerTripped(
                 f"floor would cut {new_candidates} of {len(newly_scored)} newly scored articles "
@@ -115,8 +115,8 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
         remaining: list[sqlite3.Row] = []
         to_look: list[sqlite3.Row] = []
         for row in candidates:
-            floor = cfg.cut.floor_for(row["folder"]) or cfg.cut.default_floor
-            if float(row["score"]) < floor - cfg.scoring.second_look_window:
+            floor = cfg.cutoff_for(row["folder"]) or cfg.autocut.cutoff
+            if float(row["score"]) < floor - cfg.review.window:
                 remaining.append(row)
             elif row["second_look_model"] is not None:
                 if row["second_look_model"] == "failed":
@@ -149,9 +149,9 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
 
     # exploration quota: new ground of decent quality is exempt from the floor
     base = len(newly_scored) - len(candidates) if newly_scored is not None else len(sel.survivors)
-    quota = math.ceil(cfg.cut.exploration_share * max(0, base))
+    quota = math.ceil(cfg.autocut.new_ground_share * max(0, base))
     if quota > 0 and candidates:
-        since = store.days_ago_iso(cfg.feedback.concept_window_days)
+        since = store.days_ago_iso(cfg.profile.concept_window_days)
         known = {c for c, _ in store.concept_counts(conn, ["star", "read", "rescue"], since, limit=500)}
         novel = [r for r in sorted(candidates, key=lambda r: -float(r["score"]))
                  if (r["quality"] or 0) >= 60 and (r["concept"] or "").strip().lower() not in known
@@ -165,8 +165,8 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
             sel.reserved_for_exploration = len(reserved)
 
     candidates.sort(key=lambda r: (float(r["score"]), r["crawled_msec"] or 0))
-    sel.cut = candidates[: cfg.cut.max_cuts_per_run]
-    sel.survivors.extend(candidates[cfg.cut.max_cuts_per_run:])
+    sel.cut = candidates[: cfg.autocut.max_per_run]
+    sel.survivors.extend(candidates[cfg.autocut.max_per_run:])
     sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
     return sel
 
@@ -191,8 +191,8 @@ def select_prune(conn: sqlite3.Connection, cfg: Config, keep: int | None = None,
         sel.survivors = by_score_desc[: len(by_score_desc) - n_cut] + fixed
         sel.cut = by_score_desc[len(by_score_desc) - n_cut:]
     else:
-        target = cfg.cut.target_unread if keep is None else keep
-        cap = max(1, math.ceil(cfg.cut.concept_cap * target))
+        target = cfg.prune.keep if keep is None else keep
+        cap = max(1, math.ceil(cfg.prune.max_share_per_concept * target))
         counts: Counter[str] = Counter()
         survivors: list[sqlite3.Row] = []
         deferred: list[sqlite3.Row] = []
@@ -311,6 +311,6 @@ def bankruptcy(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, olde
                          [(aid, "(bankruptcy: not fetched)", now) for aid in unknown])
         conn.executemany("INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)",
                          [(aid, now) for aid in unknown])
-        store.mark_cut(conn, ids, run_id, "bankruptcy")
+        store.mark_cut(conn, ids, run_id, "clear-old")
     finish_pending_cuts(client, conn, cfg)
     return len(ids), len(ids)

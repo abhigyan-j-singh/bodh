@@ -202,7 +202,7 @@ def load_prompt(name: str, root: Path | None = None) -> str:
 def fill_prompt(text: str, cfg: Config) -> str:
     """The prompt's placeholders: `<<home_flag>>` names the student's home ground when one is
     configured (the model then writes the `home` flag) and disappears when none is."""
-    home = cfg.scoring.home_angle.strip()
+    home = cfg.judge.home_angle.strip()
     home_flag = f"home (an angle on the student's home ground, {home}), " if home else ""
     return text.replace("<<home_flag>>", home_flag)
 
@@ -256,11 +256,11 @@ def matches_topic(concept: str, topics: list[str]) -> bool:
 def compose(v: Verdict | dict, cfg: Config, expansion_topics: list[str] | None = None) -> float:
     """Sub-scores to one score, deterministically, so weights can change without re-prompting."""
     d = v.model_dump() if isinstance(v, Verdict) else dict(v)
-    w = cfg.scoring.weights
+    w = cfg.judge.weights
     s = sum(w[k] * float(d.get(k, 0)) for k in w)
     flags = set(normalize_flags(d.get("flags")))
-    if "home_angle" in flags and cfg.scoring.home_angle:
-        s += cfg.scoring.home_bonus
+    if "home_angle" in flags and cfg.judge.home_angle:
+        s += cfg.judge.home_bonus
     if "vendor_marketing_no_data" in flags or d.get("kind") == "promo":
         s = min(s, 30)
     if "funding_offfield" in flags:
@@ -268,7 +268,7 @@ def compose(v: Verdict | dict, cfg: Config, expansion_topics: list[str] | None =
     if d.get("dupe_of") or "duplicate" in flags:
         s = min(s, 20)
     if expansion_topics and matches_topic(d.get("concept", ""), expansion_topics):
-        s += cfg.scoring.expansion_bonus
+        s += cfg.judge.expansion_bonus
     return round(max(0.0, min(100.0, s)), 1)
 
 
@@ -497,7 +497,7 @@ class LLM:
 
     def complete(self, model: str, system_text: str, user_text: str, run_id: int | None,
                  purpose: str, max_tokens: int = 2000) -> str:
-        """Plain text completion (the weekly learner rewrite)."""
+        """Plain text completion (the weekly profile rewrite)."""
         self.ensure_budget()
         try:
             response = self._client.messages.create(
@@ -573,7 +573,7 @@ def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
     """A second look is worth paying for only when the full text holds more than the
     opening the first pass already saw."""
     length = row["text_len"] if "text_len" in row.keys() else len(row["text"] or "")  # type: ignore[union-attr]
-    return int(length or 0) > cfg.scoring.opening_chars + 200
+    return int(length or 0) > cfg.judge.text_chars + 200
 
 
 class Teacher:
@@ -584,18 +584,19 @@ class Teacher:
         self.cfg = cfg
         self.llm = llm
         self.conn = conn
-        self.prompt_version = cfg.scoring.prompt_version
+        self.prompt_version = cfg.judge.prompt_version
         self.expansion_topics = expansion_topics or []
         base = fill_prompt(load_prompt(self.prompt_version, cfg.root), cfg)
         intro, _, rubric = base.partition("\n\n")
-        cfg.check_seed()   # the backstop; run and blast refuse earlier, before any network
-        seed = cfg.read_seed() or "(no seed written yet)"
-        learner = (cfg.read_learner() if learner_text is None else learner_text) or "(no learner model yet)"
-        # the cached prefix changes only when the seed or the learner model does; the concept
-        # lists change with every star and read, so they travel in the user message instead
-        student = f"# Seed\n{seed}\n\n# Learner model\n{learner}"
+        cfg.check_about()   # the backstop; run and blast refuse earlier, before any network
+        about = cfg.read_about() or "(nothing written about the student yet)"
+        learned = (cfg.read_learned() if learner_text is None else learner_text) or "(no learned profile yet)"
+        # the cached prefix changes only when the student's description or the learned profile
+        # does; the concept lists change with every star and read, so they travel in the user
+        # message instead
+        student = f"# About the student\n{about}\n\n# Learned profile\n{learned}"
         self.system_text = f"{intro}\n\n{rubric}\n\n{student}"
-        self.second_look_text = f"{load_prompt('second_look.v1', cfg.root)}\n\n{rubric}\n\n{student}"
+        self.second_look_text = f"{load_prompt('review.v1', cfg.root)}\n\n{rubric}\n\n{student}"
         self.context = context or "(no reading history yet)"
         self.batch_mode = cfg.models.batch  # a run may switch this off (`bodh run --sync`)
         self.rejudge = self.rejudge_rule(cfg)  # None when a stand-in model must not touch the teacher's work
@@ -610,8 +611,8 @@ class Teacher:
     def pending_rows(self, limit: int | None = None, exclude_inflight: bool = False) -> tuple[list[sqlite3.Row], int]:
         """Unread articles still to judge, newest first, with duplicates of earlier stories
         recorded on the spot (no model call). Returns (rows to judge, duplicates recorded)."""
-        rows = store.unscored_unread(self.conn, self.prompt_version, self.cfg.scoring.max_age_days,
-                                     self.cfg.cut.unscored_folders(), exclude_inflight=exclude_inflight,
+        rows = store.unscored_unread(self.conn, self.prompt_version, self.cfg.limits.max_age_days,
+                                     self.cfg.unjudged_folders(), exclude_inflight=exclude_inflight,
                                      limit=limit, rejudge=self.rejudge)
         todo: list[sqlite3.Row] = []
         dupes = 0
@@ -626,24 +627,24 @@ class Teacher:
         return todo, dupes
 
     def pending_count(self, exclude_inflight: bool = False) -> int:
-        return store.unscored_unread_count(self.conn, self.prompt_version, self.cfg.scoring.max_age_days,
-                                           self.cfg.cut.unscored_folders(), exclude_inflight=exclude_inflight,
+        return store.unscored_unread_count(self.conn, self.prompt_version, self.cfg.limits.max_age_days,
+                                           self.cfg.unjudged_folders(), exclude_inflight=exclude_inflight,
                                            rejudge=self.rejudge)
 
     @staticmethod
     def rejudge_rule(cfg: Config) -> tuple[str, float] | None:
         """(teacher model, min score): what another model judged at or above the score is
         judged again by the teacher, so the keepers rest on the teacher's opinion."""
-        if cfg.scoring.rejudge_min_score is None:
+        if cfg.catch_up.rejudge_at is None:
             return None
-        return cfg.models.teacher, float(cfg.scoring.rejudge_min_score)
+        return cfg.models.judge, float(cfg.catch_up.rejudge_at)
 
     # -- first pass, synchronous ----------------------------------------------
 
     def judge_batch(self, rows: list[sqlite3.Row], run_id: int | None) -> dict[str, Verdict]:
         ordered = [r["id"] for r in rows]
-        user_text = self._user_text(rows, self.cfg.scoring.opening_chars)
-        verdicts = self.llm.judge(self.cfg.models.teacher, self.system_text, user_text, run_id, "teacher")
+        user_text = self._user_text(rows, self.cfg.judge.text_chars)
+        verdicts = self.llm.judge(self.cfg.models.judge, self.system_text, user_text, run_id, "teacher")
         return self._by_article(verdicts, ordered)
 
     @staticmethod
@@ -679,7 +680,7 @@ class Teacher:
                  "pending_after": 0, "total": 0, "stopped_early": False}
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)  # a batch may hold some
         stats["total"] = len(todo)
-        size = self.cfg.scoring.batch_size
+        size = self.cfg.judge.articles_per_call
         batches = [todo[i: i + size] for i in range(0, len(todo), size)]
         workers = max(1, workers)
         pool = ThreadPoolExecutor(max_workers=workers)
@@ -753,11 +754,11 @@ class Teacher:
         """Send what is pending to the Batches API. A batch smaller than one call's worth
         waits for more articles unless its oldest has waited an hour. Returns stats."""
         stats = {"submitted": 0, "requests": 0, "dupes": 0, "budget_stop": False, "batch_id": None, "waiting": 0}
-        limit = limit or self.cfg.scoring.batch_max_per_run
+        limit = limit or self.cfg.limits.per_run_batch
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)
         if not todo:
             return stats
-        size = self.cfg.scoring.batch_size
+        size = self.cfg.judge.articles_per_call
         if len(todo) < size and not self._waited_long_enough(todo):
             stats["waiting"] = len(todo)
             return stats
@@ -768,13 +769,13 @@ class Teacher:
             todo = todo[:allowed]
             if not todo:
                 return stats
-        model = self.cfg.models.teacher
+        model = self.cfg.models.judge
         ttl = self.cfg.models.cache_ttl
         requests, members = [], []
         for bi in range(0, len(todo), size):
             batch = todo[bi: bi + size]
             custom_id = f"t{run_id or 0}-{bi // size}"
-            params = self.llm.request_params(model, self.system_text, self._user_text(batch, self.cfg.scoring.opening_chars), ttl)
+            params = self.llm.request_params(model, self.system_text, self._user_text(batch, self.cfg.judge.text_chars), ttl)
             requests.append({"custom_id": custom_id, "params": params})
             members.append((custom_id, [r["id"] for r in batch]))
         batch_id = self.llm.submit_batch(requests)
@@ -801,14 +802,14 @@ class Teacher:
         rows = [r for r in rows if r["id"] not in store.inflight_ids(self.conn, "second_look")]
         if not rows:
             return 0
-        model = self.cfg.models.second_look
+        model = self.cfg.models.reviewer
         requests, members = [], []
         for n, row in enumerate(rows):
             full = store.article(self.conn, row["id"])
             if full is None:
                 continue
             custom_id = f"s{run_id or 0}-{n}"
-            user_text = self._user_text([dict(full)], self.cfg.scoring.second_look_chars)
+            user_text = self._user_text([dict(full)], self.cfg.review.chars)
             params = self.llm.request_params(model, self.second_look_text, user_text, self.cfg.models.cache_ttl)
             requests.append({"custom_id": custom_id, "params": params})
             members.append((custom_id, [row["id"]]))
@@ -971,15 +972,15 @@ class Teacher:
         """Keep the higher score, retag the bucket if it moved. True when the article now
         clears its floor."""
         new_score = max(first, second)
-        new_bucket = self.cfg.tags.bucket_for(new_score)
-        old_bucket = self.cfg.tags.bucket_for(first)
-        store.record_second_look(self.conn, aid, second, self.cfg.models.second_look, new_score, new_bucket)
+        new_bucket = self.cfg.tags.band_for(new_score)
+        old_bucket = self.cfg.tags.band_for(first)
+        store.record_second_look(self.conn, aid, second, self.cfg.models.reviewer, new_score, new_bucket)
         if new_bucket != old_bucket and client is not None:
             try:
                 client.untag([aid], old_bucket)
             except Exception:  # noqa: BLE001 — a stale bucket tag is cosmetic
                 log.warning("cut: could not remove old bucket tag %s from %s", old_bucket, aid)
-        floor = self.cfg.cut.floor_for(folder)
+        floor = self.cfg.cutoff_for(folder)
         return floor is None or new_score >= floor
 
     # -- recording --------------------------------------------------------------
@@ -991,8 +992,8 @@ class Teacher:
         d["dupe_of"] = v.dupe_of if isinstance(v.dupe_of, str) else None
         score = compose(d, self.cfg, self.expansion_topics)
         stale = store.record_score(self.conn, row["id"], d, base_score=score, score=score,
-                                   bucket=self.cfg.tags.bucket_for(score), prompt_version=self.prompt_version,
-                                   model=self.cfg.models.teacher)
+                                   bucket=self.cfg.tags.band_for(score), prompt_version=self.prompt_version,
+                                   model=self.cfg.models.judge)
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])
 
@@ -1001,7 +1002,7 @@ class Teacher:
              "lesson": f"Same story as: {original['title'][:80]}", "concept": original["concept"] or "duplicate",
              "kind": "other", "flags": ["duplicate"], "dupe_of": original["id"], "confidence": "high"}
         stale = store.record_score(self.conn, row["id"], d, base_score=20.0, score=20.0,
-                                   bucket=self.cfg.tags.bucket_for(20.0), prompt_version=self.prompt_version,
+                                   bucket=self.cfg.tags.band_for(20.0), prompt_version=self.prompt_version,
                                    model="dedup")
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])
@@ -1018,11 +1019,11 @@ class Teacher:
         (recorded as failed; the article stays unread)}. An article missing from the result
         was never examined (the budget, the deadline, or the per-run cap): it stays unread."""
         results: dict[str, bool | None] = {}
-        cap = self.cfg.scoring.second_look_max_per_run if max_looks is None else max_looks
+        cap = self.cfg.review.max_per_run if max_looks is None else max_looks
         todo = [r for r in rows[:cap] if store.article(self.conn, r["id"]) is not None]
         if len(rows) > cap:
             log.info("teacher: %d close calls; looking at %d this run", len(rows), cap)
-        workers = max(1, workers or self.cfg.scoring.workers)
+        workers = max(1, workers or self.cfg.limits.parallel_calls)
         pool = ThreadPoolExecutor(max_workers=workers)
         budget_hit = False
         try:
@@ -1085,9 +1086,9 @@ class Teacher:
         """Re-read one article with the full text on the stronger model, now. Returns the
         composed score of that judgment, or None if it failed. The caller keeps the max."""
         full = dict(row)
-        user_text = self._user_text([full], self.cfg.scoring.second_look_chars)
+        user_text = self._user_text([full], self.cfg.review.chars)
         try:
-            verdicts = self.llm.judge(self.cfg.models.second_look, self.second_look_text, user_text, run_id,
+            verdicts = self.llm.judge(self.cfg.models.reviewer, self.second_look_text, user_text, run_id,
                                       "second_look")
         except (BudgetExceeded, ModelConfigError):
             raise
@@ -1103,7 +1104,7 @@ class Teacher:
 def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
     """The lists for the teacher: what the student loved, read, skipped, and where the level
     missed, by concept, from stars, reads and the student's verdict tags."""
-    days = cfg.feedback.concept_window_days
+    days = cfg.profile.concept_window_days
     since = store.days_ago_iso(days)
     loved = store.concept_counts(conn, store.LOVED_KINDS, since)
     read = store.concept_counts(conn, ["good", "read", "rescue"], since)

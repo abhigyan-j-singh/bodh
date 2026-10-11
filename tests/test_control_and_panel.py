@@ -53,7 +53,7 @@ def _post(url: str, payload: dict, header: bool = True) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
     if header:
-        req.add_header("X-Bodh", "panel")
+        req.add_header("X-Bodh", "console")
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return r.status, json.loads(r.read().decode("utf-8"))
@@ -66,20 +66,21 @@ def test_status_text_and_enforce_flip(conn, cfg):
     run_id = store.begin_run(conn, "run")
     store.finish_run(conn, run_id, True, summary="unread 2 · judged 2")
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 40\n", encoding="utf-8")
-    cfg.cut.enforce = False
+    cfg.autocut.enabled = False
     st = control.status(cfg, conn)
-    assert st["mode"] == "shadow" and st["running"] is None and st["pile"]["unread"] == 2
+    assert st["mode"] == "scoring-only" and st["running"] is None and st["pile"]["unread"] == 2
     assert st["jobs"]["run"]["installed"] is False and st["runs"][0]["summary"] == "unread 2 · judged 2"
     text = control.render_status_text(st)
-    assert "idle" in text and "shadow" in text and "unread 2" in text
+    assert "idle" in text and "scoring-only" in text and "unread 2" in text
     ok, msg = control.set_enforce(cfg.root, True)
     assert ok and "now true" in msg
     assert "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     ok, msg = control.set_enforce(cfg.root, False)
-    assert ok and "shadow" in msg
+    assert ok and "scoring-only" in msg
+    # a file without the key, in either layout, gets the new one
     (cfg.root / "config.yaml").write_text("cut:\n  target_unread: 40\n", encoding="utf-8")
     ok, msg = control.set_enforce(cfg.root, True)
-    assert ok and "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
+    assert ok and "autocut:\n  enabled: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     # launchd is not here: states say so instead of failing
     j = control.job_state("bodh.run")
     assert j["installed"] is False and j["state"] == "not installed"
@@ -114,7 +115,7 @@ def test_running_process_and_stop(conn, cfg):
 def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     seed_scored(conn, cfg, [dict(n=1, score=90)])
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
-    cfg.cut.enforce = False
+    cfg.autocut.enabled = False
     (cfg.root / cfg.dashboard_dir).mkdir(exist_ok=True)
     (cfg.root / cfg.dashboard_dir / "index.html").write_text("<p>dash</p>", encoding="utf-8")
     panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
@@ -133,9 +134,9 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
         except OSError:
             time.sleep(0.1)
     st = _get(base + "/api/status")
-    assert st["mode"] == "shadow" and st["child"]["running"] is False and st["pile"]["unread"] == 1
+    assert st["mode"] == "scoring-only" and st["child"]["running"] is False and st["pile"]["unread"] == 1
     page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
-    assert "control room" in page and "/api/action" in page
+    assert "bodh console" in page and "/api/action" in page
     assert urllib.request.urlopen(base + "/dashboard/index.html", timeout=10).read() == b"<p>dash</p>"
     # a POST without our header is refused (another site's page cannot drive the panel)
     code, _ = _post(base + "/api/action", {"action": "undo"}, header=False)
@@ -167,13 +168,13 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     assert not res["ok"]
     code, res = _post(base + "/api/action", {"action": "enforce_on"})
     assert res["ok"] and "enforce: true" in (cfg.root / "config.yaml").read_text()
-    assert _get(base + "/api/status")["mode"] == "enforce"
+    assert _get(base + "/api/status")["mode"] == "autocut"
     # config.yaml edited by hand shows on the next refresh (mtime resolution: make it clearly later)
     os.utime(cfg.root / "config.yaml", (time.time() + 5, time.time() + 5))
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 25\n", encoding="utf-8")
     os.utime(cfg.root / "config.yaml", (time.time() + 10, time.time() + 10))
     st = _get(base + "/api/status")
-    assert st["mode"] == "shadow" and st["config"]["target"] == 25
+    assert st["mode"] == "scoring-only" and st["config"]["target"] == 25
     assert os.environ.get("BODH_HOME") != str(cfg.root)  # the child env carries it, the test process does not
 
 
@@ -186,7 +187,7 @@ def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
     st = control.panel_state(cfg)
     assert "address in use" in st["note"]
     text = control.render_status_text(control.status(cfg, conn))
-    assert "control room: not answering" in text and "address in use" in text
+    assert "console: not answering" in text and "address in use" in text
     # a live panel: panel.json points at it and the port answers
     panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     import socket
@@ -201,7 +202,7 @@ def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
         time.sleep(0.1)
     st = control.panel_state(cfg)
     assert st["up"] and st["url"].endswith(str(panel.port)) and st["pid"] == os.getpid()
-    assert "control room: up" in control.render_status_text(control.status(cfg, conn))
+    assert "console: up" in control.render_status_text(control.status(cfg, conn))
     # halt with no launchd and nothing running still reports cleanly
     notes = control.halt(cfg)
     assert any("not installed" in n for n in notes) and any("nothing is running" in n for n in notes)
@@ -222,56 +223,64 @@ def test_installer_covers_every_job():
     assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")]).returncode == 0
 
 
-def test_set_enforce_every_yaml_spelling(cfg):
-    """Whatever spelling the file uses, the key under `cut:` is the one edited, comments stay,
-    a missing key is added under `cut:`, and an `enforce:` elsewhere is left alone."""
+def test_set_autocut_every_yaml_spelling(cfg):
+    """Whatever spelling the file uses, the key under `autocut:` is the one edited, comments stay,
+    a missing key is added under `autocut:`, an `enabled:` elsewhere is left alone, and a file in
+    the layout before October 2026 (`cut: enforce:`) is edited under its own names."""
     from bodh.config import load_config
-    from bodh.control import _edit_cut_enforce
+    from bodh.control import _edit_flag
 
     path = cfg.root / "config.yaml"
     for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
-        path.write_text(f"timezone: UTC\n# enforce: not this one\ncut:\n  target_unread: 40\n  enforce: {spelling}\n"
-                        "  default_floor: 35\nbreakers:\n  lowered_floor: 25\n", encoding="utf-8")
+        path.write_text(f"timezone: UTC\n# enabled: not this one\nautocut:\n  max_per_run: 40\n  enabled: {spelling}\n"
+                        "  cutoff: 35\nsafety:\n  lowered_cutoff: 25\n", encoding="utf-8")
         for on in (False, True):
-            ok, msg = control.set_enforce(cfg.root, on)
+            ok, msg = control.set_autocut(cfg.root, on)
             assert ok, (spelling, on, msg)
             text = path.read_text(encoding="utf-8")
             loaded = load_config(cfg.root)
-            assert loaded.cut.enforce is on and loaded.cut.target_unread == 40 and loaded.cut.default_floor == 35
-            assert "# enforce: not this one" in text and "timezone: UTC" in text and "lowered_floor: 25" in text
+            assert loaded.autocut.enabled is on and loaded.autocut.max_per_run == 40 and loaded.autocut.cutoff == 35
+            assert "# enabled: not this one" in text and "timezone: UTC" in text and "lowered_cutoff: 25" in text
             if "comment" in spelling:
                 assert "# a comment" in text
-    # an enforce key under another section is never the one edited (text level: the loader forbids it)
-    text = "other:\n  enforce: true\ncut:\n  target_unread: 40\n"
-    assert _edit_cut_enforce(text, False) == "other:\n  enforce: true\ncut:\n  enforce: false\n  target_unread: 40\n"
-    # no enforce line under cut: added there, nothing else moves
-    path.write_text("cut:\n  target_unread: 40\n  folders:\n    Comics: { protected: true }\nbreakers:\n  lowered_floor: 25\n",
+    # a key under another section is never the one edited (text level: the loader forbids it)
+    text = "other:\n  enabled: true\nautocut:\n  cutoff: 40\n"
+    assert _edit_flag(text, "autocut", "enabled", False) == "other:\n  enabled: true\nautocut:\n  enabled: false\n  cutoff: 40\n"
+    # no enabled line under autocut: added there, nothing else moves
+    path.write_text("autocut:\n  cutoff: 40\nfolders:\n  Comics: { protected: true }\nsafety:\n  lowered_cutoff: 25\n",
                     encoding="utf-8")
-    ok, _ = control.set_enforce(cfg.root, True)
-    assert ok and path.read_text(encoding="utf-8").startswith("cut:\n  enforce: true\n  target_unread: 40\n")
-    assert load_config(cfg.root).cut.folders["Comics"].protected
-    # no cut section at all: one is appended
+    ok, _ = control.set_autocut(cfg.root, True)
+    assert ok and path.read_text(encoding="utf-8").startswith("autocut:\n  enabled: true\n  cutoff: 40\n")
+    assert load_config(cfg.root).folders["Comics"].protected
+    # no autocut section at all: one is appended
     path.write_text("timezone: UTC\n", encoding="utf-8")
-    ok, _ = control.set_enforce(cfg.root, True)
-    assert ok and load_config(cfg.root).cut.enforce is True
-    assert path.read_text(encoding="utf-8") == "timezone: UTC\n\ncut:\n  enforce: true\n"
+    ok, _ = control.set_autocut(cfg.root, True)
+    assert ok and load_config(cfg.root).autocut.enabled is True
+    assert path.read_text(encoding="utf-8") == "timezone: UTC\n\nautocut:\n  enabled: true\n"
+    # the old layout is edited in place, under the old names, so the file keeps loading as it did
+    path.write_text("cut:\n  enforce: false   # kept\n  target_unread: 40\n", encoding="utf-8")
+    ok, msg = control.set_autocut(cfg.root, True)
+    assert ok and "cut.enforce is now true" in msg
+    assert path.read_text(encoding="utf-8") == "cut:\n  enforce: true # kept\n  target_unread: 40\n"
+    assert load_config(cfg.root).autocut.enabled is True
+    assert control.set_enforce is control.set_autocut
     # a shape the line editor cannot handle is refused, and the file is untouched
-    path.write_text("cut: { enforce: false, target_unread: 40 }\n", encoding="utf-8")
+    path.write_text("autocut: { enabled: false, cutoff: 40 }\n", encoding="utf-8")
     before = path.read_text(encoding="utf-8")
-    ok, msg = control.set_enforce(cfg.root, True)
+    ok, msg = control.set_autocut(cfg.root, True)
     assert not ok and "by hand" in msg and path.read_text(encoding="utf-8") == before
 
 
 def test_panel_enforce_lever_fails_closed(conn, cfg, tmp_path):
     """When the file cannot be edited the page keeps showing the file's truth, not the wish."""
     (cfg.root / "config.yaml").write_text("cut: { enforce: false }\n", encoding="utf-8")
-    cfg.cut.enforce = False
+    cfg.autocut.enabled = False
     panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     res = panel.run_action("enforce_on", {})
-    assert not res["ok"] and panel.cfg.cut.enforce is False
+    assert not res["ok"] and panel.cfg.autocut.enabled is False
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
     res = panel.run_action("enforce_on", {})
-    assert res["ok"] and panel.cfg.cut.enforce is True
+    assert res["ok"] and panel.cfg.autocut.enabled is True
 
 
 def test_halt_stops_before_pausing(conn, cfg, monkeypatch):
@@ -290,7 +299,7 @@ def test_schedule_kick_refuses_while_running(conn, cfg):
         msg = control.schedule("kick", "run", data_dir)
     assert msg.startswith("not kicked") and "blast" in msg
     assert "not installed" in control.schedule("kick", "run", data_dir)   # idle: launchd (absent here) is asked
-    assert "control room is paused too" in control.schedule("pause", "all", data_dir)
+    assert "console is paused too" in control.schedule("pause", "all", data_dir)
 
 
 def test_stray_processes_only_this_checkout(tmp_path):
@@ -331,7 +340,7 @@ def test_panel_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
 
     seed_scored(conn, cfg, [dict(n=1, score=90)])
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 33\n", encoding="utf-8")
-    cfg.cut.enforce = False
+    cfg.autocut.enabled = False
     panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

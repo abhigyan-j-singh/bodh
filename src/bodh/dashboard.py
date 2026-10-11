@@ -47,7 +47,7 @@ def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
     for r in conn.execute("SELECT cut_at, cut_mode FROM state WHERE cut_at >= ?", (since,)):
         d = _local_day(r[0], tz)
         if d:
-            per[d]["cut by floor" if r[1] == "floor" else "cut by prune"] += 1
+            per[d]["cut by autocut" if r[1] in ("autocut", "floor") else "cut by prune"] += 1
     for r in conn.execute("SELECT at, kind FROM feedback WHERE at >= ? AND kind IN ('read','star')", (since,)):
         d = _local_day(r[0], tz)
         if d:
@@ -132,7 +132,7 @@ def feeds(conn: sqlite3.Connection, days: int = 30, limit: int = 40) -> list[sql
     since = store.days_ago_iso(days)
     return conn.execute(
         """SELECT a.feed_title, a.folder, COUNT(*) n, COUNT(s.score) judged, AVG(s.score) mean_score,
-                  AVG(CASE WHEN st.status = 'cut' AND st.cut_mode != 'bankruptcy' THEN 1.0 ELSE 0.0 END) cut_share,
+                  AVG(CASE WHEN st.status = 'cut' AND st.cut_mode NOT IN ('clear-old', 'bankruptcy') THEN 1.0 ELSE 0.0 END) cut_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='read') THEN 1.0 ELSE 0.0 END) read_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='star') THEN 1.0 ELSE 0.0 END) star_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='rescue') THEN 1.0 ELSE 0.0 END) rescue_share
@@ -156,7 +156,7 @@ def learnings(conn: sqlite3.Connection, days: int = 7) -> dict[str, list[sqlite3
 
 
 def concept_map(conn: sqlite3.Connection, cfg: Config) -> tuple[list[tuple[str, int]], list[sqlite3.Row]]:
-    since = store.days_ago_iso(cfg.feedback.concept_window_days)
+    since = store.days_ago_iso(cfg.profile.concept_window_days)
     covered = store.concept_counts(conn, ["star", "read", "rescue"], since, limit=30)
     known = {c for c, _ in store.concept_counts(conn, ["star", "read", "rescue"], since, limit=500)}
     recent = store.days_ago_iso(14)
@@ -262,7 +262,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     lessons = learnings(conn)
     covered, frontier = concept_map(conn, cfg)
     hl = health(conn, cfg)
-    learner_text = cfg.read_learner()
+    learner_text = cfg.read_learned()
     versions = store.learner_versions(conn, 2)
     learner_diff = ""
     if len(versions) == 2:
@@ -274,7 +274,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     parts = [f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
              f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
              f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
-             f"unread {hl['unread']} · target {cfg.cut.target_unread} · floor {cfg.cut.default_floor}</div>"]
+             f"unread {hl['unread']} · target {cfg.prune.keep} · floor {cfg.autocut.cutoff}</div>"]
 
     # KPIs
     last_ok = hl["last_ok"]
@@ -295,7 +295,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     parts.append(_bars_svg(fl, ["arrived", "cut by floor", "cut by prune", "read", "starred"],
                            ["#bbb", "#e39b5d", "#c9664a", "#4a90c9", "#e0b800"]))
     parts.append("<p class='muted'>Read and starred are inferred from BazQux read state; a burst of more than "
-                 f"{cfg.breakers.bulk_dismiss_threshold} articles going read at once is counted as a dismissal, not reading.</p>")
+                 f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading.</p>")
 
     parts.append("<h2>Calibration: how often each band gets read</h2><table><tr><th>Band</th><th class='num'>Left unread</th>"
                  "<th class='num'>Read</th><th class='num'>Starred</th></tr>")
@@ -397,7 +397,7 @@ def weekly_note(cfg: Config, conn: sqlite3.Connection, learner_result: dict | No
     misses = near_misses(conn)
     hl = health(conn, cfg)
     lines = [f"# Bodh weekly · {now.strftime('%d %b %Y')}", "",
-             f"Unread now: {hl['unread']} (target {cfg.cut.target_unread}). Spend last 7 days: ${hl['spend_week']:.2f}.", ""]
+             f"Unread now: {hl['unread']} (target {cfg.prune.keep}). Spend last 7 days: ${hl['spend_week']:.2f}.", ""]
     lines.append("## Learnings this week")
     if not lessons:
         lines.append("No reads recorded this week.")

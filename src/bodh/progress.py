@@ -106,8 +106,8 @@ def log_tail(path: Path, n: int = 10) -> list[str]:
 
 def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     """Everything the progress views show, as plain numbers."""
-    version = cfg.scoring.prompt_version
-    skip = cfg.cut.unscored_folders()
+    version = cfg.judge.prompt_version
+    skip = cfg.unjudged_folders()
     midnight = store.local_midnight_iso(cfg.timezone)
     week = store.days_ago_iso(7)
     month = store.days_ago_iso(30)
@@ -115,7 +115,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     unread = _count(conn, "SELECT COUNT(*) FROM state WHERE status = 'unread'")
     judged_unread = _count(conn, "SELECT COUNT(*) FROM state st JOIN scores s ON s.article_id = st.article_id "
                                  "WHERE st.status = 'unread' AND s.prompt_version = ?", (version,))
-    pending_rows = store.unscored_unread_folders(conn, version, cfg.scoring.max_age_days, skip, exclude_inflight=True)
+    pending_rows = store.unscored_unread_folders(conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True)
     pending = len(pending_rows)
     unscored_all = store.unscored_unread_count(conn, version)  # leaves out what the teacher gave up on
     given_up = store.given_up(conn)
@@ -128,9 +128,9 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     low_conf = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
                             "WHERE st.status = 'unread' AND s.confidence = 'low'")
     stand_in = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-                            "WHERE st.status = 'unread' AND s.model != ? AND s.model != 'dedup'", (cfg.models.teacher,))
-    rejudge_rule = None if cfg.scoring.rejudge_min_score is None else (cfg.models.teacher, float(cfg.scoring.rejudge_min_score))
-    rejudge = (store.unscored_unread_count(conn, version, cfg.scoring.max_age_days, skip, exclude_inflight=True,
+                            "WHERE st.status = 'unread' AND s.model != ? AND s.model != 'dedup'", (cfg.models.judge,))
+    rejudge_rule = None if cfg.catch_up.rejudge_at is None else (cfg.models.judge, float(cfg.catch_up.rejudge_at))
+    rejudge = (store.unscored_unread_count(conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True,
                                            rejudge=rejudge_rule) - pending) if rejudge_rule and stand_in else 0
     held = _count(conn, "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
                         "WHERE st.status = 'unread' AND s.second_look_model = 'failed'")
@@ -171,7 +171,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
     ):
         folders.append({"folder": r["folder"] or "(no folder)", "unread": int(r["unread"] or 0),
                         "judged": int(r["judged"] or 0), "good": int(r["good"] or 0), "cut": int(r["cut"] or 0),
-                        "pending": 0, "inflight": 0, "floor": cfg.cut.floor_for(r["folder"]),
+                        "pending": 0, "inflight": 0, "floor": cfg.cutoff_for(r["folder"]),
                         "scored": (r["folder"] or "") not in skip})
     by_name = {f["folder"]: f for f in folders}
     for row in pending_rows:
@@ -194,12 +194,12 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         "at": store.utcnow_iso(),
         "now": datetime.now(ZoneInfo(cfg.timezone)),
         "batch_mode": cfg.models.batch,
-        "max_age_days": cfg.scoring.max_age_days,
+        "max_age_days": cfg.limits.max_age_days,
         "unread": unread, "judged_unread": judged_unread, "pending": pending,
         "inflight": len(inflight_teacher), "inflight_second": len(inflight_second),
         "too_old": too_old, "skipped": skipped, "skip_folders": skip, "low_conf": low_conf, "held": held,
         "given_up": given_up,
-        "stand_in": stand_in, "rejudge": max(0, rejudge), "teacher": cfg.models.teacher,
+        "stand_in": stand_in, "rejudge": max(0, rejudge), "teacher": cfg.models.judge,
         "today": today, "week": seven, "month": thirty, "all_time": all_time,
         "cache_hit": cache_hit, "per_1000": per_1000, "output_tokens_week": tokens[3],
         "folders": folders, "batches": batches, "runs": [dict(r) for r in runs],

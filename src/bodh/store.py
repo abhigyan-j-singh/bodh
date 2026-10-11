@@ -551,6 +551,26 @@ def local_midnight_iso(tz_name: str) -> str:
     return midnight.astimezone(timezone.utc).isoformat()
 
 
+# -- the names shown for stored kinds ------------------------------------------
+# The database keeps the words it was written with; the surfaces show the glossary's.
+
+CUT_MODE_NAMES = {"floor": "autocut", "bankruptcy": "clear-old"}      # state.cut_mode before October 2026
+RUN_KIND_NAMES = {"blast": "catch-up", "bankruptcy": "clear-old", "nudge": "steer"}   # runs.kind before October 2026
+FEEDBACK_KIND_NAMES = {"wrong": "rescue tag", "dismiss": "dismissed", "read": "read"}
+
+
+def cut_mode_name(mode: str | None) -> str:
+    return CUT_MODE_NAMES.get(mode or "", mode or "")
+
+
+def run_kind_name(kind: str | None) -> str:
+    return RUN_KIND_NAMES.get(kind or "", kind or "")
+
+
+def feedback_kind_name(kind: str | None) -> str:
+    return FEEDBACK_KIND_NAMES.get(kind or "", kind or "")
+
+
 # -- feedback and concepts ----------------------------------------------------
 
 # The kinds of feedback, and what they mean to the teacher and the weekly rewrite.

@@ -95,7 +95,7 @@ class Context:
 
     def teacher(self) -> Teacher:
         return Teacher(self.cfg, self.llm, self.conn, context=concept_context(self.conn, self.cfg),
-                       expansion_topics=expansion_topics(self.cfg.read_learner()))
+                       expansion_topics=expansion_topics(self.cfg.read_learned()))
 
 
 def folder_map(client: BazQuxClient) -> dict[str, str | None]:
@@ -106,8 +106,8 @@ def protected_ids(ctx: Context) -> set[str] | None:
     """Members of the Must read smart stream and of protected folders, or None when BazQux
     could not say: nothing may then be cut on that answer, and no protection is withdrawn."""
     try:
-        ids: set[str] = set(ctx.client.label_ids(ctx.cfg.cut.must_read_stream, unread_only=True, strict=True))
-        for name, policy in ctx.cfg.cut.folders.items():
+        ids: set[str] = set(ctx.client.label_ids(ctx.cfg.protect.must_read_stream, unread_only=True, strict=True))
+        for name, policy in ctx.cfg.folders.items():
             if policy.protected:
                 ids |= set(ctx.client.label_ids(name, unread_only=True, strict=True))
     except BazQuxError as exc:
@@ -151,7 +151,7 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
                             "WHERE st.status = 'unread' "
                             "OR (st.status = 'cut' AND (st.cut_tagged = 0 OR st.read_marked = 0))").fetchall()
     prot = {r["id"] for r in rows
-            if (protected is not None and r["id"] in protected) or ctx.cfg.cut.is_protected(r["folder"])}
+            if (protected is not None and r["id"] in protected) or ctx.cfg.is_protected(r["folder"])}
     store.set_flags(ctx.conn, prot, protected=1)
     if protected is not None:
         store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in prot], protected=0)
@@ -165,7 +165,7 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
     starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
     run's limit), so the next scheduled run is not skipped because this one overran."""
     cfg, conn = ctx.cfg, ctx.conn
-    cfg.check_seed()   # before any network: nothing is fetched or recorded for a student who does not exist
+    cfg.check_about()   # before any network: nothing is fetched or recorded for a student who does not exist
     if stop_after is None:
         stop_after = time.monotonic() + RUN_TIMEOUT_SECONDS - RUN_DEADLINE_MARGIN
     run_id = store.begin_run(conn, "run")
@@ -228,8 +228,8 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
                          col["scored"], sub["submitted"], res.inflight, res.pending)
         else:
             phase("judging")
-            stats = teacher.score_pending(run_id, limit=score_limit or cfg.scoring.max_per_run,
-                                          workers=workers or cfg.scoring.workers, on_progress=live,
+            stats = teacher.score_pending(run_id, limit=score_limit or cfg.limits.per_run_sync,
+                                          workers=workers or cfg.limits.parallel_calls, on_progress=live,
                                           stop_after=stop_after)
             if stats["stopped_early"]:
                 res.notes.append("time limit near: the rest waits for the next run")
@@ -246,10 +246,10 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
 
         if enforce:
             phase("applying the floor")
-            if feedback.rescue_rate_week(conn) > cfg.breakers.rescue_rate_week:
-                res.notes.append(f"rescues above {cfg.breakers.rescue_rate_week:.0%} this week; floor lowered to "
-                                 f"{cfg.breakers.lowered_floor}")
-                cfg.cut.default_floor = min(cfg.cut.default_floor, cfg.breakers.lowered_floor)
+            if feedback.rescue_rate_week(conn) > cfg.safety.rescue_rate_week:
+                res.notes.append(f"rescues above {cfg.safety.rescue_rate_week:.0%} this week; floor lowered to "
+                                 f"{cfg.safety.lowered_cutoff}")
+                cfg.autocut.cutoff = min(cfg.autocut.cutoff, cfg.safety.lowered_cutoff)
             sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client,
                                       stop_after=stop_after)
             if sel.blocked:
@@ -257,7 +257,7 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             res.second_looks += sel.second_looks
             res.saved += sel.saved_by_second_look
             res.exploration = sel.reserved_for_exploration
-            res.cut_floor = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, run_id, "floor")
+            res.cut_floor = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, run_id, "autocut")
             res.boundary = sel.boundary
             if sel.held:
                 res.held = teacher.submit_second_looks(run_id, sel.held)
@@ -324,18 +324,18 @@ def blast(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = False,
     teacher later re-judges what the stand-in rated promising (scoring.rejudge_min_score)."""
     cfg, conn = ctx.cfg, ctx.conn
     if all_ages:
-        cfg.scoring.max_age_days = None
+        cfg.limits.max_age_days = None
     if budget is not None:
         cfg.models.daily_budget_usd = max(cfg.models.daily_budget_usd, budget)
-    stand_in = bool(model) and model != cfg.models.teacher
+    stand_in = bool(model) and model != cfg.models.judge
     if model:
-        cfg.models.teacher = model
+        cfg.models.judge = model
     teacher = ctx.teacher()
     teacher.batch_mode = False
     if stand_in:
         teacher.rejudge = None
     ctx.llm.retries(8)
-    run_id = store.begin_run(conn, "blast")
+    run_id = store.begin_run(conn, "catch-up")
     total = {"scored": 0, "dupes": 0, "failed": 0, "rounds": 0, "pending": teacher.pending_count(exclude_inflight=True),
              "budget_stop": False, "started": time.monotonic(), "interrupted": False, "run_id": run_id,
              "timed_out": False}
@@ -398,7 +398,7 @@ def blast(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = False,
             log.exception("blast: tagging failed; the next run finishes it")
         total["elapsed"] = time.monotonic() - total["started"]
         total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
-        summary = (f"blast ({cfg.models.teacher}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
+        summary = (f"blast ({cfg.models.judge}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
                    f"{total['elapsed'] / 60:.1f} min, {total['failed']} failed batches, pending {total['pending']}"
                    + (", interrupted" if total["interrupted"] else "")
                    + (", time limit" if total["timed_out"] else "")
@@ -455,7 +455,7 @@ def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
 def undo_last(ctx: Context) -> tuple[int | None, int]:
     # any run that cut something, finished or interrupted: an interrupted prune has still cut
     row = ctx.conn.execute(
-        "SELECT id FROM runs WHERE kind IN ('run','prune','bankruptcy') "
+        "SELECT id FROM runs WHERE kind IN ('run','prune','clear-old','bankruptcy') "
         "AND id IN (SELECT DISTINCT cut_run_id FROM state WHERE cut_run_id IS NOT NULL) ORDER BY id DESC LIMIT 1"
     ).fetchone()
     if row is None:
@@ -475,7 +475,7 @@ def bankruptcy(ctx: Context, older_than_days: int, dry_run: bool) -> tuple[int, 
         if protected is None:
             raise BazQuxError(refusal)
         return cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id=0, dry_run=True)
-    run_id = store.begin_run(ctx.conn, "bankruptcy")
+    run_id = store.begin_run(ctx.conn, "clear-old")
     try:
         protected = protected_ids(ctx)
         if protected is None:

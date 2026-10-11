@@ -15,9 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field
 
 log = logging.getLogger(__name__)
 
-# the sentence in profile.example/seed.md's opening comment; `bodh doctor` and the teacher
+# the sentence in profile.example/about.md's opening comment; `bodh doctor` and the judge
 # look for it, so the example is never mistaken for a student
-EXAMPLE_SEED_MARKER = "worked example for an invented student"
+EXAMPLE_ABOUT_MARKER = "worked example for an invented student"
 
 
 class Strict(BaseModel):
@@ -27,15 +27,15 @@ class Strict(BaseModel):
 
 
 class FolderPolicy(Strict):
-    protected: bool = False
-    auto_cut_below: int | None = Field(default=None, ge=0, le=100)
-    score: bool = True              # false: never sent to the teacher, never cut (comics, say)
+    protected: bool = False                                  # never cut
+    cutoff: int | None = Field(default=None, ge=0, le=100)   # this folder's own cut-off; None: autocut.cutoff
+    judge: bool = True                                       # false: never sent to the judge, never cut (comics, say)
 
 
 class Models(Strict):
-    teacher: str = "claude-sonnet-5-5"
-    second_look: str = "claude-opus-5-5"
-    learner: str = "claude-opus-5-5"
+    judge: str = "claude-sonnet-5-5"        # reads every article once
+    reviewer: str = "claude-opus-5-5"       # re-reads close calls with the full text; can only save an article
+    profiler: str = "claude-opus-5-5"       # rewrites the learned profile on Sundays
     batch: bool = True              # Message Batches API: half price; judgments arrive on the next run
     batch_discount: float = Field(default=0.5, ge=0.0, le=1.0)
     cache_ttl: str = "1h"           # "5m" or "1h": how long the teacher's cached prefix stays warm between runs
@@ -105,83 +105,91 @@ class Models(Strict):
 _warned_models: set[str] = set()
 
 
-class Scoring(Strict):
-    prompt_version: str = "teacher.v2"
+class Judge(Strict):
+    """What the judge reads and how its judgment becomes a score."""
+
+    prompt_version: str = "teacher.v2"                         # the prompt file in src/bodh/prompts/ (./prompts/ overrides)
     weights: dict[str, float] = Field(
         default_factory=lambda: {"quality": 0.30, "learning": 0.30, "fit": 0.15, "breadth": 0.15, "relevance": 0.10}
     )
-    expansion_bonus: int = Field(default=10, ge=0, le=100)
-    home_angle: str = ""                                    # the student's home ground ("India", say): an article
-                                                            # with that angle gets home_bonus; empty turns the flag off
+    expansion_bonus: int = Field(default=10, ge=0, le=100)     # points for an article on one of this week's expansion topics
+    home_angle: str = ""                                       # the student's home ground ("India", say): an article
+                                                               # with that angle gets home_bonus; empty turns the flag off
     home_bonus: int = Field(default=10, ge=0, le=100)
+    articles_per_call: int = Field(default=20, ge=1, le=100)   # articles in one judge call
+    text_chars: int = Field(default=1200, ge=100)              # the opening the judge sees on the first pass
 
     @field_validator("home_angle")
     @classmethod
     def _home_angle(cls, v: str) -> str:
         return v.strip()   # "  " is off, like ""
-    batch_size: int = Field(default=20, ge=1, le=100)        # articles per teacher call
-    workers: int = Field(default=4, ge=1, le=64)             # synchronous runs: calls in flight at once
-    max_per_run: int = Field(default=400, ge=0)              # synchronous runs: a backlog drains at this rate per run
-    batch_max_per_run: int = Field(default=1200, ge=0)       # batch runs: articles submitted per run
-    max_age_days: int | None = Field(default=14, ge=0)       # older unread articles are never scored
-    rejudge_min_score: float | None = Field(default=50.0, ge=0, le=100)  # another model's judgment at or above
-                                                                         # this is judged again by the teacher
-    opening_chars: int = Field(default=1200, ge=100)
-    second_look_window: int = Field(default=10, ge=0, le=100)
-    second_look_chars: int = Field(default=6000, ge=100)
-    second_look_max_per_run: int = Field(default=50, ge=0)   # synchronous runs: looks per run, so a backlog of
-                                                             # close calls cannot eat the run's fifteen minutes
 
     @field_validator("weights")
     @classmethod
     def _weights_sum(cls, v: dict[str, float]) -> dict[str, float]:
         total = sum(v.values())
         if abs(total - 1.0) > 0.01:
-            raise ValueError(f"scoring.weights must sum to 1.0, got {total:.3f}")
+            raise ValueError(f"judge.weights must sum to 1.0, got {total:.3f}")
         return v
 
 
-class Cut(Strict):
-    enforce: bool = False           # false = shadow mode: score and tag, cut nothing; the safe default
-    target_unread: int = Field(default=40, ge=0)
-    default_floor: int = Field(default=35, ge=0, le=100)
-    max_cuts_per_run: int = Field(default=500, ge=0)
-    concept_cap: float = Field(default=0.25, ge=0.0, le=1.0)
-    exploration_share: float = Field(default=0.20, ge=0.0, le=1.0)
-    must_read_stream: str = Field(default="Must read", min_length=1)
-    folders: dict[str, FolderPolicy] = Field(default_factory=dict)
+class Review(Strict):
+    """The second reading of a close call by the reviewer, with the full text."""
 
-    def floor_for(self, folder: str | None) -> int | None:
-        """The automatic floor for a folder; None means never cut automatically."""
-        policy = self.folders.get(folder or "")
-        if policy is None:
-            return self.default_floor
-        if policy.protected:
-            return None
-        return policy.auto_cut_below if policy.auto_cut_below is not None else self.default_floor
+    window: int = Field(default=10, ge=0, le=100)      # a candidate within this many points of the cut-off is reviewed
+    chars: int = Field(default=6000, ge=100)            # the text the reviewer sees
+    max_per_run: int = Field(default=50, ge=0)          # synchronous runs: reviews per run, so a backlog of close
+                                                        # calls cannot eat the run's fifteen minutes
 
-    def is_protected(self, folder: str | None) -> bool:
-        policy = self.folders.get(folder or "")
-        return bool(policy and policy.protected)
 
-    def unscored_folders(self) -> list[str]:
-        """Folders the teacher never reads (``score: false``)."""
-        return [name for name, policy in self.folders.items() if not policy.score]
+class CatchUp(Strict):
+    """One deliberate pass over everything pending, usually with the quick judge."""
+
+    model: str = "claude-haiku-5-5"                                  # the quick judge `bodh catch-up` uses by default
+    rejudge_at: float | None = Field(default=50.0, ge=0, le=100)     # what the quick judge rates at or above this,
+                                                                     # the judge reads again; null turns it off
+
+
+class Limits(Strict):
+    per_run_sync: int = Field(default=400, ge=0)          # synchronous runs: articles judged per run
+    per_run_batch: int = Field(default=1200, ge=0)        # batch runs: articles submitted per run
+    parallel_calls: int = Field(default=4, ge=1, le=64)   # synchronous runs: model calls in flight at once
+    max_age_days: int | None = Field(default=14, ge=0)    # older unread articles are never judged; clear-old is for them
+
+
+class Autocut(Strict):
+    """The automatic cut every run makes below the cut-off, when it is enabled."""
+
+    enabled: bool = False                                        # false = scoring-only mode: judge and tag, cut nothing
+    cutoff: int = Field(default=35, ge=0, le=100)                # the cut-off for folders without their own
+    max_per_run: int = Field(default=500, ge=0)                  # a broken prompt costs one undo, not a library
+    new_ground_share: float = Field(default=0.20, ge=0.0, le=1.0)  # share of what autocut leaves kept for new ground
+
+
+class Prune(Strict):
+    """The student's own cut."""
+
+    keep: int = Field(default=40, ge=0)                                  # `bodh prune` with no arguments keeps this many
+    max_share_per_concept: float = Field(default=0.25, ge=0.0, le=1.0)  # no concept may hold more of the survivors
+
+
+class Protect(Strict):
+    must_read_stream: str = Field(default="Must read", min_length=1)   # the BazQux smart stream never cut
 
 
 class Tags(Strict):
-    buckets: dict[int, str] = Field(
+    bands: dict[int, str] = Field(
         default_factory=lambda: {90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0"}
     )
     cut: str = "cut"
     # commands: the run acts on them and removes them
-    wrong: str = "wrong"             # a cut article you wanted: back to unread, and a strong positive
-    prune: str = "prune"             # on any article: the next enforcing run prunes to the target
+    rescue: str = "rescue"           # a cut article you wanted: back to unread, never cut again (was `wrong`, still read)
+    prune: str = "prune"             # on any article: the next run with autocut prunes to prune.keep
     # verdicts: your opinion of an article, left on it as your record, recorded once
     great: str = "great"             # the best kind: more like this, and the eval gate protects it
     good: str = "good"               # worth the time
     meh: str = "meh"                 # not worth it
-    bad: str = "bad"                 # junk; the teacher was wrong to keep it
+    bad: str = "bad"                 # junk; the judge was wrong to keep it
     basic: str = "basic"             # too elementary for you
     heavy: str = "heavy"             # too dense or too specialist for you now
     more: str = "more"               # more of this article's concept, from the next run
@@ -189,9 +197,9 @@ class Tags(Strict):
 
     @model_validator(mode="after")
     def _distinct(self) -> Tags:
-        if not self.buckets:
-            raise ValueError("tags.buckets must name at least one bucket")
-        names = [*self.buckets.values(), self.cut, self.wrong, self.prune, *self.verdict_tags().values()]
+        if not self.bands:
+            raise ValueError("tags.bands must name at least one band")
+        names = [*self.bands.values(), self.cut, self.rescue, self.prune, *self.verdict_tags().values()]
         if any(not n or not n.strip() for n in names):
             raise ValueError("every tag name must be non-empty")
         if len(set(names)) != len(names):
@@ -203,23 +211,33 @@ class Tags(Strict):
         """feedback kind -> tag name, for the tags that carry an opinion."""
         return {k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")}
 
-    def bucket_for(self, score: float) -> str:
-        for threshold in sorted(self.buckets, reverse=True):
+    def band_for(self, score: float) -> str:
+        for threshold in sorted(self.bands, reverse=True):
             if score >= threshold:
-                return self.buckets[threshold]
-        return self.buckets[min(self.buckets)]
+                return self.bands[threshold]
+        return self.bands[min(self.bands)]
+
+    def rescue_tags(self) -> list[str]:
+        """The rescue tag and, for as long as people may have it on articles, its old name."""
+        return [self.rescue] + ([LEGACY_RESCUE_TAG] if self.rescue != LEGACY_RESCUE_TAG else [])
 
 
-class Breakers(Strict):
-    max_cut_share: float = Field(default=0.95, ge=0.0, le=1.0)
-    min_new_for_breaker: int = Field(default=50, ge=1)
-    rescue_rate_week: float = Field(default=0.05, ge=0.0, le=1.0)
-    lowered_floor: int = Field(default=25, ge=0, le=100)
-    bulk_dismiss_threshold: int = Field(default=30, ge=1)
+LEGACY_RESCUE_TAG = "wrong"   # the rescue tag's name before October 2026; read forever, written never
 
 
-class Feedback(Strict):
-    concept_window_days: int = Field(default=90, ge=1)
+class Safety(Strict):
+    """The limits that stop a broken judge from cutting."""
+
+    max_cut_share: float = Field(default=0.95, ge=0.0, le=1.0)   # a run that would cut more than this share of...
+    min_judged: int = Field(default=50, ge=1)                    # ...at least this many newly judged articles stops
+    rescue_rate_week: float = Field(default=0.05, ge=0.0, le=1.0)  # rescues above this share of a week's cuts...
+    lowered_cutoff: int = Field(default=25, ge=0, le=100)        # ...lower the cut-off to this until they fall
+    mark_all_read_threshold: int = Field(default=30, ge=1)       # this many kept articles going read in one run is
+                                                                 # mark-all-as-read, not that many reads
+
+
+class Profile(Strict):
+    concept_window_days: int = Field(default=90, ge=1)   # how far back stars, reads and verdicts count as what you know
 
 
 def _zone_name_ok(name: str | None) -> bool:
@@ -276,15 +294,44 @@ class Config(Strict):
     dashboard_dir: Path = Path("./dashboard")
     obsidian_note: str = ""
     models: Models = Field(default_factory=Models)
-    scoring: Scoring = Field(default_factory=Scoring)
-    cut: Cut = Field(default_factory=Cut)
+    judge: Judge = Field(default_factory=Judge)
+    review: Review = Field(default_factory=Review)
+    catch_up: CatchUp = Field(default_factory=CatchUp)
+    limits: Limits = Field(default_factory=Limits)
+    autocut: Autocut = Field(default_factory=Autocut)
+    prune: Prune = Field(default_factory=Prune)
+    protect: Protect = Field(default_factory=Protect)
+    folders: dict[str, FolderPolicy] = Field(default_factory=dict)   # your BazQux folders, by their exact names
+    safety: Safety = Field(default_factory=Safety)
     tags: Tags = Field(default_factory=Tags)
-    breakers: Breakers = Field(default_factory=Breakers)
-    feedback: Feedback = Field(default_factory=Feedback)
+    profile: Profile = Field(default_factory=Profile)
 
     # populated by load_config
     root: Path = Path(".")
     _timezone_from_file: bool = PrivateAttr(default=False)
+    _old_keys: list[str] = PrivateAttr(default_factory=list)
+
+    def cutoff_for(self, folder: str | None) -> int | None:
+        """The automatic cut-off for a folder; None means never cut automatically."""
+        policy = self.folders.get(folder or "")
+        if policy is None:
+            return self.autocut.cutoff
+        if policy.protected:
+            return None
+        return policy.cutoff if policy.cutoff is not None else self.autocut.cutoff
+
+    def is_protected(self, folder: str | None) -> bool:
+        policy = self.folders.get(folder or "")
+        return bool(policy and policy.protected)
+
+    def unjudged_folders(self) -> list[str]:
+        """Folders the judge never reads (``judge: false``)."""
+        return [name for name, policy in self.folders.items() if not policy.judge]
+
+    @property
+    def old_keys(self) -> list[str]:
+        """The old key names config.yaml still uses, as "old -> new", for `bodh doctor`."""
+        return list(self._old_keys)
 
     @field_validator("timezone")
     @classmethod
@@ -310,35 +357,45 @@ class Config(Strict):
         new = data / "bodh.db"
         return old if old.exists() and not new.exists() else new
 
-    @property
-    def seed_path(self) -> Path:
-        return (self.root / self.profile_dir / "seed.md").resolve()
+    def _profile_file(self, name: str, old_name: str) -> Path:
+        """profile/<name>, or profile/<old_name> while an install from before the rename still has
+        it under the old name (install.sh renames both on the next update)."""
+        folder = (self.root / self.profile_dir).resolve()
+        if not (folder / name).exists() and (folder / old_name).exists():
+            return folder / old_name
+        return folder / name
 
     @property
-    def learner_path(self) -> Path:
-        return (self.root / self.profile_dir / "learner.md").resolve()
+    def about_path(self) -> Path:
+        """profile/about.md: who the student is, written by the student (was seed.md)."""
+        return self._profile_file("about.md", "seed.md")
+
+    @property
+    def learned_path(self) -> Path:
+        """profile/learned.md: what the profiler has learned, rewritten weekly (was learner.md)."""
+        return self._profile_file("learned.md", "learner.md")
 
     @property
     def obsidian_path(self) -> Path | None:
         return Path(os.path.expanduser(self.obsidian_note)).resolve() if self.obsidian_note else None
 
-    def read_seed(self) -> str:
-        return self.seed_path.read_text(encoding="utf-8").strip() if self.seed_path.exists() else ""
+    def read_about(self) -> str:
+        return self.about_path.read_text(encoding="utf-8").strip() if self.about_path.exists() else ""
 
-    def check_seed(self) -> None:
-        """Before any work for the student: a seed that is still the worked example is refused."""
-        if self.seed_is_example():
-            raise ConfigError("profile/seed.md is still the worked example: the teacher will not judge for an "
-                              "invented student. Replace it with your own seed (`bodh doctor` explains)")
+    def check_about(self) -> None:
+        """Before any work for the student: an about file that is still the worked example is refused."""
+        if self.about_is_example():
+            raise ConfigError("profile/about.md is still the worked example: the judge will not judge for an "
+                              "invented student. Replace it with your own (`bodh doctor` explains)")
 
-    def seed_is_example(self) -> bool:
-        """profile.example/seed.md describes an invented student and says so in a comment at the
-        top; a seed that still carries that comment is nobody's, and the teacher must not judge
-        for it. The comment, not the text: a student may well keep the example's shape."""
-        return EXAMPLE_SEED_MARKER in " ".join(self.read_seed().split())  # however an editor wrapped it
+    def about_is_example(self) -> bool:
+        """profile.example/about.md describes an invented student and says so in a comment at the
+        top; a file that still carries that comment is nobody's, and the judge must not judge for
+        it. The comment, not the text: a student may well keep the example's shape."""
+        return EXAMPLE_ABOUT_MARKER in " ".join(self.read_about().split())  # however an editor wrapped it
 
-    def read_learner(self) -> str:
-        return self.learner_path.read_text(encoding="utf-8").strip() if self.learner_path.exists() else ""
+    def read_learned(self) -> str:
+        return self.learned_path.read_text(encoding="utf-8").strip() if self.learned_path.exists() else ""
 
 
 class Secrets(BaseModel):
@@ -393,6 +450,94 @@ def find_root(start: Path | None = None) -> Path:
                       "run from the bodh folder, or set BODH_HOME")
 
 
+# The key names before October 2026 and where each moved. Read for one release: a file that
+# still uses them loads with a warning, and `bodh doctor` lists every one with its new name.
+OLD_KEYS: dict[tuple[str, str], tuple[str | None, str]] = {
+    ("models", "teacher"): ("models", "judge"),
+    ("models", "second_look"): ("models", "reviewer"),
+    ("models", "learner"): ("models", "profiler"),
+    ("scoring", "prompt_version"): ("judge", "prompt_version"),
+    ("scoring", "weights"): ("judge", "weights"),
+    ("scoring", "expansion_bonus"): ("judge", "expansion_bonus"),
+    ("scoring", "home_angle"): ("judge", "home_angle"),
+    ("scoring", "home_bonus"): ("judge", "home_bonus"),
+    ("scoring", "batch_size"): ("judge", "articles_per_call"),
+    ("scoring", "opening_chars"): ("judge", "text_chars"),
+    ("scoring", "second_look_window"): ("review", "window"),
+    ("scoring", "second_look_chars"): ("review", "chars"),
+    ("scoring", "second_look_max_per_run"): ("review", "max_per_run"),
+    ("scoring", "rejudge_min_score"): ("catch_up", "rejudge_at"),
+    ("scoring", "max_per_run"): ("limits", "per_run_sync"),
+    ("scoring", "batch_max_per_run"): ("limits", "per_run_batch"),
+    ("scoring", "workers"): ("limits", "parallel_calls"),
+    ("scoring", "max_age_days"): ("limits", "max_age_days"),
+    ("cut", "enforce"): ("autocut", "enabled"),
+    ("cut", "default_floor"): ("autocut", "cutoff"),
+    ("cut", "max_cuts_per_run"): ("autocut", "max_per_run"),
+    ("cut", "exploration_share"): ("autocut", "new_ground_share"),
+    ("cut", "target_unread"): ("prune", "keep"),
+    ("cut", "concept_cap"): ("prune", "max_share_per_concept"),
+    ("cut", "must_read_stream"): ("protect", "must_read_stream"),
+    ("cut", "folders"): (None, "folders"),
+    ("breakers", "max_cut_share"): ("safety", "max_cut_share"),
+    ("breakers", "min_new_for_breaker"): ("safety", "min_judged"),
+    ("breakers", "rescue_rate_week"): ("safety", "rescue_rate_week"),
+    ("breakers", "lowered_floor"): ("safety", "lowered_cutoff"),
+    ("breakers", "bulk_dismiss_threshold"): ("safety", "mark_all_read_threshold"),
+    ("tags", "buckets"): ("tags", "bands"),
+    ("tags", "wrong"): ("tags", "rescue"),
+    ("feedback", "concept_window_days"): ("profile", "concept_window_days"),
+}
+OLD_FOLDER_KEYS = {"auto_cut_below": "cutoff", "score": "judge"}
+OLD_SECTIONS = ("scoring", "cut", "breakers", "feedback")
+
+
+def modernise_keys(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The mapping with every old key name moved to its new place. Returns it with the list of
+    moves made ("cut.enforce -> autocut.enabled"). A key given under both names is an error:
+    the file must say one thing."""
+    import copy
+
+    data = copy.deepcopy(raw)
+    moves: list[str] = []
+
+    def _place(section: str | None, key: str, value: Any, origin: str) -> None:
+        target = data if section is None else data.setdefault(section, {})
+        if not isinstance(target, dict):
+            raise ConfigError(f"config.yaml: `{section}` must be a mapping to hold `{key}` (moved from `{origin}`)")
+        if key in target:
+            raise ConfigError(f"config.yaml sets both `{origin}` and its new name "
+                              f"`{section + '.' if section else ''}{key}`; keep one")
+        target[key] = value
+
+    for (old_section, old_key), (section, key) in OLD_KEYS.items():
+        holder = data.get(old_section)
+        if isinstance(holder, dict) and old_key in holder:
+            value = holder.pop(old_key)
+            _place(section, key, value, f"{old_section}.{old_key}")
+            moves.append(f"{old_section}.{old_key} -> {section + '.' if section else ''}{key}")
+    for old_section in OLD_SECTIONS:
+        holder = data.get(old_section)
+        if isinstance(holder, dict) and not holder:
+            del data[old_section]
+        elif holder is not None:
+            keys = ", ".join(sorted(holder)) if isinstance(holder, dict) else str(holder)
+            raise ConfigError(f"config.yaml: the section `{old_section}` is gone (its keys moved; see docs/glossary.md "
+                              f"and CHANGELOG.md); these are not known: {keys}")
+    folders = data.get("folders")
+    if isinstance(folders, dict):
+        for name, policy in folders.items():
+            if not isinstance(policy, dict):
+                continue
+            for old_key, key in OLD_FOLDER_KEYS.items():
+                if old_key in policy:
+                    if key in policy:
+                        raise ConfigError(f"config.yaml: folder {name!r} sets both `{old_key}` and `{key}`; keep one")
+                    policy[key] = policy.pop(old_key)
+                    moves.append(f"folders.{name}.{old_key} -> folders.{name}.{key}")
+    return data, moves
+
+
 def load_config(root: Path | None = None) -> Config:
     root = root or find_root()
     path = root / "config.yaml"
@@ -401,9 +546,15 @@ def load_config(root: Path | None = None) -> Config:
     raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} must hold a mapping of sections, not {type(raw).__name__}")
+    raw, old_keys = modernise_keys(raw)
+    if old_keys:
+        shown = ", ".join(old_keys[:3]) + (f" and {len(old_keys) - 3} more" if len(old_keys) > 3 else "")
+        log.warning("config.yaml uses %d old key name(s): %s; `bodh doctor` lists them all, and they stop "
+                    "working in the next release", len(old_keys), shown)
     cfg = Config(**raw)
     cfg.root = root
     cfg._timezone_from_file = bool(str(raw.get("timezone") or "").strip())
+    cfg._old_keys = old_keys
     (cfg.root / cfg.data_dir).mkdir(parents=True, exist_ok=True)
     return cfg
 

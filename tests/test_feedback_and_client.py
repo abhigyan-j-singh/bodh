@@ -11,14 +11,14 @@ from bodh.ids import short_to_long
 
 
 def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
-    cfg.breakers.bulk_dismiss_threshold = 3
+    cfg.safety.mark_all_read_threshold = 3
     ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 4}", crawled_msec=None) for i in range(1, 8)])
     # the student read two of them (no longer unread upstream), two others got cut by us earlier
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[5:7], run_id, "floor")
     store.set_flags(conn, ids[5:7], cut_tagged=1, read_marked=1)
     unread_now = set(ids[2:5]) | {ids[5]}  # ids[0], ids[1] were read; ids[5] (cut) is unread again: a rescue
-    client = FakeClient(labels={cfg.tags.wrong: [], cfg.tags.meh: [ids[3]], cfg.tags.prune: [ids[4]]})
+    client = FakeClient(labels={cfg.tags.rescue: [], cfg.tags.meh: [ids[3]], cfg.tags.prune: [ids[4]]})
     stats = feedback.collect(client, conn, cfg, unread_now, starred_now={ids[2]})
     assert stats["reads"] == 2 and stats["dismissed"] == 0
     assert stats["rescues"] == 1 and stats["verdicts"] == 1 and stats["prune_requested"] is True
@@ -33,7 +33,7 @@ def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
 
 
 def test_bulk_dismiss(conn, cfg):
-    cfg.breakers.bulk_dismiss_threshold = 3
+    cfg.safety.mark_all_read_threshold = 3
     ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 3}", crawled_msec=None) for i in range(1, 6)])
     client = FakeClient()
     stats = feedback.collect(client, conn, cfg, unread_now=set(), starred_now=set())
@@ -161,10 +161,10 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     assert store.verdicts(conn, store.STEERS) == {ids[4]: "more", ids[5]: "less"}
     assert stats["verdicts"] == 6 and stats["steers"] == 2
     # the tags stay on the articles: nothing untagged but the commands
-    assert all(name in (cfg.tags.cut, cfg.tags.wrong, cfg.tags.prune) for name, _ in client.untagged)
+    assert all(name in (cfg.tags.cut, cfg.tags.rescue, cfg.tags.prune) for name, _ in client.untagged)
     # the steers reached the learner model, with the article's concept, in one version
     text = (tmp_path / "profile" / "learner.md").read_text(encoding="utf-8")
-    assert "wants more on concept 5" in text and "wants less of concept 6" in text and "## Nudges" in text
+    assert "wants more on concept 5" in text and "wants less of concept 6" in text and "## Steers" in text
     assert len(store.learner_versions(conn, 10)) == 2  # initial + one nudge version
     # a second run with the same tags changes nothing and nudges nothing
     stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
