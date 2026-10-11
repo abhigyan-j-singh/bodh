@@ -362,21 +362,9 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
     snap = progress.snapshot(conn, cfg)
     untagged, unmarked = store.cut_pending(conn)
     runs = [dict(r) for r in store.last_runs(conn, 15)]
-    last_ok = next((r for r in runs if r["ok"] and r["kind"] == "run"), None)
-    last_err = next((r for r in runs if not r["ok"] and (r["error"] or r["finished_at"])), None)
     if jobs is None:
         jobs = {name: job_state(label) for name, label in JOBS.items()}
-    spend_today = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     now = time.time()
-    next_run = None
-    if proc is None and jobs["run"]["loaded"] and jobs["run"]["state"] != "running":
-        interval = jobs["run"]["interval"] or 1800
-        last_timer_run = next(
-            (r for r in runs if r["kind"] == "run"), None
-        )  # a prune or an undo is not the timer
-        last_start = _parse_ts(last_timer_run["started_at"]) if last_timer_run else None
-        if last_start:
-            next_run = max(0.0, interval - (now - last_start))
     return {
         "now": store.utcnow_iso(),
         "panel": console_state(cfg),
@@ -388,19 +376,8 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
         else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
         "jobs": jobs,
         "launchctl": launchctl_available(),
-        "next_run_in": next_run,
-        "config": {
-            "judge": cfg.models.judge,
-            "reviewer": cfg.models.reviewer,
-            "profiler": cfg.models.profiler,
-            "budget": cfg.models.daily_budget_usd,
-            "target": cfg.prune.keep,
-            "floor": cfg.autocut.cutoff,
-            "max_age_days": cfg.limits.max_age_days,
-            "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
-            "root": str(cfg.root),
-            "heartbeat": bool(os.environ.get("HEALTHCHECK_URL")),
-        },
+        "next_run_in": _next_run_in(proc, jobs, runs, now),
+        "config": _config_summary(cfg),
         "pile": {
             "unread": snap["unread"],
             "judged": snap["judged_unread"],
@@ -413,7 +390,7 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
         },
         "cuts_pending": {"untagged": len(untagged), "unmarked": len(unmarked)},
         "spend": {
-            "today": spend_today,
+            "today": store.spent_since(conn, store.local_midnight_iso(cfg.timezone)),
             "week": snap["week"]["spend"],
             "all": snap["all_time"]["spend"],
             "per_1000": snap["per_1000"],
@@ -423,10 +400,38 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
         "rate_per_min": snap.get("rate_per_min", 0.0),
         "eta_min": snap.get("eta_min"),
         "runs": runs,
-        "last_ok": last_ok,
-        "last_error": last_err,
+        "last_ok": next((r for r in runs if r["ok"] and r["kind"] == "run"), None),
+        "last_error": next((r for r in runs if not r["ok"] and (r["error"] or r["finished_at"])), None),
         "batches": snap["batches"],
         "log": progress.log_tail(logs.log_file(data_dir), 10),  # local only: the console never leaves the Mac
+    }
+
+
+def _next_run_in(
+    proc: dict[str, Any] | None, jobs: dict[str, Any], runs: list[dict[str, Any]], now: float
+) -> float | None:
+    """Seconds until launchd fires the run job again, from the last timer run (a prune or an
+    undo is not the timer); None while a run is going or the job is not loaded."""
+    if proc is not None or not jobs["run"]["loaded"] or jobs["run"]["state"] == "running":
+        return None
+    interval = jobs["run"]["interval"] or 1800
+    last_timer_run = next((r for r in runs if r["kind"] == "run"), None)
+    last_start = _parse_ts(last_timer_run["started_at"]) if last_timer_run else None
+    return max(0.0, interval - (now - last_start)) if last_start else None
+
+
+def _config_summary(cfg: Config) -> dict[str, Any]:
+    return {
+        "judge": cfg.models.judge,
+        "reviewer": cfg.models.reviewer,
+        "profiler": cfg.models.profiler,
+        "budget": cfg.models.daily_budget_usd,
+        "target": cfg.prune.keep,
+        "floor": cfg.autocut.cutoff,
+        "max_age_days": cfg.limits.max_age_days,
+        "folders": {k: v.model_dump() for k, v in cfg.folders.items()},
+        "root": str(cfg.root),
+        "heartbeat": bool(os.environ.get("HEALTHCHECK_URL")),
     }
 
 
@@ -446,12 +451,25 @@ def _parse_ts(iso: str | None) -> float | None:
 
 def render_status_text(st: dict[str, Any]) -> str:
     """The whole picture for the terminal (`bodh status`)."""
-    lines = []
+    lines = [*_status_state_lines(st), *_status_schedule_lines(st), *_status_work_lines(st)]
+    if st["last_error"]:
+        e = st["last_error"]
+        lines.append(
+            f"last problem: {(e['started_at'] or '')[:16]} {e['kind']}: {(e['error'] or e['summary'] or '')[:140]}"
+        )
+    lines += ["", "last runs:"]
+    for r in st["runs"][:10]:
+        ok = "ok " if r["ok"] else ("…  " if not r["finished_at"] else "ERR")
+        lines.append(
+            f"  {(r['started_at'] or '')[:16]} {ok} {store.run_kind_name(r['kind']):<10} {(r['summary'] or r['error'] or '')[:150]}"
+        )
+    return "\n".join(lines)
+
+
+def _status_state_lines(st: dict[str, Any]) -> list[str]:
     r = st["running"]
     if r:
-        lines.append(
-            f"● {r['kind']} RUNNING for {r['elapsed'] / 60:.1f} min (pid {r['pid']}) · {r['phase'] or 'working'}"
-        )
+        first = f"● {r['kind']} RUNNING for {r['elapsed'] / 60:.1f} min (pid {r['pid']}) · {r['phase'] or 'working'}"
     else:
         nxt = st["next_run_in"]
         when = (
@@ -459,15 +477,20 @@ def render_status_text(st: dict[str, Any]) -> str:
             if nxt is not None
             else "no scheduled run pending"
         )
-        lines.append(f"○ idle · {when}")
-    lines.append(
-        f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'scoring-only' else ' (autocut cuts below the cut-off)'} · "
-        f"{'batch' if st['batch_mode'] else 'synchronous'} judging · judge {st['config']['judge']}"
-    )
+        first = f"○ idle · {when}"
+    mode = " (nothing is cut)" if st["mode"] == "scoring-only" else " (autocut cuts below the cut-off)"
+    lines = [
+        first,
+        f"mode: {st['mode']}{mode} · {'batch' if st['batch_mode'] else 'synchronous'} judging · judge {st['config']['judge']}",
+    ]
     if st.get("safety_tripped"):
         lines.append(
             f"SAFETY LIMIT TRIPPED in run {st['safety_tripped']}: autocut cuts nothing until `bodh safety reset`"
         )
+    return lines
+
+
+def _status_schedule_lines(st: dict[str, Any]) -> list[str]:
     j = st["jobs"]
 
     def jstate(name: str) -> str:
@@ -477,9 +500,9 @@ def render_status_text(st: dict[str, Any]) -> str:
         extra = f", last exit {s['last_exit']}" if s["last_exit"] not in (None, 0) else ""
         return f"{s['state']}{extra}"
 
-    lines.append(
+    lines = [
         f"schedule: run {jstate('run')} · weekly {jstate('weekly')} · report {jstate('report')} · console {jstate('console')}"
-    )
+    ]
     pn = st.get("panel") or {}
     if pn.get("up"):
         lines.append(f"console: up at {pn['url']}")
@@ -489,13 +512,17 @@ def render_status_text(st: dict[str, Any]) -> str:
             f"console: not answering at {pn.get('url', 'http://127.0.0.1:8766')}{why} · "
             "start it with `bodh console` (foreground) or ./install-launchd.sh"
         )
+    return lines
+
+
+def _status_work_lines(st: dict[str, Any]) -> list[str]:
     p = st["pile"]
-    lines.append(
+    lines = [
         f"unread {p['unread']:,} · judged {p['judged']:,} · with the model {p['inflight']:,} · pending {p['pending']:,}"
         + (f" · {p['too_old']:,} older than the window" if p["too_old"] else "")
         + (f" · {p['rejudge']:,} await the judge's second reading" if p["rejudge"] else "")
         + f" · prune keeps {st['config']['target']} · cut-off {st['config']['floor']}"
-    )
+    ]
     c = st["cuts_pending"]
     if c["untagged"] or c["unmarked"]:
         lines.append(
@@ -511,16 +538,4 @@ def render_status_text(st: dict[str, Any]) -> str:
     )
     t = st["today"]
     lines.append(f"today: arrived {t['arrived']:,} · judged {t['judged']:,} · cut {t['cut']:,}")
-    if st["last_error"]:
-        e = st["last_error"]
-        lines.append(
-            f"last problem: {(e['started_at'] or '')[:16]} {e['kind']}: {(e['error'] or e['summary'] or '')[:140]}"
-        )
-    lines.append("")
-    lines.append("last runs:")
-    for r in st["runs"][:10]:
-        ok = "ok " if r["ok"] else ("…  " if not r["finished_at"] else "ERR")
-        lines.append(
-            f"  {(r['started_at'] or '')[:16]} {ok} {store.run_kind_name(r['kind']):<10} {(r['summary'] or r['error'] or '')[:150]}"
-        )
-    return "\n".join(lines)
+    return lines

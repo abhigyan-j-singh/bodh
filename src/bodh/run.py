@@ -489,18 +489,7 @@ def catch_up(
         judge.rejudge = None
     ctx.llm.retries(8)
     run_id = store.begin_run(conn, "catch-up")
-    total: dict[str, Any] = {
-        "scored": 0,
-        "dupes": 0,
-        "failed": 0,
-        "rounds": 0,
-        "pending": judge.pending_count(exclude_inflight=True),
-        "budget_stop": False,
-        "started": time.monotonic(),
-        "interrupted": False,
-        "run_id": run_id,
-        "timed_out": False,
-    }
+    total = _catch_up_totals(run_id, judge.pending_count(exclude_inflight=True))
     deadline = total["started"] + max_seconds if max_seconds else None
     live = progress.live_writer(cfg, conn)
     current: dict[str, Any] = {}
@@ -528,6 +517,21 @@ def catch_up(
     finally:
         _catch_up_close(ctx, judge, run_id, total)
     return total
+
+
+def _catch_up_totals(run_id: int, pending: int) -> dict[str, Any]:
+    return {
+        "scored": 0,
+        "dupes": 0,
+        "failed": 0,
+        "rounds": 0,
+        "pending": pending,
+        "budget_stop": False,
+        "started": time.monotonic(),
+        "interrupted": False,
+        "run_id": run_id,
+        "timed_out": False,
+    }
 
 
 def _catch_up_rounds(

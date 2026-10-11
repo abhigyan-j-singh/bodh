@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -110,45 +110,52 @@ def has_more_to_read(row: sqlite3.Row | dict[str, Any], cfg: Config) -> bool:
     return int(length or 0) > cfg.judge.text_chars + 200
 
 
-class _ReviewFeeder:
-    """Keeps at most ``workers`` reviews running and nothing queued behind them, so a budget
-    or a deadline stops the submissions, never a review already paid for."""
+class _Feeder:
+    """Keeps at most ``workers`` model calls running and nothing queued behind them, so a
+    budget or a deadline stops the submissions at once, never a call already paid for.
+    ``submit(item)`` starts one call (None skips the item); the budget and the deadline are
+    checked before every start."""
 
     def __init__(
         self,
-        judge: Judge,
-        pool: ThreadPoolExecutor,
-        todo: list[sqlite3.Row],
-        run_id: int | None,
+        items: list[Any],
+        submit: Callable[[Any], Any | None],
         workers: int,
+        budget_left: Callable[[], float],
         stop_after: float | None,
     ) -> None:
-        self.judge = judge
-        self.pool = pool
-        self.queue = list(todo)
-        self.run_id = run_id
+        self.queue = list(items)
+        self.submit = submit
         self.workers = workers
+        self.budget_left = budget_left
         self.stop_after = stop_after
-        self.futures: dict[Any, sqlite3.Row] = {}
+        self.futures: dict[Any, Any] = {}
         self.running: set[Any] = set()
         self.budget_hit = False
+        self.stopped_early = False
 
     def feed(self) -> None:
         while self.queue and len(self.running) < self.workers:
-            if self.judge.llm.budget_left() <= 0:
+            if self.budget_left() <= 0:
                 self.budget_hit = True
                 self.queue.clear()
                 return
             if self.stop_after is not None and time.monotonic() > self.stop_after:
+                self.stopped_early = True
                 self.queue.clear()
                 return
-            row = self.queue.pop(0)
-            full = store.article(self.judge.conn, row["id"])
-            if full is None:
+            item = self.queue.pop(0)
+            fut = self.submit(item)
+            if fut is None:
                 continue
-            fut = self.pool.submit(self.judge.review, full, self.run_id)
-            self.futures[fut] = row
+            self.futures[fut] = item
             self.running.add(fut)
+
+    def next_done(self) -> tuple[Any, Any]:
+        """Wait for one running call; returns (future, item) and forgets it."""
+        done = next(as_completed(list(self.running)))
+        self.running.discard(done)
+        return done, self.futures[done]
 
 
 class Judge:
@@ -295,39 +302,25 @@ class Judge:
         stats["total"] = len(todo)
         size = self.cfg.judge.articles_per_call
         batches = [todo[i : i + size] for i in range(0, len(todo), size)]
-        workers = max(1, workers)
-        pool = ThreadPoolExecutor(max_workers=workers)
+        pool = ThreadPoolExecutor(max_workers=max(1, workers))
+        feeder = _Feeder(
+            batches,
+            lambda b: pool.submit(self.judge_batch, b, run_id),
+            max(1, workers),
+            self.llm.budget_left,
+            stop_after,
+        )
         try:
-            futures = {}
-            queue = list(enumerate(batches))
-            running: set[Any] = set()
-
-            def feed() -> None:
-                # at most one call per worker in flight and nothing queued behind it, so the
-                # deadline and the budget stop new calls at once, not after a backlog drains
-                while queue and len(running) < workers:
-                    if self.llm.budget_left() <= 0:
-                        stats["budget_stop"] = True
-                        queue.clear()
-                        return
-                    if stop_after is not None and time.monotonic() > stop_after:
-                        stats["stopped_early"] = True
-                        queue.clear()
-                        return
-                    bi, batch = queue.pop(0)
-                    fut = pool.submit(self.judge_batch, batch, run_id)
-                    futures[fut] = bi
-                    running.add(fut)
-
-            feed()
-            while running:
-                done = next(as_completed(list(running)))
-                running.discard(done)
-                self._absorb_future(done, batches[futures[done]], stats, on_progress, len(todo))
-                feed()  # after the absorb: a rejection or an interrupt must not let one more call out
+            feeder.feed()
+            while feeder.running:
+                done, batch = feeder.next_done()
+                self._absorb_future(done, batch, stats, on_progress, len(todo))
+                feeder.feed()  # after the absorb: a rejection or an interrupt must not let one more call out
         finally:
             # a rejected key or model id, a timeout, Ctrl-C: whatever is queued is never sent
             pool.shutdown(wait=True, cancel_futures=True)
+        stats["budget_stop"] = stats["budget_stop"] or feeder.budget_hit
+        stats["stopped_early"] = stats["stopped_early"] or feeder.stopped_early
         stats["pending_after"] = self.pending_count(exclude_inflight=True)
         return stats
 
@@ -705,13 +698,16 @@ class Judge:
             log.info("judge: %d close calls; looking at %d this run", len(rows), cap)
         workers = max(1, workers or self.cfg.limits.parallel_calls)
         pool = ThreadPoolExecutor(max_workers=workers)
-        feeder = _ReviewFeeder(self, pool, todo, run_id, workers, stop_after)
+
+        def submit(row: sqlite3.Row) -> Any | None:
+            full = store.article(self.conn, row["id"])
+            return None if full is None else pool.submit(self.review, full, run_id)
+
+        feeder = _Feeder(todo, submit, workers, self.llm.budget_left, stop_after)
         try:
             feeder.feed()
             while feeder.running:
-                done = next(as_completed(list(feeder.running)))
-                feeder.running.discard(done)
-                row = feeder.futures[done]
+                done, row = feeder.next_done()
                 self._absorb_review_result(done, row, client, results, feeder)
                 feeder.feed()
         finally:
@@ -721,7 +717,7 @@ class Judge:
         return results
 
     def _absorb_review_result(
-        self, done: Any, row: sqlite3.Row, client: Any, results: dict[str, bool | None], feeder: _ReviewFeeder
+        self, done: Any, row: sqlite3.Row, client: Any, results: dict[str, bool | None], feeder: _Feeder
     ) -> None:
         """One finished review: recorded at once as a save, a confirmed cut or a failure. An
         article the budget ran out on stays unexamined (absent from the results)."""

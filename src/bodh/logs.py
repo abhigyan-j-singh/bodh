@@ -78,6 +78,14 @@ def setup_logging(data_dir: Path, verbose: bool = False, secrets: Iterable[str] 
     logging.getLogger("anthropic").setLevel(logging.WARNING)
 
 
+def quiet_terminal() -> None:
+    """Warnings only on the terminal from now on; the file keeps the detail. For a command whose
+    progress line owns the terminal."""
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            h.setLevel(logging.WARNING)
+
+
 def _stderr_is_a_terminal() -> bool:
     # under launchd stderr is a file that already receives the log through the file handler
     try:

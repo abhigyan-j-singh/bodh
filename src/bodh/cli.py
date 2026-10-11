@@ -23,18 +23,18 @@ import functools
 import json
 import logging
 import sys
+import time
 from typing import Any
 
 import typer
 
-from . import __version__, dashboard, feedback, profiler, report, store
+from . import __version__, dashboard, feedback, logs, profiler, report, store
 from . import cutting as cutmod
 from . import run as runmod
 from .config import Config, Secrets, load_config, load_secrets
 from .errors import BodhError, ConfigError, LockedError
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
-from .logs import setup_logging
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def _config() -> Config:
 def _ctx(verbose: bool = False) -> runmod.Context:
     cfg = _config()
     secrets = load_secrets(cfg.root)
-    setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
+    logs.setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
     conn = store.connect(cfg.db_path)
     return runmod.Context(cfg, secrets, conn)
 
@@ -215,66 +215,76 @@ def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
 
 
 def _doctor_live(cfg: Config, secrets: Secrets, conn: Any, problem: Any) -> None:
+    """Log in to BazQux and call both models once (a few cents); every failure is a line."""
     ctx = runmod.Context(cfg, secrets, conn)
     try:
-        ctx.client.user_info()
-        typer.echo("bazqux login: ok")
-        unread = ctx.client.unread_ids()
-        typer.echo(f"bazqux unread: {len(unread)}")
-        subs = ctx.client.subscriptions()
-        folders = sorted({f for s in subs for f in s.folders})
-        typer.echo(f"bazqux feeds: {len(subs)} in folders {folders}")
-        tags = ctx.client.tags()
-        typer.echo(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
-        want = f"user/-/label/{cfg.protect.must_read_stream}"
-        if want in tags:
-            typer.echo(f"must-read stream '{cfg.protect.must_read_stream}': present")
-        else:
-            problem(
-                f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
-                "protect.must_read_stream)"
-            )
-        unknown = [f for f in cfg.folders if f not in folders]
-        if unknown:
-            problem(f"config folders not in BazQux: {unknown}")
-        if unread:
-            items, _ = ctx.client.contents([r.id for r in unread[:3]])
-            for it in items:
-                typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
+        _doctor_live_bazqux(ctx, problem)
     except Exception as exc:  # doctor reports, never crashes: the line carries the cause
         problem(f"bazqux: FAILED ({exc})")
     try:
-        from .judge import Judge, concept_context
-
-        judge = Judge(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
-        probe = {
-            "id": "probe",
-            "feed_title": "doctor",
-            "folder": None,
-            "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
-            "url": "https://example.com/probe",
-            "author": "doctor",
-            "published": None,
-            "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once.",
-        }
-        verdicts = judge.judge_batch([probe], None)  # type: ignore[list-item]
-        v = verdicts.get("probe")
-        if v:
-            typer.echo(
-                f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}"
-            )
-        else:
-            problem(f"judge ({cfg.models.judge}): call ok, no judgment parsed")
-        second = judge.review(probe, None)  # type: ignore[arg-type]
-        if second is not None:
-            typer.echo(f"review ({cfg.models.reviewer}): ok")
-        else:
-            problem(f"review ({cfg.models.reviewer}): FAILED")
-        typer.echo(
-            f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
-        )
+        _doctor_live_models(ctx, problem)
     except Exception as exc:  # the same: a rejected key or model id is a line, and exit 1
         problem(f"models: FAILED ({exc})")
+
+
+def _doctor_live_bazqux(ctx: runmod.Context, problem: Any) -> None:
+    cfg = ctx.cfg
+    ctx.client.user_info()
+    typer.echo("bazqux login: ok")
+    unread = ctx.client.unread_ids()
+    typer.echo(f"bazqux unread: {len(unread)}")
+    subs = ctx.client.subscriptions()
+    folders = sorted({f for s in subs for f in s.folders})
+    typer.echo(f"bazqux feeds: {len(subs)} in folders {folders}")
+    tags = ctx.client.tags()
+    typer.echo(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
+    if f"user/-/label/{cfg.protect.must_read_stream}" in tags:
+        typer.echo(f"must-read stream '{cfg.protect.must_read_stream}': present")
+    else:
+        problem(
+            f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
+            "protect.must_read_stream)"
+        )
+    unknown = [f for f in cfg.folders if f not in folders]
+    if unknown:
+        problem(f"config folders not in BazQux: {unknown}")
+    if unread:
+        items, _ = ctx.client.contents([r.id for r in unread[:3]])
+        for it in items:
+            typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
+
+
+def _doctor_live_models(ctx: runmod.Context, problem: Any) -> None:
+    from .judge import Judge, concept_context
+
+    cfg, conn = ctx.cfg, ctx.conn
+    judge = Judge(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
+    probe = {
+        "id": "probe",
+        "feed_title": "doctor",
+        "folder": None,
+        "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
+        "url": "https://example.com/probe",
+        "author": "doctor",
+        "published": None,
+        "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once.",
+    }
+    verdicts = judge.judge_batch([probe], None)  # type: ignore[list-item]
+    v = verdicts.get("probe")
+    if v:
+        typer.echo(
+            f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}"
+        )
+    else:
+        problem(f"judge ({cfg.models.judge}): call ok, no judgment parsed")
+    second = judge.review(probe, None)  # type: ignore[arg-type]
+    if second is not None:
+        typer.echo(f"review ({cfg.models.reviewer}): ok")
+    else:
+        problem(f"review ({cfg.models.reviewer}): FAILED")
+    typer.echo(
+        f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}"
+    )
 
 
 @app.command()
@@ -352,8 +362,6 @@ def progress(
 ) -> None:
     """How far the judge has got: judged, with the model, pending, by folder; rate and ETA while a
     run is going; batches; spend; the log."""
-    import time
-
     from . import progress as progressmod
     from .logs import log_file
 
@@ -379,24 +387,15 @@ def progress(
 def catch_up(
     workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
     chunk: int = typer.Option(
-        1000,
-        "--chunk",
-        min=1,
-        max=5000,
-        help="Articles per round (at most 5,000: a round's texts are held in memory).",
+        1000, "--chunk", min=1, max=5000, help="Articles per round (texts held in memory)."
     ),
     all_ages: bool = typer.Option(
-        False, "--all-ages", help="Also the unread articles older than limits.max_age_days."
+        False, "--all-ages", help="Also unread articles older than limits.max_age_days."
     ),
     model: str | None = typer.Option(
-        None,
-        "--model",
-        help="The model to use; default catch_up.model, the quick "
-        "judge. Name the judge itself for a full-price pass.",
+        None, "--model", help="Default catch_up.model, the quick judge; name the judge for a full-price pass."
     ),
-    budget: float | None = typer.Option(
-        None, "--budget", help="Raise today's budget to this many dollars for the catch-up."
-    ),
+    budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars."),
     max_seconds: float | None = typer.Option(
         None, "--max-seconds", help="Start no new call after this long; run again to continue."
     ),
@@ -407,37 +406,18 @@ def catch_up(
     calls at once, with the quick judge unless --model says otherwise. Judges and tags; cuts
     nothing; the judge reads again what the quick judge rates highly (catch_up.rejudge_at). Stop
     it with Ctrl-C and run it again to continue. Watch it with `bodh progress --watch`."""
-    import time
-
     ctx = _ctx(verbose)
     if not verbose:  # the progress line owns the terminal; the log file keeps the detail
-        for h in logging.getLogger().handlers:
-            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-                h.setLevel(logging.WARNING)
+        logs.quiet_terminal()
     cfg = ctx.cfg
     cfg.check_about()
     if all_ages:
         cfg.limits.max_age_days = None
     judge = model or cfg.catch_up.model
-    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget)
+    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget, yes)
     if pending == 0:
         return
-    if not yes and not typer.confirm("Start the catch-up?"):
-        raise typer.Exit(0)
-    started = time.monotonic()
-
-    def show(total: dict[str, Any], stats: dict[str, Any]) -> None:
-        done = total["scored"] + total["dupes"] + stats["scored"] + stats["dupes"]
-        mins = max(1e-6, (time.monotonic() - started) / 60)
-        rate = done / mins
-        left_n = max(0, pending - done)
-        eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
-        typer.echo(
-            f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
-            f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   ",
-            nl=False,
-        )
-
+    show = _catch_up_progress_line(pending, time.monotonic())
     try:
         with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
             total = runmod.catch_up(
@@ -457,10 +437,29 @@ def catch_up(
     _catch_up_report(total)
 
 
+def _catch_up_progress_line(pending: int, started: float) -> Any:
+    """The one line that redraws in the terminal while a catch-up runs."""
+
+    def show(total: dict[str, Any], stats: dict[str, Any]) -> None:
+        done = total["scored"] + total["dupes"] + stats["scored"] + stats["dupes"]
+        mins = max(1e-6, (time.monotonic() - started) / 60)
+        rate = done / mins
+        left_n = max(0, pending - done)
+        eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
+        typer.echo(
+            f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
+            f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   ",
+            nl=False,
+        )
+
+    return show
+
+
 def _catch_up_preview(
-    ctx: runmod.Context, judge: str, workers: int, all_ages: bool, budget: float | None
+    ctx: runmod.Context, judge: str, workers: int, all_ages: bool, budget: float | None, yes: bool
 ) -> int:
-    """How many articles are pending and what the pass will cost; 0 when there is nothing to do."""
+    """How many articles are pending and what the pass will cost, then the confirmation unless
+    `yes`; 0 when there is nothing to do."""
     from .judge import Judge
 
     cfg = ctx.cfg
@@ -498,6 +497,8 @@ def _catch_up_preview(
         typer.echo(
             f"today's budget has ${left:.2f} left; pass --budget {need:.0f} to let the catch-up finish"
         )
+    if not yes and not typer.confirm("Start the catch-up?"):
+        raise typer.Exit(0)
     return pending
 
 

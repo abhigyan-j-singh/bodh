@@ -262,90 +262,10 @@ class Console:
     # -- server ---------------------------------------------------------------
 
     def serve(self) -> None:
-        console = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, fmt: str, *args: Any) -> None:
-                log.debug("console: " + fmt, *args)
-
-            def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8") -> None:
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self) -> None:
-                if not console.host_allowed(self.headers.get("Host")):
-                    self._send(403, b'{"error":"forbidden: unexpected Host"}')
-                    return
-                url = urlsplit(self.path)
-                if url.path in ("/", "/index.html"):
-                    page = PAGE.replace("__ROOT__", html.escape(str(console.cfg.root))).replace(
-                        "__KEEP__", str(console.cfg.prune.keep)
-                    )
-                    self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
-                elif url.path == "/api/status":
-                    try:
-                        body = json.dumps(console.status(), default=str).encode("utf-8")
-                    except Exception as exc:
-                        log.exception("console: status failed")
-                        body = json.dumps({"error": str(exc)}).encode("utf-8")
-                    self._send(200, body)
-                elif url.path == "/api/log":
-                    n = int(parse_qs(url.query).get("n", ["120"])[0])
-                    lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
-                    self._send(200, json.dumps({"lines": lines}).encode("utf-8"))
-                elif url.path.startswith("/dashboard/"):
-                    self._static(url.path[len("/dashboard/") :] or "index.html")
-                else:
-                    self._send(404, b'{"error":"not found"}')
-
-            def _static(self, rel: str) -> None:
-                base = (console.cfg.root / console.cfg.dashboard_dir).resolve()
-                path = (base / rel).resolve()
-                if (base not in path.parents and path != base) or not path.is_file():
-                    self._send(404, b'{"error":"not found"}')
-                    return
-                ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
-                self._send(
-                    200,
-                    path.read_bytes(),
-                    ctype
-                    + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("json") else ""),
-                )
-
-            def do_POST(self) -> None:
-                if not console.host_allowed(self.headers.get("Host")):
-                    self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
-                    return
-                if self.headers.get("X-Bodh") not in (
-                    "console",
-                    "panel",
-                ):  # a page of ours, not a stray form from another site
-                    self._send(403, b'{"ok":false,"message":"forbidden"}')
-                    return
-                length = int(self.headers.get("Content-Length") or 0)
-                try:
-                    payload = json.loads(self.rfile.read(length) or b"{}")
-                except json.JSONDecodeError:
-                    payload = {}
-                url = urlsplit(self.path)
-                if url.path != "/api/action":
-                    self._send(404, b'{"ok":false,"message":"not found"}')
-                    return
-                try:
-                    result = console.run_action(str(payload.get("action", "")), payload)
-                except Exception as exc:
-                    log.exception("console: action failed")
-                    result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
-                console.forget()
-                self._send(200, json.dumps(result, default=str).encode("utf-8"))
-
+        """Listen until stopped; console.json beside the data says where, for `bodh status`."""
         data_dir = self.cfg.root / self.cfg.data_dir
         try:
-            server = ThreadingHTTPServer((self.host, self.port), Handler)
+            server = ThreadingHTTPServer((self.host, self.port), _handler_for(self))
         except OSError as exc:
             console_log(data_dir, f"cannot listen on {self.host}:{self.port}: {exc}")
             raise
@@ -374,6 +294,96 @@ class Console:
             console_log(data_dir, "stopped")
             with contextlib.suppress(OSError):
                 info.unlink()
+
+
+def _handler_for(console: Console) -> type[_Handler]:
+    """The request handler bound to one console (a subclass, so the server can build one per
+    request without a closure)."""
+    return type("Handler", (_Handler,), {"console": console})
+
+
+class _Handler(BaseHTTPRequestHandler):
+    """The page, the status and log APIs, the dashboard's files, and the actions (POST, from our
+    own page only). `console` is set on the subclass `_handler_for` makes."""
+
+    console: Console
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        log.debug("console: " + fmt, *args)
+
+    def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8") -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        console = self.console
+        if not console.host_allowed(self.headers.get("Host")):
+            self._send(403, b'{"error":"forbidden: unexpected Host"}')
+            return
+        url = urlsplit(self.path)
+        if url.path in ("/", "/index.html"):
+            page = PAGE.replace("__ROOT__", html.escape(str(console.cfg.root))).replace(
+                "__KEEP__", str(console.cfg.prune.keep)
+            )
+            self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        elif url.path == "/api/status":
+            self._send(200, _status_body(console))
+        elif url.path == "/api/log":
+            n = int(parse_qs(url.query).get("n", ["120"])[0])
+            lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
+            self._send(200, json.dumps({"lines": lines}).encode("utf-8"))
+        elif url.path.startswith("/dashboard/"):
+            self._static(url.path[len("/dashboard/") :] or "index.html")
+        else:
+            self._send(404, b'{"error":"not found"}')
+
+    def _static(self, rel: str) -> None:
+        base = (self.console.cfg.root / self.console.cfg.dashboard_dir).resolve()
+        path = (base / rel).resolve()
+        if (base not in path.parents and path != base) or not path.is_file():
+            self._send(404, b'{"error":"not found"}')
+            return
+        ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        text_like = ctype.startswith("text/") or ctype.endswith("json")
+        self._send(200, path.read_bytes(), ctype + ("; charset=utf-8" if text_like else ""))
+
+    def do_POST(self) -> None:
+        console = self.console
+        if not console.host_allowed(self.headers.get("Host")):
+            self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
+            return
+        if self.headers.get("X-Bodh") not in ("console", "panel"):  # our own page, not a stray form
+            self._send(403, b'{"ok":false,"message":"forbidden"}')
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if urlsplit(self.path).path != "/api/action":
+            self._send(404, b'{"ok":false,"message":"not found"}')
+            return
+        try:
+            result = console.run_action(str(payload.get("action", "")), payload)
+        except Exception as exc:  # the page gets the reason as a message; the log keeps the traceback
+            log.exception("console: action failed")
+            result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+        console.forget()
+        self._send(200, json.dumps(result, default=str).encode("utf-8"))
+
+
+def _status_body(console: Console) -> bytes:
+    try:
+        return json.dumps(console.status(), default=str).encode("utf-8")
+    except (
+        Exception
+    ) as exc:  # the page shows the error line instead of its numbers; the log keeps the traceback
+        log.exception("console: status failed")
+        return json.dumps({"error": str(exc)}).encode("utf-8")
 
 
 def console_log(data_dir: Path, message: str) -> None:

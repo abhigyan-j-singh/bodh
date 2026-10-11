@@ -151,19 +151,9 @@ def weekly_rewrite(
 
     current = cfg.read_learned()
     about = cfg.read_about()
-    evidence = ["# Positives (starred, great, good, read, rescued)"]
-    evidence += [_evidence_line(r) for r in positives[:120]]
-    evidence += ["", "# Negatives (bad, meh, dismissed)"]
-    evidence += [_evidence_line(r) for r in negatives[:120]]
-    if levels:
-        evidence += ["", "# Level missed (basic: too elementary; heavy: too dense)"]
-        evidence += [_evidence_line(r) for r in levels[:40]]
-    if steers:
-        evidence += ["", "# Steers (more: the student asked for more of this; less: for less)"]
-        evidence += [_evidence_line(r) for r in steers[:40]]
     user_text = (
         f"# About the student\n{about}\n\n# Current learned profile\n{current}\n\n# This week's evidence\n"
-        + "\n".join(evidence)
+        + _evidence(positives, negatives, levels, steers)
     )
     new_text = llm.complete(
         cfg.models.profiler,
@@ -197,6 +187,26 @@ def weekly_rewrite(
     result["applied"] = True
     result["reason"] = "rewrite applied"
     return result
+
+
+def _evidence(
+    positives: list[sqlite3.Row],
+    negatives: list[sqlite3.Row],
+    levels: list[sqlite3.Row],
+    steers: list[sqlite3.Row],
+) -> str:
+    """The week's feedback as the profiler reads it, grouped and capped."""
+    lines = ["# Positives (starred, great, good, read, rescued)"]
+    lines += [_evidence_line(r) for r in positives[:120]]
+    lines += ["", "# Negatives (bad, meh, dismissed)"]
+    lines += [_evidence_line(r) for r in negatives[:120]]
+    if levels:
+        lines += ["", "# Level missed (basic: too elementary; heavy: too dense)"]
+        lines += [_evidence_line(r) for r in levels[:40]]
+    if steers:
+        lines += ["", "# Steers (more: the student asked for more of this; less: for less)"]
+        lines += [_evidence_line(r) for r in steers[:40]]
+    return "\n".join(lines)
 
 
 def repeats_about(new_text: str, about: str) -> bool:

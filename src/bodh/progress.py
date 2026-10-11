@@ -126,13 +126,35 @@ def log_tail(path: Path, n: int = 10) -> list[str]:
 
 
 def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[str, Any]:
-    """Everything the progress views show, as plain numbers."""
+    """Everything the progress views show, as plain numbers: the counts, the money, the
+    folders, the batches, the last runs, and (``live``) the run in progress."""
+    counts = _counts(conn, cfg)
+    snap: dict[str, Any] = {
+        "at": store.utcnow_iso(),
+        "now": datetime.now(ZoneInfo(cfg.timezone)),
+        "batch_mode": cfg.models.batch,
+        "max_age_days": cfg.limits.max_age_days,
+        "skip_folders": cfg.unjudged_folders(),
+        "teacher": cfg.models.judge,
+        "budget": cfg.models.daily_budget_usd,
+        **counts,
+        **_money(conn, cfg),
+        "folders": _folders(conn, cfg, counts["_pending_rows"], counts["_inflight_judge"]),
+        "batches": _batches(conn),
+        "runs": [dict(r) for r in store.last_runs(conn, 3)],
+    }
+    del snap["_pending_rows"], snap["_inflight_judge"]
+    if live:
+        snap.update(activity(conn, cfg))
+        rate = snap["rate_per_min"]
+        snap["eta_min"] = (snap["pending"] / rate) if rate > 0 and snap["pending"] else None
+    return snap
+
+
+def _counts(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
+    """What is unread, judged, pending, with the model, too old, skipped, held, given up."""
     version = cfg.judge.prompt_version
     skip = cfg.unjudged_folders()
-    midnight = store.local_midnight_iso(cfg.timezone)
-    week = store.days_ago_iso(7)
-    month = store.days_ago_iso(30)
-
     unread = _count(conn, "SELECT COUNT(*) FROM state WHERE status = 'unread'")
     judged_unread = _count(
         conn,
@@ -145,9 +167,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
     )
     pending = len(pending_rows)
     unscored_all = store.unscored_unread_count(conn, version)  # leaves out what the judge gave up on
-    given_up = store.given_up(conn)
     inflight_judge = store.inflight_ids(conn, "teacher")
-    inflight_second = store.inflight_ids(conn, "second_look")
     skipped = (
         _count(
             conn,
@@ -158,69 +178,86 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
         if skip
         else 0
     )
-    too_old = max(0, unscored_all - pending - len(inflight_judge) - skipped)
-    low_conf = _count(
-        conn,
-        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-        "WHERE st.status = 'unread' AND s.confidence = 'low'",
-    )
-    stand_in = _count(
-        conn,
-        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-        "WHERE st.status = 'unread' AND s.model != ? AND s.model != 'dedup'",
-        (cfg.models.judge,),
-    )
+    unread_scores = "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id WHERE st.status = 'unread'"
+    stand_in = _count(conn, unread_scores + " AND s.model != ? AND s.model != 'dedup'", (cfg.models.judge,))
     rejudge_rule = (
         None if cfg.catch_up.rejudge_at is None else (cfg.models.judge, float(cfg.catch_up.rejudge_at))
     )
-    rejudge = (
-        (
+    rejudge = 0
+    if rejudge_rule and stand_in:
+        rejudge = (
             store.unscored_unread_count(
                 conn, version, cfg.limits.max_age_days, skip, exclude_inflight=True, rejudge=rejudge_rule
             )
             - pending
         )
-        if rejudge_rule and stand_in
-        else 0
-    )
-    held = _count(
-        conn,
-        "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
-        "WHERE st.status = 'unread' AND s.second_look_model = 'failed'",
-    )
-
-    def period(since: str) -> dict[str, Any]:
-        return {
-            "arrived": _count(conn, "SELECT COUNT(*) FROM articles WHERE fetched_at >= ?", (since,)),
-            "judged": _count(
-                conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'", (since,)
-            ),
-            "dupes": _count(
-                conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model = 'dedup'", (since,)
-            ),
-            "second_looks": _count(
-                conn, "SELECT COUNT(*) FROM costs WHERE created_at >= ? AND purpose = 'second_look'", (since,)
-            ),
-            "cut": _count(conn, "SELECT COUNT(*) FROM state WHERE cut_at >= ?", (since,)),
-            "spend": store.spent_since(conn, since),
-        }
-
-    today, seven, thirty = period(midnight), period(week), period(month)
-    all_time = {
-        "judged": _count(conn, "SELECT COUNT(*) FROM scores WHERE model != 'dedup'"),
-        "dupes": _count(conn, "SELECT COUNT(*) FROM scores WHERE model = 'dedup'"),
-        "cut": _count(conn, "SELECT COUNT(*) FROM state WHERE status = 'cut'"),
-        "spend": store.spent_since(conn, "0000"),
+    return {
+        "unread": unread,
+        "judged_unread": judged_unread,
+        "pending": pending,
+        "inflight": len(inflight_judge),
+        "inflight_second": len(store.inflight_ids(conn, "second_look")),
+        "too_old": max(0, unscored_all - pending - len(inflight_judge) - skipped),
+        "skipped": skipped,
+        "low_conf": _count(conn, unread_scores + " AND s.confidence = 'low'"),
+        "held": _count(conn, unread_scores + " AND s.second_look_model = 'failed'"),
+        "given_up": store.given_up(conn),
+        "stand_in": stand_in,
+        "rejudge": max(0, rejudge),
+        "_pending_rows": pending_rows,
+        "_inflight_judge": inflight_judge,
     }
+
+
+def _period(conn: sqlite3.Connection, since: str) -> dict[str, Any]:
+    return {
+        "arrived": _count(conn, "SELECT COUNT(*) FROM articles WHERE fetched_at >= ?", (since,)),
+        "judged": _count(
+            conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model != 'dedup'", (since,)
+        ),
+        "dupes": _count(
+            conn, "SELECT COUNT(*) FROM scores WHERE scored_at >= ? AND model = 'dedup'", (since,)
+        ),
+        "second_looks": _count(
+            conn, "SELECT COUNT(*) FROM costs WHERE created_at >= ? AND purpose = 'second_look'", (since,)
+        ),
+        "cut": _count(conn, "SELECT COUNT(*) FROM state WHERE cut_at >= ?", (since,)),
+        "spend": store.spent_since(conn, since),
+    }
+
+
+def _money(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
+    """Today, seven days, thirty days and all time: arrivals, judgments, cuts and spend; the
+    cache hit share and the cost per 1,000 judged over the week."""
+    week = store.days_ago_iso(7)
+    seven = _period(conn, week)
     tokens = conn.execute(
         "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0), "
         "COALESCE(SUM(output_tokens),0) FROM costs WHERE created_at >= ? AND purpose = 'teacher'",
         (week,),
     ).fetchone()
     prompt_total = tokens[0] + tokens[1] + tokens[2]
-    cache_hit = (tokens[1] / prompt_total) if prompt_total else None
-    per_1000 = (seven["spend"] / seven["judged"] * 1000) if seven["judged"] else None
+    return {
+        "today": _period(conn, store.local_midnight_iso(cfg.timezone)),
+        "week": seven,
+        "month": _period(conn, store.days_ago_iso(30)),
+        "all_time": {
+            "judged": _count(conn, "SELECT COUNT(*) FROM scores WHERE model != 'dedup'"),
+            "dupes": _count(conn, "SELECT COUNT(*) FROM scores WHERE model = 'dedup'"),
+            "cut": _count(conn, "SELECT COUNT(*) FROM state WHERE status = 'cut'"),
+            "spend": store.spent_since(conn, "0000"),
+        },
+        "cache_hit": (tokens[1] / prompt_total) if prompt_total else None,
+        "per_1000": (seven["spend"] / seven["judged"] * 1000) if seven["judged"] else None,
+        "output_tokens_week": tokens[3],
+    }
 
+
+def _folders(
+    conn: sqlite3.Connection, cfg: Config, pending_rows: list[sqlite3.Row], inflight_judge: list[str]
+) -> list[dict[str, Any]]:
+    """Per folder: unread, judged, 70 and above, cut, pending, with the model, the cut-off."""
+    skip = cfg.unjudged_folders()
     folders = []
     for r in conn.execute(
         """SELECT a.folder,
@@ -230,7 +267,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
                   SUM(st.status = 'cut') cut
            FROM articles a JOIN state st ON st.article_id = a.id LEFT JOIN scores s ON s.article_id = a.id
            GROUP BY a.folder ORDER BY unread DESC""",
-        (version,),
+        (cfg.judge.prompt_version,),
     ):
         folders.append(
             {
@@ -259,48 +296,15 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
             f = by_name.get(r["folder"] or "(no folder)")
             if f:
                 f["inflight"] += int(r["n"])
+    return folders
 
+
+def _batches(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     batches = [dict(b) for b in store.recent_batches(conn, 8)]
     for b in batches:
         b["age"] = _age(b["created_at"])
         b["took"] = _age(b["ended_at"]) if b.get("ended_at") else ""
-    runs = store.last_runs(conn, 3)
-    snap = {
-        "at": store.utcnow_iso(),
-        "now": datetime.now(ZoneInfo(cfg.timezone)),
-        "batch_mode": cfg.models.batch,
-        "max_age_days": cfg.limits.max_age_days,
-        "unread": unread,
-        "judged_unread": judged_unread,
-        "pending": pending,
-        "inflight": len(inflight_judge),
-        "inflight_second": len(inflight_second),
-        "too_old": too_old,
-        "skipped": skipped,
-        "skip_folders": skip,
-        "low_conf": low_conf,
-        "held": held,
-        "given_up": given_up,
-        "stand_in": stand_in,
-        "rejudge": max(0, rejudge),
-        "teacher": cfg.models.judge,
-        "today": today,
-        "week": seven,
-        "month": thirty,
-        "all_time": all_time,
-        "cache_hit": cache_hit,
-        "per_1000": per_1000,
-        "output_tokens_week": tokens[3],
-        "folders": folders,
-        "batches": batches,
-        "runs": [dict(r) for r in runs],
-        "budget": cfg.models.daily_budget_usd,
-    }
-    if live:
-        snap.update(activity(conn, cfg))
-        rate = snap["rate_per_min"]
-        snap["eta_min"] = (pending / rate) if rate > 0 and pending else None
-    return snap
+    return batches
 
 
 # -- the live file ------------------------------------------------------------
@@ -527,31 +531,46 @@ def render_html(snap: dict[str, Any]) -> str:
     """The progress section of the dashboard: numbers now, and a script that keeps them moving by polling
     progress.json while a run writes it (bars, rate, ETA, phase, sparkline, batches, log)."""
     e = ui.esc
+    parts = [
+        "<h2>Progress: what the judge has processed</h2>",
+        _html_state_and_bars(snap),
+        _html_kpis(snap),
+        "<div class='spark'><span class='muted'>judged per 5 minutes, last 3 hours</span>"
+        f"<svg id='p-spark' viewBox='0 0 360 48' width='360' height='48' preserveAspectRatio='none'>{_spark_svg(snap.get('series') or [])}</svg></div>",
+        "<table><tr><th>Folder</th><th class='num'>Unread</th><th class='num'>Judged</th><th class='num'>Pending</th>"
+        "<th class='num'>With the model</th><th class='num'>70+</th><th class='num'>Cut</th><th>Cut-off</th></tr><tbody id='p-folders'>",
+        _folder_rows(snap["folders"], e),
+        "</tbody></table>",
+        "<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
+        f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>",
+        LIVE_SCRIPT,
+    ]
+    return "\n".join(parts)
 
+
+def _html_state_and_bars(snap: dict[str, Any]) -> str:
+    e = ui.esc
     unread = snap["unread"] or 1
     judged, pending, inflight = snap["judged_unread"], snap["pending"], snap["inflight"]
     running = bool(snap.get("running"))
-    t, w = snap["today"], snap["week"]
-    per = f"${snap['per_1000']:.2f}" if snap["per_1000"] is not None else "–"
-    cache = f"{snap['cache_hit']:.0%}" if snap["cache_hit"] is not None else "–"
     rate = snap.get("rate_per_min", 0.0)
     old_note = (
         f" · {snap['too_old']:,} older than {snap['max_age_days']} days are never judged"
         if snap["too_old"]
         else ""
     )
-    parts = [
-        "<h2>Progress: what the judge has processed</h2>",
+    phase = "run in progress · " + e(snap.get("phase") or "working") if running else "idle"
+    return (
         "<div class='live'>"
         f"<span id='p-dot' class='dot {'on' if running else ''}'></span>"
-        f"<span id='p-phase'>{'run in progress · ' + e(snap.get('phase') or 'working') if running else 'idle'}</span>"
+        f"<span id='p-phase'>{phase}</span>"
         f" · <span id='p-rate'>{rate:.0f}</span> judged/min · ETA for pending <span id='p-eta'>{e(_eta(snap.get('eta_min')))}</span>"
-        " · updated <span id='p-updated'>just now</span></div>",
+        " · updated <span id='p-updated'>just now</span></div>"
         "<div class='prog'>"
         f"<span id='p-bar-judged' style='width:{judged / unread * 100:.2f}%' class='p-judged' title='judged'></span>"
         f"<span id='p-bar-flight' style='width:{inflight / unread * 100:.2f}%' class='p-flight' title='with the model'></span>"
         f"<span id='p-bar-pending' style='width:{pending / unread * 100:.2f}%' class='p-pending' title='pending'></span>"
-        "</div>",
+        "</div>"
         "<p class='muted'>"
         f"<b class='ok'>judged <span id='p-judged'>{judged:,}</span></b> · "
         f"<b class='c-flight'>with the model <span id='p-inflight'>{inflight:,}</span></b> · "
@@ -563,29 +582,28 @@ def render_html(snap: dict[str, Any]) -> str:
             if snap.get("stand_in")
             else ""
         )
-        + "</p>",
-        "<div class='kpis'>"
-        f"<div class='kpi'><span class='muted'>judged today</span><b id='k-judged-today'>{t['judged']:,}</b></div>"
-        f"<div class='kpi'><span class='muted'>arrived today</span><b id='k-arrived-today'>{t['arrived']:,}</b></div>"
-        f"<div class='kpi'><span class='muted'>cut today</span><b id='k-cut-today'>{t['cut']:,}</b></div>"
-        f"<div class='kpi'><span class='muted'>judged, 7 days</span><b id='k-judged-week'>{w['judged']:,}</b></div>"
-        f"<div class='kpi'><span class='muted'>spend today</span><b id='k-spend-today'>${t['spend']:.2f}</b></div>"
-        f"<div class='kpi'><span class='muted'>per 1,000 judged</span><b id='k-per'>{per}</b></div>"
-        f"<div class='kpi'><span class='muted'>cache hits</span><b id='k-cache'>{cache}</b></div>"
-        "</div>",
-        "<div class='spark'><span class='muted'>judged per 5 minutes, last 3 hours</span>"
-        f"<svg id='p-spark' viewBox='0 0 360 48' width='360' height='48' preserveAspectRatio='none'>{_spark_svg(snap.get('series') or [])}</svg></div>",
-        "<table><tr><th>Folder</th><th class='num'>Unread</th><th class='num'>Judged</th><th class='num'>Pending</th>"
-        "<th class='num'>With the model</th><th class='num'>70+</th><th class='num'>Cut</th><th>Cut-off</th></tr><tbody id='p-folders'>",
-    ]
-    parts.append(_folder_rows(snap["folders"], e))
-    parts.append("</tbody></table>")
-    parts.append(
-        "<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
-        f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>"
+        + "</p>"
     )
-    parts.append(LIVE_SCRIPT)
-    return "\n".join(parts)
+
+
+def _html_kpis(snap: dict[str, Any]) -> str:
+    t, w = snap["today"], snap["week"]
+    per = f"${snap['per_1000']:.2f}" if snap["per_1000"] is not None else "–"
+    cache = f"{snap['cache_hit']:.0%}" if snap["cache_hit"] is not None else "–"
+    tiles = [
+        ("judged today", "k-judged-today", f"{t['judged']:,}"),
+        ("arrived today", "k-arrived-today", f"{t['arrived']:,}"),
+        ("cut today", "k-cut-today", f"{t['cut']:,}"),
+        ("judged, 7 days", "k-judged-week", f"{w['judged']:,}"),
+        ("spend today", "k-spend-today", f"${t['spend']:.2f}"),
+        ("per 1,000 judged", "k-per", per),
+        ("cache hits", "k-cache", cache),
+    ]
+    inner = "".join(
+        f"<div class='kpi'><span class='muted'>{label}</span><b id='{tid}'>{value}</b></div>"
+        for label, tid, value in tiles
+    )
+    return f"<div class='kpis'>{inner}</div>"
 
 
 def _folder_rows(folders: list[dict[str, Any]], e: Callable[[Any], str]) -> str:
