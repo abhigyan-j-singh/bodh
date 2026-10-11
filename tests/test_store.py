@@ -12,14 +12,15 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     brought to the current shape on connect; a current one is left alone."""
     path = tmp_path / "old.db"
     old = sqlite3.connect(str(path))
-    old.executescript(store.SCHEMA.replace("  exempt INTEGER DEFAULT 0,\n", ""))
+    v1 = store.SCHEMA.replace("  exempt INTEGER DEFAULT 0,\n", "").replace("  judge_failures INTEGER DEFAULT 0,\n", "")
+    old.executescript(v1)
     old.execute("INSERT INTO state (article_id, status) VALUES ('a', 'unread')")
     old.commit()
-    assert "exempt" not in store._columns(old, "state")
+    assert {"exempt", "judge_failures"}.isdisjoint(store._columns(old, "state"))
     old.close()
     conn = store.connect(path)
     assert store.schema_version(conn) == store.SCHEMA_VERSION
-    assert conn.execute("SELECT exempt FROM state WHERE article_id = 'a'").fetchone()[0] == 0
+    assert tuple(conn.execute("SELECT exempt, judge_failures FROM state WHERE article_id = 'a'").fetchone()) == (0, 0)
     assert store.migrate(conn) == store.SCHEMA_VERSION   # idempotent
     conn.close()
     fresh = store.connect(tmp_path / "fresh.db")

@@ -175,6 +175,10 @@ class FakeLLM:
         self.recorded.append((model, purpose, discount))
         return 0.0
 
+    def cost(self, model, usage, discount=1.0):
+        self.recorded.append((model, "batch", discount))
+        return {"input_tokens": 1000, "output_tokens": 100, "cache_write": 0, "cache_read": 0}, 0.001 * discount
+
     def adapt_to_error(self, model, message):
         return False
 
@@ -595,3 +599,113 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
     assert res.cut_prune == 2 and store.kv_get(conn, "prune_requested") is None
     res = pipeline.run(ctx, enforce=True)
     assert res.cut_prune == 0                                   # applied once
+
+
+# -- the batch lifecycle under trouble --------------------------------------------
+
+def test_vanished_batch_is_closed_as_lost(cfg, conn):
+    """A batch deleted in the console (or submitted under a rotated key) used to fail every
+    run forever as a ModelConfigError; it is closed as lost and its articles are pending again."""
+    from triage.teacher import BatchNotFound
+
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+
+    def gone(bid):
+        raise BatchNotFound("batch not found: 404")
+
+    ctx.llm.batch_status = gone
+    res = pipeline.run(ctx, enforce=False)
+    assert res.ok and "given up on" in " ".join(res.notes)
+    assert [b["status"] for b in store.recent_batches(conn)][-1] == "lost"
+    assert res.submitted == 2 and res.inflight == 2        # resubmitted at once
+
+
+def test_ended_batch_with_unfetchable_results_is_given_up(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+
+    def broken(bid):
+        raise RuntimeError("results stream reset")
+
+    ctx.llm.batch_results = broken
+    res = pipeline.run(ctx, enforce=False)
+    assert res.scored == 0 and store.recent_batches(conn)[0]["status"] == "submitted"   # young: kept open
+    conn.execute("UPDATE batches SET created_at = '2020-01-01T00:00:00+00:00'")
+    res = pipeline.run(ctx, enforce=False)
+    assert store.recent_batches(conn)[-1]["status"] == "lost" and res.submitted == 2       # old: given up, resubmitted
+
+
+def test_batch_mode_off_still_collects_open_batches(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+    cfg.models.batch = False                                   # the owner turns batches off
+    res = pipeline.run(ctx, enforce=False)
+    assert not res.batch_mode and res.scored == 2 and res.inflight == 0 and ctx.llm.batches
+    assert store.article(conn, items[0].id)["score"] == 90.0
+
+
+def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
+    """A succeeded request with nothing parsable in it was silent, done, and resubmitted at
+    once: a broken prompt cost half price every thirty minutes with no signal."""
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["plain a", "plain b"], batch=True)
+    real = ctx.llm._verdicts
+    ctx.llm._verdicts = lambda user_text, purpose: []
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+    for attempt in range(1, 4):
+        ctx.llm.finish_all()
+        res = pipeline.run(ctx, enforce=False)                  # collected: nothing in it; resubmitted or not
+        assert res.scored == 0 and "no judgment" in " ".join(res.notes), attempt
+        assert "partial" in [b["status"] for b in store.recent_batches(conn)]
+        if attempt < 3:
+            assert res.submitted == 2, attempt                  # tried again
+        else:
+            assert res.submitted == 0 and res.pending == 0      # given up on: not resubmitted
+    assert store.given_up(conn) == 2
+    from triage import progress
+
+    assert "given up on" in progress.render_text(progress.snapshot(conn, cfg))
+    ctx.llm._verdicts = real
+    assert store.reset_judge_failures(conn) == 2                # `triage safety reset`
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+    ctx.llm.finish_all()
+    assert pipeline.run(ctx, enforce=False).scored == 2 and store.given_up(conn) == 0
+
+
+def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interrupt(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+    real_results = ctx.llm.batch_results
+    ctx.llm.batch_results = lambda bid: real_results(bid) * 2   # the same result listed twice
+    # the first absorb is interrupted half way: nothing of it may stick
+    from triage import teacher as teachermod
+
+    real_absorb = teachermod.Teacher._absorb_teacher
+
+    def interrupted(self, ids, verdicts):
+        raise KeyboardInterrupt
+
+    teachermod.Teacher._absorb_teacher = interrupted
+    import pytest
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            pipeline.run(ctx, enforce=False)
+    finally:
+        teachermod.Teacher._absorb_teacher = real_absorb
+    assert store.recent_batches(conn)[0]["status"] == "submitted"
+    assert conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 0 and store.scored_ids(conn) == set()
+    res = pipeline.run(ctx, enforce=False)
+    assert res.scored == 2 and conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 1
+    assert store.recent_batches(conn)[0]["status"] == "done"

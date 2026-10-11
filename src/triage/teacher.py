@@ -141,6 +141,23 @@ class ModelConfigError(TeacherError):
     the run stops at once so the problem is visible instead of 27 identical tracebacks."""
 
 
+class BatchNotFound(TeacherError):
+    """The API no longer knows the batch (deleted in the console, or submitted under another
+    key): it is closed as lost and its articles are pending again, nothing else stops."""
+
+
+class NoJudgments(TeacherError):
+    """The model answered, but with nothing a judgment could be read from."""
+
+
+def _batch_classify(exc: Exception) -> Exception:
+    import anthropic
+
+    if isinstance(exc, anthropic.NotFoundError):
+        return BatchNotFound(f"batch not found: {exc}")
+    return _classify(exc)
+
+
 def _classify(exc: Exception) -> Exception:
     import anthropic
 
@@ -364,7 +381,8 @@ class LLM:
 
     # -- accounting -----------------------------------------------------------
 
-    def _cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict, float]:
+    def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict, float]:
+        """(token counts, USD) for one response's usage, the batch discount applied if any."""
         p_in, p_out = self.cfg.models.price(model)
         creation = getattr(usage, "cache_creation", None)
         write_1h = int(getattr(creation, "ephemeral_1h_input_tokens", 0) or 0)
@@ -385,7 +403,7 @@ class LLM:
         return u, usd * discount
 
     def record(self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0) -> float:
-        u, usd = self._cost(model, usage, discount)
+        u, usd = self.cost(model, usage, discount)
         with self._lock:
             store.record_cost(self.conn, run_id, model, purpose, u, usd)
         return usd
@@ -458,7 +476,7 @@ class LLM:
         self.record(run_id, model, purpose, response.usage)
         verdicts = parse_judgments(self.message_text(response))
         if verdicts is None:
-            raise TeacherError(f"{model} returned no parsable judgments")
+            raise NoJudgments(f"{model} returned no parsable judgments")
         return verdicts
 
     def complete(self, model: str, system_text: str, user_text: str, run_id: int | None,
@@ -490,14 +508,14 @@ class LLM:
         try:
             return self._client.messages.batches.retrieve(batch_id).processing_status
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
 
     def batch_counts(self, batch_id: str) -> dict:
         """How many requests of a batch are processing, succeeded, errored, canceled, expired."""
         try:
             counts = self._client.messages.batches.retrieve(batch_id).request_counts
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
         return {k: int(getattr(counts, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")}
 
     def retries(self, n: int) -> None:
@@ -508,7 +526,7 @@ class LLM:
         try:
             return list(self._client.messages.batches.results(batch_id))
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
 
 
 # -- the teacher --------------------------------------------------------------
@@ -640,8 +658,8 @@ class Teacher:
         scored stays pending for the next run. ``on_progress(stats)`` is called after every
         batch that lands; past ``stop_after`` (a time.monotonic() value) no new call starts.
         Returns stats."""
-        stats = {"scored": 0, "dupes": 0, "failed_batches": 0, "budget_stop": False, "pending_after": 0,
-                 "total": 0, "stopped_early": False}
+        stats = {"scored": 0, "dupes": 0, "failed_batches": 0, "empty_batches": 0, "budget_stop": False,
+                 "pending_after": 0, "total": 0, "stopped_early": False}
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)  # a batch may hold some
         stats["total"] = len(todo)
         size = self.cfg.scoring.batch_size
@@ -685,6 +703,12 @@ class Teacher:
             return
         except ModelConfigError:
             raise
+        except NoJudgments as exc:  # the model answered with nothing: counted against the articles
+            stats["failed_batches"] += 1
+            stats["empty_batches"] += 1
+            store.bump_judge_failures(self.conn, [r["id"] for r in batch])
+            log.warning("teacher: batch of %d: %s; they stay pending", len(batch), exc)
+            return
         except Exception:  # noqa: BLE001 — one bad batch, not the run
             stats["failed_batches"] += 1
             log.exception("teacher: batch of %d failed; they stay pending", len(batch))
@@ -693,6 +717,10 @@ class Teacher:
         for aid, v in verdicts.items():
             self._record(by_id[aid], v)
             stats["scored"] += 1
+        if not verdicts and batch:
+            stats["empty_batches"] += 1
+            store.bump_judge_failures(self.conn, [r["id"] for r in batch])
+            log.warning("teacher: a batch of %d came back with no judgment", len(batch))
         log.info("teacher: judged %d of %d", stats["scored"], total)
         if on_progress is not None:
             on_progress(stats)
@@ -772,10 +800,13 @@ class Teacher:
     def collect(self, run_id: int | None, client: Any = None, on_progress: Any = None) -> dict:
         """Record the judgments of every finished batch. Articles whose request failed go
         back to pending (first pass) or count as examined and stay unread (second look)."""
-        stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "open": 0, "notes": []}
+        stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "empty": 0, "open": 0, "notes": []}
         for b in store.open_batches(self.conn):
             try:
                 status = self.llm.batch_status(b["id"])
+            except BatchNotFound as exc:
+                self._give_up(b, f"vanished from the API ({exc})", stats)
+                continue
             except ModelConfigError:
                 raise
             except Exception:  # noqa: BLE001
@@ -784,23 +815,39 @@ class Teacher:
                 continue
             if status != "ended":
                 if self._lost(b):
-                    store.close_batch(self.conn, b["id"], "lost", f"still {status} after {BATCH_LOST_HOURS}h")
-                    stats["notes"].append(f"batch {b['id']} given up on; its articles are pending again")
+                    self._give_up(b, f"still {status} after {BATCH_LOST_HOURS}h", stats)
                 else:
                     stats["open"] += 1
                 continue
             try:
                 results = self.llm.batch_results(b["id"])
+            except BatchNotFound as exc:
+                self._give_up(b, f"vanished from the API ({exc})", stats)
+                continue
             except ModelConfigError:
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("teacher: could not fetch results of batch %s", b["id"])
-                stats["open"] += 1
+                if self._lost(b):  # ended, but its results will not come: the same deadline applies
+                    self._give_up(b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats)
+                else:
+                    stats["open"] += 1
                 continue
             self._absorb(b, results, run_id, client, stats)
             if on_progress is not None:
                 on_progress(stats)
         return stats
+
+    def _give_up(self, b: sqlite3.Row, why: str, stats: dict) -> None:
+        """Close a batch whose results will never come; its articles are pending again (first
+        pass) or count as examined and stay unread (second looks)."""
+        if b["purpose"] == "second_look":
+            for ids in store.batch_members(self.conn, b["id"]).values():
+                store.record_second_look_failure(self.conn, ids[0])
+                stats["failed"] += 1
+        store.close_batch(self.conn, b["id"], "lost", why)
+        log.warning("teacher: batch %s given up on: %s", b["id"], why)
+        stats["notes"].append(f"batch {b['id'][:12]} given up on ({why}); its articles are pending again")
 
     @staticmethod
     def _lost(b: sqlite3.Row) -> bool:
@@ -813,12 +860,19 @@ class Teacher:
         return store.utcnow() - created > timedelta(hours=BATCH_LOST_HOURS)
 
     def _absorb(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict) -> None:
+        """Record one finished batch: judgments, second looks, costs and the batch's closing in
+        one transaction, so an interrupt leaves it open and untouched for the next run to
+        absorb again rather than half-recorded with its costs counted twice."""
+        with store.transaction(self.conn):
+            self._absorb_results(b, results, run_id, client, stats)
+
+    def _absorb_results(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict) -> None:
         members = store.batch_members(self.conn, b["id"])
         purpose, model = b["purpose"], b["model"]
-        errored, first_error, answered = 0, "", set()
+        errored, empty, first_error, answered = 0, 0, "", set()
         for res in results:
             ids = members.get(res.custom_id)
-            if not ids:
+            if not ids or res.custom_id in answered:  # unknown, or listed twice: once is enough
                 continue
             answered.add(res.custom_id)
             result = res.result
@@ -831,21 +885,34 @@ class Teacher:
                     stats["failed"] += 1
                 continue
             message = result.message
-            self.llm.record(run_id, model, purpose, message.usage, self.cfg.models.batch_discount)
+            usage, usd = self.llm.cost(model, message.usage, self.cfg.models.batch_discount)
+            store.record_cost(self.conn, run_id, model, purpose, usage, usd)
             verdicts = parse_judgments(self.llm.message_text(message))
             if purpose == "teacher":
-                stats["scored"] += self._absorb_teacher(ids, verdicts or [])
+                done = self._absorb_teacher(ids, verdicts or [])
+                stats["scored"] += done
+                if not done:
+                    empty += 1
+                    store.bump_judge_failures(self.conn, ids)
             else:
                 self._absorb_second_look(ids[0], verdicts, client, stats)
         for custom_id, ids in members.items():
             if custom_id not in answered and purpose == "second_look":
                 store.record_second_look_failure(self.conn, ids[0])
                 stats["failed"] += 1
-        note = f"{errored} of {b['n_requests']} requests failed: {first_error}" if errored else ""
-        store.close_batch(self.conn, b["id"], "partial" if errored else "done", note)
+        notes = []
         if errored:
+            notes.append(f"{errored} of {b['n_requests']} requests failed: {first_error}")
+        if empty:
+            stats["empty"] += empty
+            notes.append(f"{empty} of {b['n_requests']} requests came back with no judgment "
+                         f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `triage safety` shows how many)")
+        note = "; ".join(notes)
+        store.close_batch(self.conn, b["id"], "partial" if errored or empty else "done", note)
+        if note:
             log.warning("teacher: batch %s: %s", b["id"], note)
             stats["notes"].append(f"batch {b['id'][:12]}: {note}")
+        if errored:
             self.llm.adapt_to_error(model, first_error)
 
     def _absorb_teacher(self, ids: list[str], verdicts: list[Verdict]) -> int:

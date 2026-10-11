@@ -408,17 +408,26 @@ def safety(action: str = typer.Argument("status", help="status, or reset")) -> N
         _fail("say status or reset")
     ctx = _ctx()
     tripped = cutmod.breaker_tripped(ctx.conn)
+    given_up = store.given_up(ctx.conn)
     if action == "reset":
         if cutmod.reset_breaker(ctx.conn):
             typer.echo(f"breaker reset (it tripped in run {tripped}); the floor cuts again from the next run")
         else:
             typer.echo("the breaker is not tripped")
+        n = store.reset_judge_failures(ctx.conn)
+        typer.echo(f"{given_up} articles the teacher had given up on are pending again" if given_up
+                   else f"no articles were given up on ({n} failure counts cleared)")
         return
     if tripped:
         typer.echo(f"breaker TRIPPED in run {tripped}: the floor cuts nothing. Check the prompt and the model "
                    "(`triage why ID` on a few newly judged articles), then `triage safety reset`")
     else:
         typer.echo("breaker clear: the floor cuts as configured")
+    if given_up:
+        typer.echo(f"{given_up} unread articles given up on after {store.MAX_JUDGE_FAILURES} answers with no judgment; "
+                   "they stay unread and unjudged until `triage safety reset`")
+    else:
+        typer.echo("no article has been given up on")
 
 
 @app.command()

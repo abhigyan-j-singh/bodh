@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS state (
   protected INTEGER DEFAULT 0,
   exploration INTEGER DEFAULT 0,
   exempt INTEGER DEFAULT 0,
+  judge_failures INTEGER DEFAULT 0,
   cut_run_id INTEGER, cut_mode TEXT, cut_at TEXT,
   cut_tagged INTEGER DEFAULT 0, read_marked INTEGER DEFAULT 0,
   rescued_at TEXT, read_at TEXT,
@@ -111,7 +113,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # existed); each numbered step below brings it one version on, inside one transaction, and
 # is written so that running it on a database that already has the change is harmless.
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA_VERSION_KEY = "schema_version"
 
 
@@ -125,7 +127,14 @@ def _migrate_2(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE state ADD COLUMN exempt INTEGER DEFAULT 0")
 
 
-MIGRATIONS = {2: _migrate_2}
+def _migrate_3(conn: sqlite3.Connection) -> None:
+    """state.judge_failures: how often the model answered for this article with no judgment,
+    so a broken prompt stops being resubmitted every half hour."""
+    if "judge_failures" not in _columns(conn, "state"):
+        conn.execute("ALTER TABLE state ADD COLUMN judge_failures INTEGER DEFAULT 0")
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3}
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -137,16 +146,24 @@ def migrate(conn: sqlite3.Connection) -> int:
     version = schema_version(conn)
     if version >= SCHEMA_VERSION:
         return version
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(conn):
         for step in range(version + 1, SCHEMA_VERSION + 1):
             MIGRATIONS[step](conn)
             kv_set(conn, SCHEMA_VERSION_KEY, str(step))
-        conn.execute("COMMIT")
-    except Exception:
+    return SCHEMA_VERSION
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """All or nothing, and one fsync instead of one per row: the connection runs in
+    autocommit, so bulk writes and multi-step updates ask for a transaction explicitly."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
         conn.execute("ROLLBACK")
         raise
-    return SCHEMA_VERSION
+    conn.execute("COMMIT")
 
 
 # -- text ---------------------------------------------------------------------
@@ -247,6 +264,27 @@ def article(conn: sqlite3.Connection, article_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+MAX_JUDGE_FAILURES = 3  # empty answers from the model for one article before it is left alone
+
+
+def bump_judge_failures(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
+    """The model answered for these articles and said nothing usable; three times and they
+    are left unread, unjudged, until `triage safety reset`."""
+    conn.executemany("UPDATE state SET judge_failures = judge_failures + 1 WHERE article_id = ?", [(i,) for i in ids])
+
+
+def given_up(conn: sqlite3.Connection) -> int:
+    """Unread articles the teacher has stopped asking about."""
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM state st LEFT JOIN scores s ON s.article_id = st.article_id "
+        "WHERE st.status = 'unread' AND st.judge_failures >= ? AND s.article_id IS NULL", (MAX_JUDGE_FAILURES,)
+    ).fetchone()[0] or 0)
+
+
+def reset_judge_failures(conn: sqlite3.Connection) -> int:
+    return conn.execute("UPDATE state SET judge_failures = 0 WHERE judge_failures > 0").rowcount
+
+
 def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders: Iterable[str],
                     exclude_inflight: bool, rejudge: tuple[str, float] | None = None) -> tuple[list[str], list[Any]]:
     """``rejudge`` = (teacher model, min score): a judgment by another model at or above the
@@ -258,6 +296,8 @@ def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders:
         params += [rejudge[0], float(rejudge[1])]
     else:
         where = ["st.status = 'unread'", "s.article_id IS NULL"]
+    where.append("st.judge_failures < ?")  # given up on after repeated empty answers (see given_up)
+    params.append(MAX_JUDGE_FAILURES)
     if max_age_days is not None:
         cutoff_ms = int((utcnow() - timedelta(days=max_age_days)).timestamp() * 1000)
         where.append("((a.crawled_msec IS NULL AND a.published IS NULL) "
@@ -358,6 +398,7 @@ def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_
             bucket, utcnow_iso(),
         ),
     )
+    conn.execute("UPDATE state SET judge_failures = 0 WHERE article_id = ? AND judge_failures > 0", (article_id,))
     return stale
 
 

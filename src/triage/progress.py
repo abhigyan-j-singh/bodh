@@ -119,7 +119,8 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
                                  "WHERE st.status = 'unread' AND s.prompt_version = ?", (version,))
     pending_rows = store.unscored_unread_folders(conn, version, cfg.scoring.max_age_days, skip, exclude_inflight=True)
     pending = len(pending_rows)
-    unscored_all = store.unscored_unread_count(conn, version)
+    unscored_all = store.unscored_unread_count(conn, version)  # leaves out what the teacher gave up on
+    given_up = store.given_up(conn)
     inflight_teacher = store.inflight_ids(conn, "teacher")
     inflight_second = store.inflight_ids(conn, "second_look")
     skipped = _count(conn, f"SELECT COUNT(*) FROM articles a JOIN state st ON st.article_id = a.id "
@@ -200,6 +201,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         "unread": unread, "judged_unread": judged_unread, "pending": pending,
         "inflight": len(inflight_teacher), "inflight_second": len(inflight_second),
         "too_old": too_old, "skipped": skipped, "skip_folders": skip, "low_conf": low_conf, "held": held,
+        "given_up": given_up,
         "stand_in": stand_in, "rejudge": max(0, rejudge), "teacher": cfg.models.teacher,
         "today": today, "week": seven, "month": thirty, "all_time": all_time,
         "cache_hit": cache_hit, "per_1000": per_1000, "output_tokens_week": tokens[3],
@@ -308,6 +310,8 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
         notes.append(f"{_n(snap['inflight_second'])} second looks in flight")
     if snap["held"]:
         notes.append(f"{_n(snap['held'])} kept after a failed second look")
+    if snap.get("given_up"):
+        notes.append(f"{_n(snap['given_up'])} given up on after answers with no judgment (`triage safety`)")
     if notes:
         lines.append("  " + " · ".join(notes))
     lines.append("")

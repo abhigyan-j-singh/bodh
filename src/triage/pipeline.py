@@ -193,14 +193,19 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             teacher.batch_mode = False
         res.batch_mode = teacher.batch_mode
         before = store.scored_ids(conn)
-        if teacher.batch_mode:
-            # judgments submitted last time come back now; what arrived since goes out
+        if store.open_batches(conn):
+            # judgments submitted last time come back now, whatever mode this run is in: a batch
+            # submitted before `models.batch` was turned off must not strand its articles
             phase("collecting finished batches")
             col = teacher.collect(run_id, client=ctx.client, on_progress=live)
             res.scored, res.second_looks, res.saved = col["scored"], col["second_looks"], col["saved"]
             res.notes.extend(col["notes"])
             if col["failed"]:
                 res.notes.append(f"{col['failed']} second look(s) failed; those articles stay unread")
+        else:
+            col = {"scored": 0}
+        if teacher.batch_mode:
+            # what arrived since goes out
             phase("submitting a batch")
             sub = teacher.submit_pending(run_id, limit=score_limit)
             res.submitted, res.dupes = sub["submitted"], sub["dupes"]
@@ -217,7 +222,8 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             phase("judging")
             stats = teacher.score_pending(run_id, limit=score_limit or cfg.scoring.max_per_run,
                                           workers=workers or cfg.scoring.workers, on_progress=live)
-            res.scored, res.dupes, res.pending = stats["scored"], stats["dupes"], stats["pending_after"]
+            res.scored += stats["scored"]
+            res.dupes, res.pending = stats["dupes"], stats["pending_after"]
             if stats["budget_stop"]:
                 res.notes.append("daily budget reached; unscored articles stay unread")
             if stats["failed_batches"]:
