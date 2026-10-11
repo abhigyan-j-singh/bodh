@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS state (
   starred INTEGER DEFAULT 0,
   protected INTEGER DEFAULT 0,
   exploration INTEGER DEFAULT 0,
+  exempt INTEGER DEFAULT 0,
   cut_run_id INTEGER, cut_mode TEXT, cut_at TEXT,
   cut_tagged INTEGER DEFAULT 0, read_marked INTEGER DEFAULT 0,
   rescued_at TEXT, read_at TEXT,
@@ -100,7 +101,52 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.executescript(SCHEMA)
+    migrate(conn)
     return conn
+
+
+# -- migrations ---------------------------------------------------------------
+# SCHEMA above is the current shape, so a new database needs no migration. A database made
+# by an older version carries kv.schema_version (missing = 1, the shape before migrations
+# existed); each numbered step below brings it one version on, inside one transaction, and
+# is written so that running it on a database that already has the change is harmless.
+
+SCHEMA_VERSION = 2
+SCHEMA_VERSION_KEY = "schema_version"
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_2(conn: sqlite3.Connection) -> None:
+    """state.exempt: an undone cut must not be repeated by the next automatic floor."""
+    if "exempt" not in _columns(conn, "state"):
+        conn.execute("ALTER TABLE state ADD COLUMN exempt INTEGER DEFAULT 0")
+
+
+MIGRATIONS = {2: _migrate_2}
+
+
+def schema_version(conn: sqlite3.Connection) -> int:
+    return int(kv_get(conn, SCHEMA_VERSION_KEY) or 1)
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """Bring the database to SCHEMA_VERSION. Returns the version it is at afterwards."""
+    version = schema_version(conn)
+    if version >= SCHEMA_VERSION:
+        return version
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for step in range(version + 1, SCHEMA_VERSION + 1):
+            MIGRATIONS[step](conn)
+            kv_set(conn, SCHEMA_VERSION_KEY, str(step))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return SCHEMA_VERSION
 
 
 # -- text ---------------------------------------------------------------------
@@ -248,7 +294,7 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         """SELECT a.id, a.feed_title, a.folder, a.title, a.url, a.crawled_msec, LENGTH(a.text) AS text_len,
                   s.score, s.quality, s.concept, s.confidence, s.dupe_of, s.flags,
                   s.second_look_score, s.second_look_model,
-                  st.starred, st.protected, st.exploration
+                  st.starred, st.protected, st.exploration, st.exempt, st.rescued_at
            FROM articles a JOIN state st ON st.article_id = a.id
                            JOIN scores s ON s.article_id = a.id
            WHERE st.status = 'unread'
@@ -347,18 +393,27 @@ def run_cut_ids(conn: sqlite3.Connection, run_id: int) -> list[str]:
     return [r[0] for r in conn.execute("SELECT article_id FROM state WHERE cut_run_id = ?", (run_id,))]
 
 
-def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool) -> None:
+def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool, exempt: bool = False) -> None:
+    """Back to unread. ``rescued`` stamps the student's rescue (the article is never cut again,
+    by any path); ``exempt`` (an undo) keeps it clear of the automatic floor, so the next run
+    does not repeat the cut that was just reversed; a prune may still take it."""
     now = utcnow_iso()
     conn.executemany(
         """UPDATE state SET status = 'unread', cut_run_id = NULL, cut_mode = NULL, cut_at = NULL,
-                            cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at)
+                            cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at),
+                            exempt = MAX(exempt, ?)
            WHERE article_id = ?""",
-        [(now if rescued else None, i) for i in ids],
+        [(now if rescued else None, 1 if exempt else 0, i) for i in ids],
     )
 
 
 def status_ids(conn: sqlite3.Connection, status: str) -> set[str]:
     return {r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = ?", (status,))}
+
+
+def rescued_ids(conn: sqlite3.Connection) -> set[str]:
+    """Articles the student rescued after a cut; no path cuts them again."""
+    return {r[0] for r in conn.execute("SELECT article_id FROM state WHERE rescued_at IS NOT NULL")}
 
 
 # -- runs and costs -----------------------------------------------------------
@@ -545,3 +600,7 @@ def kv_get(conn: sqlite3.Connection, key: str, default: str | None = None) -> st
 def kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                  (key, value))
+
+
+def kv_delete(conn: sqlite3.Connection, key: str) -> bool:
+    return conn.execute("DELETE FROM kv WHERE key = ?", (key,)).rowcount > 0

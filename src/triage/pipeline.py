@@ -222,6 +222,8 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
                                  f"{cfg.breakers.lowered_floor}")
                 cfg.cut.default_floor = min(cfg.cut.default_floor, cfg.breakers.lowered_floor)
             sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client)
+            if sel.blocked:
+                res.notes.append(sel.blocked)
             res.second_looks += sel.second_looks
             res.saved += sel.saved_by_second_look
             res.exploration = sel.reserved_for_exploration

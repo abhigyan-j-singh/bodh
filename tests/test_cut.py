@@ -99,3 +99,42 @@ def test_crash_between_tag_and_read_is_finished_next_run(conn, cfg):
     untagged, unmarked = cut.finish_pending_cuts(client, conn, cfg)
     assert (untagged, unmarked) == (0, 1)
     assert client.read == [ids]
+
+
+def test_rescued_article_survives_floor_and_prune(conn, cfg):
+    cfg.cut.exploration_share = 0.0
+    cfg.cut.target_unread = 1
+    ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12), dict(n=3, score=90)])
+    run_id = store.begin_run(conn, "run")
+    store.mark_cut(conn, ids[:1], run_id, "floor")
+    store.restore_unread(conn, ids[:1], rescued=True)   # the student marked it unread again
+    sel = cut.select_floor(conn, cfg, teacher=None, run_id=None)
+    assert sel.cut_ids == [ids[1]]
+    sel = cut.select_prune(conn, cfg)
+    assert ids[0] not in sel.cut_ids and ids[1] in sel.cut_ids
+
+
+def test_undo_is_not_reversed_by_the_next_floor(conn, cfg):
+    cfg.cut.exploration_share = 0.0
+    ids = seed_scored(conn, cfg, [dict(n=1, score=10), dict(n=2, score=12)])
+    client = FakeClient()
+    run_id = store.begin_run(conn, "run")
+    cut.apply_cut(client, conn, cfg, ids, run_id, "floor")
+    assert cut.undo(client, conn, cfg, run_id) == 2
+    assert cut.select_floor(conn, cfg, teacher=None, run_id=None).cut_ids == []   # not cut again
+    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0        # an undo is not a rescue
+    cfg.cut.target_unread = 0
+    assert set(cut.select_prune(conn, cfg).cut_ids) == set(ids)                  # a prune may still take them
+
+
+def test_breaker_blocks_the_floor_until_cleared(conn, cfg):
+    cfg.breakers.min_new_for_breaker = 5
+    ids = seed_scored(conn, cfg, [dict(n=i, score=5) for i in range(1, 11)])
+    with pytest.raises(cut.BreakerTripped):
+        cut.select_floor(conn, cfg, teacher=None, run_id=7, newly_scored=set(ids))
+    assert cut.breaker_tripped(conn) == "7"
+    # the next run sees nothing new, so the share test cannot trip again: the trip must stand
+    sel = cut.select_floor(conn, cfg, teacher=None, run_id=8, newly_scored=set())
+    assert sel.cut_ids == [] and "safety reset" in sel.blocked and len(sel.survivors) == 10
+    assert cut.reset_breaker(conn) and cut.breaker_tripped(conn) is None
+    assert len(cut.select_floor(conn, cfg, teacher=None, run_id=9, newly_scored=set()).cut_ids) == 10

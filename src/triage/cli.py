@@ -90,7 +90,7 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
         return
     ctx = pipeline.Context(cfg, secrets, conn)
     try:
-        info = ctx.client.user_info()
+        ctx.client.user_info()
         typer.echo("bazqux login: ok")
         unread = ctx.client.unread_ids()
         typer.echo(f"bazqux unread: {len(unread)}")
@@ -383,6 +383,29 @@ def halt() -> None:
     cfg = load_config()
     for line in control.halt(cfg):
         typer.echo(line)
+
+
+@app.command()
+def safety(action: str = typer.Argument("status", help="status, or reset")) -> None:
+    """The breaker: a floor that would cut nearly everything newly judged trips it, and the
+    floor then cuts nothing until `triage safety reset` says someone has looked."""
+    from . import cut as cutmod
+
+    if action not in ("status", "reset"):
+        _fail("say status or reset")
+    ctx = _ctx()
+    tripped = cutmod.breaker_tripped(ctx.conn)
+    if action == "reset":
+        if cutmod.reset_breaker(ctx.conn):
+            typer.echo(f"breaker reset (it tripped in run {tripped}); the floor cuts again from the next run")
+        else:
+            typer.echo("the breaker is not tripped")
+        return
+    if tripped:
+        typer.echo(f"breaker TRIPPED in run {tripped}: the floor cuts nothing. Check the prompt and the model "
+                   "(`triage why ID` on a few newly judged articles), then `triage safety reset`")
+    else:
+        typer.echo("breaker clear: the floor cuts as configured")
 
 
 @app.command()

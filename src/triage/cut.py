@@ -24,6 +24,7 @@ from .teacher import Teacher, has_more_to_read
 log = logging.getLogger(__name__)
 
 BAND = 20  # one scoring band; the concept cap never displaces an article by more than this
+BREAKER_KEY = "breaker_tripped"  # kv: the run whose floor tripped the breaker; set until `triage safety reset`
 
 
 class BreakerTripped(Exception):
@@ -39,6 +40,7 @@ class Selection:
     saved_by_second_look: int = 0
     reserved_for_exploration: int = 0
     second_looks: int = 0
+    blocked: str = ""  # why the floor cut nothing this run (the breaker is tripped), else empty
 
     @property
     def cut_ids(self) -> list[str]:
@@ -46,8 +48,18 @@ class Selection:
 
 
 def eligible(row: sqlite3.Row) -> bool:
-    """Never cut, by either path: starred or protected (Must read, protected folders)."""
-    return not row["starred"] and not row["protected"]
+    """Never cut, by either path: starred, protected (Must read, protected folders), or rescued
+    by the student (marked unread again, or tagged `wrong`, after a cut)."""
+    return not row["starred"] and not row["protected"] and not row["rescued_at"]
+
+
+def breaker_tripped(conn: sqlite3.Connection) -> str | None:
+    """The run id whose floor tripped the breaker, while the trip stands."""
+    return store.kv_get(conn, BREAKER_KEY)
+
+
+def reset_breaker(conn: sqlite3.Connection) -> bool:
+    return store.kv_delete(conn, BREAKER_KEY)
 
 
 # -- the automatic floor ------------------------------------------------------
@@ -55,13 +67,24 @@ def eligible(row: sqlite3.Row) -> bool:
 def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None, run_id: int | None,
                  newly_scored: set[str] | None = None, client: BazQuxClient | None = None) -> Selection:
     """Everything unread, scored with medium or high confidence, below its folder's floor,
-    minus the second look's saves, minus the exploration quota, capped per run."""
+    minus the second look's saves, minus the exploration quota, capped per run. Exempt as
+    well: what an undo restored (``exempt``), until a prune takes it."""
     pool = store.unread_scored(conn)
     sel = Selection()
+    tripped = breaker_tripped(conn)
+    if tripped:
+        # a trip stands until someone has looked: the same scores would trip it again next run
+        sel.blocked = (f"breaker tripped in run {tripped}; the floor cuts nothing until "
+                       "`triage safety reset`")
+        log.warning("cut: %s", sel.blocked)
+        sel.survivors = list(pool)
+        sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
+        return sel
     candidates: list[sqlite3.Row] = []
     for row in pool:
         floor = cfg.cut.floor_for(row["folder"])
-        if floor is None or not eligible(row) or row["exploration"] or row["confidence"] == "low":
+        if (floor is None or not eligible(row) or row["exploration"] or row["exempt"]
+                or row["confidence"] == "low"):
             sel.survivors.append(row)
             continue
         if row["score"] < floor:
@@ -74,9 +97,11 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
         new_candidates = sum(1 for r in candidates if r["id"] in newly_scored)
         share = new_candidates / len(newly_scored)
         if share > cfg.breakers.max_cut_share:
+            store.kv_set(conn, BREAKER_KEY, str(run_id if run_id is not None else "?"))
             raise BreakerTripped(
                 f"floor would cut {new_candidates} of {len(newly_scored)} newly scored articles "
-                f"({share:.0%}); stopping before any write. The prompt or model has probably broken."
+                f"({share:.0%}); stopping before any write. The prompt or model has probably broken; "
+                "the floor stays off until `triage safety reset`."
             )
 
     # second look: a close call whose full text holds more than the opening gets the stronger
@@ -243,25 +268,28 @@ def tag_buckets(client: BazQuxClient, conn: sqlite3.Connection) -> int:
 
 
 def undo(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, run_id: int) -> int:
+    """Reverse one run's cut. The restored articles are exempt from the automatic floor from
+    then on (their scores have not changed, so it would only repeat the cut); a prune, the
+    student's own decision, may still take them."""
     ids = store.run_cut_ids(conn, run_id)
     if not ids:
         return 0
     client.mark_unread(ids)
     client.untag(ids, cfg.tags.cut)
-    store.restore_unread(conn, ids, rescued=False)
+    store.restore_unread(conn, ids, rescued=False, exempt=True)
     return len(ids)
 
 
 def bankruptcy(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, older_than_days: int,
                protected_ids: set[str], run_id: int, dry_run: bool = False) -> tuple[int, int]:
-    """Mark read every unread article older than the cutoff, stars and protections exempt.
-    Returns (candidates, done)."""
+    """Mark read every unread article older than the cutoff, stars, protections and the
+    student's rescues exempt. Returns (candidates, done)."""
     import time
 
     refs = client.unread_ids()
     cutoff_usec = int((time.time() - older_than_days * 86400) * 1_000_000)
     starred = set(client.starred_ids())
-    exempt = starred | protected_ids
+    exempt = starred | protected_ids | store.rescued_ids(conn)
     ids = [r.id for r in refs if r.timestamp_usec and r.timestamp_usec < cutoff_usec and r.id not in exempt]
     if dry_run or not ids:
         return len(ids), 0

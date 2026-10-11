@@ -224,6 +224,7 @@ def status(cfg: Config, conn: sqlite3.Connection) -> dict:
         "now": store.utcnow_iso(),
         "panel": panel_state(cfg),
         "mode": "enforce" if cfg.cut.enforce else "shadow",
+        "breaker_tripped": store.kv_get(conn, "breaker_tripped"),
         "batch_mode": cfg.models.batch,
         "running": None if proc is None else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
         "jobs": jobs,
@@ -280,6 +281,8 @@ def render_status_text(st: dict) -> str:
         lines.append(f"○ idle · {when}")
     lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'shadow' else ' (the floor cuts)'} · "
                  f"{'batch' if st['batch_mode'] else 'synchronous'} judging · teacher {st['config']['teacher']}")
+    if st.get("breaker_tripped"):
+        lines.append(f"BREAKER TRIPPED in run {st['breaker_tripped']}: the floor cuts nothing until `triage safety reset`")
     j = st["jobs"]
     def jstate(name: str) -> str:
         s = j[name]

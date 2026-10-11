@@ -492,3 +492,51 @@ def test_blast_stops_at_the_time_limit(cfg, conn):
     assert "time limit" in store.last_runs(conn, 1)[0]["summary"]
     total = pipeline.blast(ctx, workers=3)
     assert total["pending"] == 0 and not total["timed_out"]
+
+
+# -- the student's rescue and the undo hold against the next floor -----------------
+
+def test_rescued_article_survives_the_floor(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "plain news"])
+    res = pipeline.run(ctx, enforce=True)
+    junk = items[1].id
+    assert res.cut_floor == 1 and store.article(conn, junk)["status"] == "cut"
+    client.labels[cfg.tags.wrong] = [junk]          # the student tags it `wrong` in BazQux
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["rescues"] == 1 and res.cut_floor == 0
+    row = store.article(conn, junk)
+    assert row["status"] == "unread" and row["rescued_at"]
+    assert [k for k, _ in store.feedback_for(conn, junk)] == ["rescue", "wrong"]
+    assert client.unread_marked[-1] == [junk] and (cfg.tags.wrong, [junk]) in client.untagged
+    res = pipeline.run(ctx, enforce=True)              # and it stays
+    assert res.cut_floor == 0 and store.article(conn, junk)["status"] == "unread"
+
+
+def test_undo_is_not_reversed_by_the_next_floor(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "junk again"])
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 2
+    run_id, restored = pipeline.undo_last(ctx)
+    assert restored == 2
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 0 and store.status_ids(conn, "cut") == set()
+
+
+def test_tripped_breaker_blocks_later_floors_and_shows_in_status(cfg, conn):
+    from triage import control, cut
+
+    cfg.breakers.min_new_for_breaker = 3
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b", "junk c", "junk d"])
+    import pytest
+
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.run(ctx, enforce=True)
+    assert client.read == [] and not store.last_runs(conn, 1)[0]["ok"]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_floor == 0 and "safety reset" in " ".join(res.notes)
+    assert "BREAKER TRIPPED" in control.render_status_text(control.status(cfg, conn))
+    assert cut.reset_breaker(conn)
+    res = pipeline.run(ctx, enforce=True)   # nothing newly scored: the share test does not apply; the floor cuts
+    assert res.cut_floor == 4
