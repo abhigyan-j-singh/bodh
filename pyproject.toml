@@ -1,8 +1,27 @@
 [project]
-name = "triage"
-version = "0.1.0"
-description = "Keeps a BazQux unread list worth reading: a teacher scores every article, the worst are marked read, you choose the depth."
+name = "viveka-rss"
+dynamic = ["version"]
+description = "A teacher for your BazQux unread list: scores every article as reading material for you, tags it, cuts the worst, learns from what you read."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Abhigyan J Singh" }]
 requires-python = ">=3.10"
+keywords = ["rss", "bazqux", "reading-list", "claude", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: News/Diary",
+]
 dependencies = [
     "anthropic>=0.40",
     "httpx>=0.27",
@@ -16,14 +35,18 @@ dependencies = [
 dev = ["pytest>=8.2", "ruff>=0.5"]
 
 [project.scripts]
-triage = "triage.cli:app"
+viveka = "viveka.cli:app"
+triage = "viveka.cli:triage_alias"   # the old name, for one release: prints a note, then runs
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/viveka/__init__.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/triage"]
+packages = ["src/viveka"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -39,4 +62,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/triage/cli.py" = ["B008"]
+"src/viveka/cli.py" = ["B008"]

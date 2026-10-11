@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 from conftest import FakeClient, make_item, seed_scored
 
-from triage import feedback, store
+from viveka import feedback, store
 
 
 def test_empty_upstream_unread_list_is_not_a_bulk_dismiss(conn, cfg):
@@ -49,7 +49,7 @@ def test_read_dismissed_expired_marked_unread_again_return_to_unread(conn, cfg):
     exempt = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE exempt = 1")}
     assert exempt == {ids[0]}
     # and they are in the pool the cuts select from
-    from triage import cut
+    from viveka import cut
 
     cfg.cut.target_unread = 0
     assert set(cut.select_prune(conn, cfg).cut_ids) == set(ids)

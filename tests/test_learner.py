@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from triage import learner
+from viveka import learner
 
 
 def _git(cwd, *args) -> str:
@@ -48,7 +48,7 @@ def test_git_commit_without_identity_logs_and_returns_false(tmp_path, monkeypatc
     monkeypatch.delenv("GIT_COMMITTER_NAME", raising=False)
     monkeypatch.delenv("GIT_COMMITTER_EMAIL", raising=False)
     assert learner.git_commit(profile, "v1")
-    assert "triage@localhost" in _git(profile, "log", "-1", "--format=%ae")
+    assert "viveka@localhost" in _git(profile, "log", "-1", "--format=%ae")
     # git itself failing is a warning with git's words, and False
     monkeypatch.setattr(learner, "GIT_IDENTITY", ["-c", "core.hooksPath=/nonexistent", "-c", "user.name=", "-c", "user.email="])
     (profile / "learner.md").write_text("y\n", encoding="utf-8")
@@ -60,7 +60,7 @@ def test_git_commit_without_identity_logs_and_returns_false(tmp_path, monkeypatc
 def test_gate_check_never_writes_the_learner_file(cfg, conn):
     """The gate used to write the proposed text to learner.md and rely on a finally to put the
     old one back; a kill in between made the ungated text the live model."""
-    from triage.teacher import TeacherError
+    from viveka.teacher import TeacherError
 
     class ExplodingLLM:
         plain_json = False
@@ -74,7 +74,7 @@ def test_gate_check_never_writes_the_learner_file(cfg, conn):
     from conftest import seed_scored
 
     ids = seed_scored(conn, cfg, [dict(n=1, score=90)])
-    from triage import store
+    from viveka import store
 
     store.add_feedback(conn, ids[0], "star")
     path = cfg.learner_path
@@ -102,7 +102,7 @@ def test_gate_judges_with_the_proposed_model(cfg, conn):
 
     from conftest import seed_scored
 
-    from triage import store
+    from viveka import store
 
     ids = seed_scored(conn, cfg, [dict(n=1, score=90)])
     store.add_feedback(conn, ids[0], "star")
@@ -122,7 +122,7 @@ def test_repeats_seed():
 def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
     from conftest import seed_scored
 
-    from triage import store
+    from viveka import store
 
     (cfg.root / "profile" / "seed.md").write_text(
         "# Seed\n\nStudent: a marine biologist who reads to decide where the lab's next decade goes.\n", encoding="utf-8")

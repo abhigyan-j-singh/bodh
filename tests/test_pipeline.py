@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 
 from conftest import FakeClient, make_item
 
-from triage import learner, pipeline, store
-from triage.bazqux import Subscription
-from triage.config import Secrets
-from triage.teacher import Verdict
+from viveka import learner, pipeline, store
+from viveka.bazqux import Subscription
+from viveka.config import Secrets
+from viveka.teacher import Verdict
 
 
 class FakeBazQux(FakeClient):
@@ -294,7 +294,7 @@ def test_weekly_rewrite_applies_when_gate_passes(cfg, conn):
 
 
 def test_old_and_unscored_folders_are_never_judged(cfg, conn):
-    from triage.config import FolderPolicy
+    from viveka.config import FolderPolicy
 
     cfg.scoring.max_age_days = 14
     cfg.cut.folders = {"Comics": FolderPolicy(protected=True, score=False)}
@@ -459,7 +459,7 @@ def test_blast_with_a_stand_in_model_then_the_teacher_rejudges_the_promising(cfg
     assert store.article(conn, items[0].id)["model"] == "fast-model"
     cfg.models.teacher = "claude-sonnet-5-5"   # a new process reads the config afresh
     # pending for the teacher now: the stand-in's 50+ (gold 90, plain 55), not the junk (10)
-    from triage.teacher import Teacher
+    from viveka.teacher import Teacher
 
     rule = Teacher.rejudge_rule(cfg)
     assert rule == ("claude-sonnet-5-5", 50.0)
@@ -470,7 +470,7 @@ def test_blast_with_a_stand_in_model_then_the_teacher_rejudges_the_promising(cfg
     assert store.article(conn, items[0].id)["model"] == "claude-sonnet-5-5"
     assert store.article(conn, items[1].id)["model"] == "fast-model"   # junk stays with the stand-in's verdict
     assert store.unscored_unread(conn, cfg.scoring.prompt_version, rejudge=rule) == []
-    from triage import progress
+    from viveka import progress
 
     snap = progress.snapshot(conn, cfg)
     assert snap["stand_in"] == 1 and snap["rejudge"] == 0 and "stand-in" in progress.render_text(snap)
@@ -529,7 +529,7 @@ def test_undo_is_not_reversed_by_the_next_floor(cfg, conn):
 
 
 def test_tripped_breaker_blocks_later_floors_and_shows_in_status(cfg, conn):
-    from triage import control, cut
+    from viveka import control, cut
 
     cfg.breakers.min_new_for_breaker = 3
     ctx, client, items = build(cfg, conn, ["junk a", "junk b", "junk c", "junk d"])
@@ -551,7 +551,7 @@ def test_must_read_protection_survives_label_failure(cfg, conn):
     cut a protected article while the run reported ok."""
     import pytest
 
-    from triage.bazqux import BazQuxError
+    from viveka.bazqux import BazQuxError
 
     cfg.cut.exploration_share = 0.0
     ctx, client, items = build(cfg, conn, ["junk one", "junk two"])
@@ -606,7 +606,7 @@ def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
 def test_vanished_batch_is_closed_as_lost(cfg, conn):
     """A batch deleted in the console (or submitted under a rotated key) used to fail every
     run forever as a ModelConfigError; it is closed as lost and its articles are pending again."""
-    from triage.teacher import BatchNotFound
+    from viveka.teacher import BatchNotFound
 
     cfg.scoring.batch_size = 2
     ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
@@ -670,11 +670,11 @@ def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
         else:
             assert res.submitted == 0 and res.pending == 0      # given up on: not resubmitted
     assert store.given_up(conn) == 2
-    from triage import progress
+    from viveka import progress
 
     assert "given up on" in progress.render_text(progress.snapshot(conn, cfg))
     ctx.llm._verdicts = real
-    assert store.reset_judge_failures(conn) == 2                # `triage safety reset`
+    assert store.reset_judge_failures(conn) == 2                # `viveka safety reset`
     res = pipeline.run(ctx, enforce=False)
     assert res.submitted == 2
     ctx.llm.finish_all()
@@ -689,7 +689,7 @@ def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interr
     real_results = ctx.llm.batch_results
     ctx.llm.batch_results = lambda bid: real_results(bid) * 2   # the same result listed twice
     # the first absorb is interrupted half way: nothing of it may stick
-    from triage import teacher as teachermod
+    from viveka import teacher as teachermod
 
     real_absorb = teachermod.Teacher._absorb_teacher
 
@@ -735,7 +735,7 @@ def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
 def test_bankruptcy_dry_run_records_no_run_row(cfg, conn):
     ctx, client, items = build(cfg, conn, ["old a", "old b"])
     pipeline.run(ctx, enforce=False)
-    client.unread_ids = lambda: [__import__("triage.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1) for i in items]
+    client.unread_ids = lambda: [__import__("viveka.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1) for i in items]
     before = len(store.last_runs(conn, 50))
     candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=True)
     assert candidates == 2 and done == 0 and len(store.last_runs(conn, 50)) == before and client.read == []
@@ -773,8 +773,8 @@ def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
     """adapt_to_error writes through the LLM's own connection; called inside the absorb's
     transaction it waited on that transaction's lock until it timed out, and every run after
     failed on the same batch."""
-    from triage import store as storemod
-    from triage.teacher import LLM
+    from viveka import store as storemod
+    from viveka.teacher import LLM
 
     cfg.scoring.batch_size = 1
     ctx, client, items = build(cfg, conn, ["junk a"], batch=True)
@@ -816,7 +816,7 @@ def test_read_then_unread_again_is_not_cut_by_the_floor(cfg, conn):
 
 
 def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
-    from triage import cut
+    from viveka import cut
 
     cfg.breakers.min_new_for_breaker = 3
     cfg.cut.target_unread = 1
@@ -827,7 +827,7 @@ def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
     with pytest.raises(cut.BreakerTripped):
         pipeline.run(ctx, enforce=True)
     res = pipeline.run(ctx, enforce=True)
-    assert res.ok and res.cut_prune == 0 and client.read == [] and "waits for `triage safety reset`" in " ".join(res.notes)
+    assert res.ok and res.cut_prune == 0 and client.read == [] and "waits for `viveka safety reset`" in " ".join(res.notes)
     with pytest.raises(cut.BreakerTripped):
         pipeline.prune(ctx)                         # the student's own prune is refused too
     assert cut.reset_breaker(conn)

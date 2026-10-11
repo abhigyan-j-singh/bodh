@@ -1,5 +1,5 @@
 """The whole-system status, the levers (stop, enforce, schedule) and the control room server,
-driven with a stand-in `triage` command so nothing real runs."""
+driven with a stand-in `viveka` command so nothing real runs."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from pathlib import Path
 
 from conftest import seed_scored
 
-from triage import control, ops, store
-from triage.panel import Panel
+from viveka import control, ops, store
+from viveka.panel import Panel
 
 FAKE = '''
 import sys, time
@@ -34,12 +34,12 @@ elif args[:1] == ["sleepy"]:
     except KeyboardInterrupt:
         print("interrupted", flush=True); sys.exit(130)
 else:
-    print("fake triage", *args)
+    print("fake viveka", *args)
 '''
 
 
 def _fake_command(tmp_path: Path) -> list[str]:
-    script = tmp_path / "fake_triage.py"
+    script = tmp_path / "fake_viveka.py"
     script.write_text(FAKE, encoding="utf-8")
     return [sys.executable, str(script)]
 
@@ -53,7 +53,7 @@ def _post(url: str, payload: dict, header: bool = True) -> tuple[int, dict]:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
     if header:
-        req.add_header("X-Triage", "panel")
+        req.add_header("X-Viveka", "panel")
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return r.status, json.loads(r.read().decode("utf-8"))
@@ -81,7 +81,7 @@ def test_status_text_and_enforce_flip(conn, cfg):
     ok, msg = control.set_enforce(cfg.root, True)
     assert ok and "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     # launchd is not here: states say so instead of failing
-    j = control.job_state("com.antriksh.triage")
+    j = control.job_state("viveka.run")
     assert j["installed"] is False and j["state"] == "not installed"
     assert "not installed" in control.schedule("pause")
 
@@ -93,7 +93,7 @@ def test_running_process_and_stop(conn, cfg):
     # a child process holding the lock, as a blast or prune would
     src = str(Path(__file__).resolve().parents[1] / "src")
     code = (
-        f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path; from triage.ops import run_lock\n"
+        f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path; from viveka.ops import run_lock\n"
         f"with run_lock(Path({str(data_dir)!r}), 'blast'):\n"
         "    print('locked', flush=True)\n"
         "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        pass\n"
@@ -108,7 +108,7 @@ def test_running_process_and_stop(conn, cfg):
         msg = ops.stop_process(data_dir, wait=10)
         assert msg.startswith("stopped blast")
         proc.wait(timeout=10)
-    assert ops.running_process(data_dir) is None and not (data_dir / "triage.pid").exists()
+    assert ops.running_process(data_dir) is None and not (data_dir / "viveka.pid").exists()
 
 
 def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
@@ -147,7 +147,7 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     assert res["ok"] and "restored 3" in res["output"]
     # a background action streams output and refuses a second one while it runs
     code, res = _post(base + "/api/action", {"action": "run"})
-    assert res["ok"] and res["message"].startswith("started: triage run")
+    assert res["ok"] and res["message"].startswith("started: viveka run")
     code, res2 = _post(base + "/api/action", {"action": "run_shadow"})
     assert not res2["ok"] and "already running" in res2["message"]
     for _ in range(50):
@@ -174,11 +174,11 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     os.utime(cfg.root / "config.yaml", (time.time() + 10, time.time() + 10))
     st = _get(base + "/api/status")
     assert st["mode"] == "shadow" and st["config"]["target"] == 25
-    assert os.environ.get("TRIAGE_HOME") != str(cfg.root)  # the child env carries it, the test process does not
+    assert os.environ.get("VIVEKA_HOME") != str(cfg.root)  # the child env carries it, the test process does not
 
 
 def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
-    from triage.panel import panel_log
+    from viveka.panel import panel_log
 
     st = control.panel_state(cfg)
     assert st["up"] is False and st["url"] == "http://127.0.0.1:8766" and st["note"] == ""
@@ -210,7 +210,7 @@ def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
 
 
 def test_installer_covers_every_job():
-    """install-launchd.sh must install every job `triage status` reports on, each with a template;
+    """install-launchd.sh must install every job `viveka status` reports on, each with a template;
     the control room once went missing from the loop and the page could never answer."""
     root = Path(__file__).resolve().parents[1]
     installer = (root / "install-launchd.sh").read_text(encoding="utf-8")
@@ -225,8 +225,8 @@ def test_installer_covers_every_job():
 def test_set_enforce_every_yaml_spelling(cfg):
     """Whatever spelling the file uses, the key under `cut:` is the one edited, comments stay,
     a missing key is added under `cut:`, and an `enforce:` elsewhere is left alone."""
-    from triage.config import load_config
-    from triage.control import _edit_cut_enforce
+    from viveka.config import load_config
+    from viveka.control import _edit_cut_enforce
 
     path = cfg.root / "config.yaml"
     for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
@@ -294,19 +294,19 @@ def test_schedule_kick_refuses_while_running(conn, cfg):
 
 
 def test_stray_processes_only_this_checkout(tmp_path):
-    r"""The old pattern (`\.venv/bin/triage|-m triage\.cli`, unanchored) matched another checkout's
+    r"""The old pattern (`\.venv/bin/viveka|-m viveka\.cli`, unanchored) matched another checkout's
     control room and an editor whose arguments carried the path."""
     import re
 
     pattern = re.compile(control.stray_pattern(tmp_path))
     lines = {
-        101: f"{tmp_path}/.venv/bin/triage panel --port 8766",
-        102: "/Users/other/triage/.venv/bin/triage run",
-        103: f"vim {tmp_path}/.venv/bin/triage",
-        104: "/usr/bin/python3 -m triage.cli run",
-        105: f"{tmp_path}/.venv/bin/triage",
-        106: f"{tmp_path}/.venv/bin/python {tmp_path}/.venv/bin/triage progress --watch",   # as the shebang runs it
-        107: "/Users/other/triage/.venv/bin/python /Users/other/triage/.venv/bin/triage panel",
+        101: f"{tmp_path}/.venv/bin/viveka panel --port 8766",
+        102: "/Users/other/viveka/.venv/bin/viveka run",
+        103: f"vim {tmp_path}/.venv/bin/viveka",
+        104: "/usr/bin/python3 -m viveka.cli run",
+        105: f"{tmp_path}/.venv/bin/viveka",
+        106: f"{tmp_path}/.venv/bin/python {tmp_path}/.venv/bin/viveka progress --watch",   # as the shebang runs it
+        107: "/Users/other/viveka/.venv/bin/python /Users/other/viveka/.venv/bin/viveka panel",
     }
     assert {pid for pid, cmd in lines.items() if pattern.search(cmd)} == {101, 104, 105, 106}
 
@@ -352,7 +352,7 @@ def test_panel_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
         except urllib.error.HTTPError as exc:
             assert exc.code == 403
         req = urllib.request.Request(base + "/api/action", data=b"{}", method="POST",
-                                     headers={"Host": host, "X-Triage": "panel", "Content-Type": "application/json"})
+                                     headers={"Host": host, "X-Viveka": "panel", "Content-Type": "application/json"})
         try:
             urllib.request.urlopen(req, timeout=10)
             raise AssertionError(host)

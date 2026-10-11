@@ -580,7 +580,7 @@ class Teacher:
         self.system_text = f"{intro}\n\n{rubric}\n\n{student}"
         self.second_look_text = f"{load_prompt('second_look.v1', cfg.root)}\n\n{rubric}\n\n{student}"
         self.context = context or "(no reading history yet)"
-        self.batch_mode = cfg.models.batch  # a run may switch this off (`triage run --sync`)
+        self.batch_mode = cfg.models.batch  # a run may switch this off (`viveka run --sync`)
         self.rejudge = self.rejudge_rule(cfg)  # None when a stand-in model must not touch the teacher's work
         self.stale_tags: dict[str, list[str]] = {}  # bucket tag -> articles a re-score moved out of it
 
@@ -917,7 +917,7 @@ class Teacher:
         if empty:
             stats["empty"] += empty
             notes.append(f"{empty} of {b['n_requests']} requests came back with no judgment "
-                         f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `triage safety` shows how many)")
+                         f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `viveka safety` shows how many)")
         note = "; ".join(notes)
         store.close_batch(self.conn, b["id"], "partial" if errored or empty else "done", note)
         if note:

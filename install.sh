@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or update triage in place. Safe to run again and again; this is also the update command.
+# Install or update viveka in place. Safe to run again and again; this is also the update command.
 #   ./install.sh            create/refresh .venv, install the package, copy example files if missing, run doctor
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,7 +34,7 @@ if [ ! -f .env ]; then
   fi
 fi
 mkdir -p data dashboard
-mkdir -p "$HOME/Library/Logs/triage" 2>/dev/null || true
+mkdir -p "$HOME/Library/Logs/viveka" 2>/dev/null || true
 
 if [ ! -d profile ]; then
   cp -R profile.example profile
@@ -45,4 +45,4 @@ if [ -d profile ] && [ ! -d profile/.git ] && command -v git >/dev/null 2>&1; th
 fi
 
 echo
-.venv/bin/triage doctor
+.venv/bin/viveka doctor

@@ -237,7 +237,11 @@ class Config(Strict):
 
     @property
     def db_path(self) -> Path:
-        return (self.root / self.data_dir / "triage.db").resolve()
+        """data/viveka.db; an install from before the rename keeps its data/triage.db as it is."""
+        data = (self.root / self.data_dir).resolve()
+        old = data / "triage.db"
+        new = data / "viveka.db"
+        return old if old.exists() and not new.exists() else new
 
     @property
     def seed_path(self) -> Path:
@@ -284,20 +288,23 @@ class ConfigError(Exception):
 
 
 def find_root(start: Path | None = None) -> Path:
-    """The project root: TRIAGE_HOME, else the first ancestor of the working directory that
+    """The project root: VIVEKA_HOME, else the first ancestor of the working directory that
     holds config.yaml. Never a guess: a run in a folder with no config.yaml must not invent
     one with default folders and floors and start cutting."""
-    env_root = os.environ.get("TRIAGE_HOME")
+    env_root = os.environ.get("VIVEKA_HOME")
+    if not env_root and os.environ.get("TRIAGE_HOME"):
+        env_root = os.environ["TRIAGE_HOME"]
+        log.warning("TRIAGE_HOME is the old name; set VIVEKA_HOME instead (TRIAGE_HOME stops working in the next release)")
     if env_root:
         root = Path(env_root).expanduser().resolve()
         if not (root / "config.yaml").exists():
-            raise ConfigError(f"TRIAGE_HOME is {root} but it holds no config.yaml")
+            raise ConfigError(f"VIVEKA_HOME is {root} but it holds no config.yaml")
         return root
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
         if (candidate / "config.yaml").exists():
             return candidate
-    raise ConfigError(f"no config.yaml in {here} or above it; run from the triage folder, or set TRIAGE_HOME")
+    raise ConfigError(f"no config.yaml in {here} or above it; run from the viveka folder, or set VIVEKA_HOME")
 
 
 def load_config(root: Path | None = None) -> Config:

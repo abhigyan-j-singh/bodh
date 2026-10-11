@@ -7,22 +7,22 @@ from pathlib import Path
 import pytest
 import yaml
 
-from triage.config import Config, ConfigError, find_root, load_config
+from viveka.config import Config, ConfigError, find_root, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_find_root_env_ancestor_and_refusal(tmp_path, monkeypatch):
-    monkeypatch.delenv("TRIAGE_HOME", raising=False)
+    monkeypatch.delenv("VIVEKA_HOME", raising=False)
     project = tmp_path / "proj"
     (project / "deep" / "er").mkdir(parents=True)
     (project / "config.yaml").write_text("timezone: UTC\n", encoding="utf-8")
     assert find_root(project / "deep" / "er") == project.resolve()
     with pytest.raises(ConfigError):
         find_root(tmp_path)  # nothing above tmp_path holds a config.yaml of ours
-    monkeypatch.setenv("TRIAGE_HOME", str(project))
+    monkeypatch.setenv("VIVEKA_HOME", str(project))
     assert find_root(tmp_path) == project.resolve()
-    monkeypatch.setenv("TRIAGE_HOME", str(tmp_path))
+    monkeypatch.setenv("VIVEKA_HOME", str(tmp_path))
     with pytest.raises(ConfigError):
         find_root()
     with pytest.raises(ConfigError):
@@ -79,7 +79,7 @@ def test_config_rejects_typos_bounds_and_timezone():
 
 
 def test_secrets_never_appear_in_repr_or_str():
-    from triage.config import Secrets
+    from viveka.config import Secrets
 
     s = Secrets(bazqux_email="student@example.com", bazqux_password="hunter2", anthropic_api_key="sk-ant-xyz",
                 healthcheck_url="https://hc-ping.com/uuid-secret")
@@ -93,7 +93,7 @@ def test_secrets_never_appear_in_repr_or_str():
 def test_unknown_model_warns_once(caplog):
     import logging
 
-    from triage.config import Models, _warned_models
+    from viveka.config import Models, _warned_models
 
     _warned_models.discard("brand-new-model")
     m = Models()

@@ -49,7 +49,7 @@ def _section(text: str, heading_prefix: str) -> str:
 
 
 def nudge(cfg: Config, conn: sqlite3.Connection, kind: str, phrase: str) -> str:
-    """`triage want X` / `triage meh X`: a dated line the teacher sees immediately."""
+    """`viveka want X` / `viveka meh X`: a dated line the teacher sees immediately."""
     return nudges(cfg, conn, [(kind, phrase)])[0]
 
 
@@ -77,7 +77,7 @@ def _write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str
     return version
 
 
-GIT_IDENTITY = ["-c", "user.name=triage", "-c", "user.email=triage@localhost"]  # when git has none to use
+GIT_IDENTITY = ["-c", "user.name=viveka", "-c", "user.email=viveka@localhost"]  # when git has none to use
 
 
 def git_commit(repo_dir: Path, message: str) -> bool:

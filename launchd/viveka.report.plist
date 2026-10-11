@@ -2,24 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- triage report: the 1st of every month, 07:30 local time. The feed report with proposals.
+    <!-- viveka report: the 1st of every month, 07:30 local time. The feed report with proposals.
          install-launchd.sh fills in the placeholders. -->
     <key>Label</key>
-    <string>com.antriksh.triage.report</string>
+    <string>viveka.report</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>__TRIAGE_DIR__/.venv/bin/triage</string>
+        <string>__VIVEKA_DIR__/.venv/bin/viveka</string>
         <string>report</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>__TRIAGE_DIR__</string>
+    <string>__VIVEKA_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>TRIAGE_HOME</key>
-        <string>__TRIAGE_DIR__</string>
+        <key>VIVEKA_HOME</key>
+        <string>__VIVEKA_DIR__</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
@@ -37,8 +37,8 @@ __USERNAME__
     </dict>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/triage/launchd.report.log</string>
+    <string>__HOME__/Library/Logs/viveka/launchd.report.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/triage/launchd.report.log</string>
+    <string>__HOME__/Library/Logs/viveka/launchd.report.log</string>
 </dict>
 </plist>

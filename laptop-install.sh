@@ -9,12 +9,12 @@ echo "== 1/4 install"
 
 echo
 echo "== 2/4 live check (BazQux login, folders, one call to each model)"
-.venv/bin/triage doctor --live
+.venv/bin/viveka doctor --live
 
 echo
 echo "== 3/4 first run in shadow mode (scores and tags up to 400 articles, cuts nothing)"
-.venv/bin/triage run --shadow || true
-.venv/bin/triage status
+.venv/bin/viveka run --shadow || true
+.venv/bin/viveka status
 
 echo
 echo "== 4/4 launchd agents (every 30 min while logged in; Sunday weekly; monthly report; control room on http://127.0.0.1:8766)"
@@ -24,9 +24,9 @@ cat <<EOF
 
 done. Scores are appearing in BazQux as tags score-90 … score-0 (open a tag with the unread filter on).
 Next, when you are ready:
-  .venv/bin/triage bankruptcy --older-than 14          clear the old pile (reversible with: triage undo)
-  .venv/bin/triage prune --dry-run                     see what a prune to 40 would cut
-  .venv/bin/triage replay --archive ../feedfilter/data/feedfilter.db --golden ../evals/golden.jsonl
+  .venv/bin/viveka bankruptcy --older-than 14          clear the old pile (reversible with: viveka undo)
+  .venv/bin/viveka prune --dry-run                     see what a prune to 40 would cut
+  .venv/bin/viveka replay --archive ../feedfilter/data/feedfilter.db --golden ../evals/golden.jsonl
   edit config.yaml: cut.enforce: true, cut.default_floor: 25   after two or three shadow days
-control room: http://127.0.0.1:8766 (status, run, stop, prune, undo, blast, the dashboard underneath); whole picture in the terminal: .venv/bin/triage status
+control room: http://127.0.0.1:8766 (status, run, stop, prune, undo, blast, the dashboard underneath); whole picture in the terminal: .venv/bin/viveka status
 EOF

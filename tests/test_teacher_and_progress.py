@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 from conftest import FakeClient, make_item, seed_scored
 
-from triage import ops, progress, store
-from triage.config import FolderPolicy, Secrets
-from triage.teacher import LLM, JudgmentIn, Teacher, has_more_to_read, parse_judgments
+from viveka import ops, progress, store
+from viveka.config import FolderPolicy, Secrets
+from viveka.teacher import LLM, JudgmentIn, Teacher, has_more_to_read, parse_judgments
 
 
 def test_parse_compact_judgments_maps_codes_and_clamps():
@@ -34,7 +34,7 @@ def test_parse_compact_judgments_maps_codes_and_clamps():
 
 
 def test_judgment_schema_has_no_unsupported_constraints():
-    from triage.teacher import _output_format
+    from viveka.teacher import _output_format
 
     fmt = _output_format()
     assert fmt["type"] == "json_schema"

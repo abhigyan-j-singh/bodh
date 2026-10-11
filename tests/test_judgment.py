@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from triage.ids import resolve_ordinal, short_to_long
-from triage.teacher import (
+from viveka.ids import resolve_ordinal, short_to_long
+from viveka.teacher import (
     JudgmentIn,
     Teacher,
     Verdict,

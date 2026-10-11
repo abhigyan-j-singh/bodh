@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from triage.config import Config
-from triage.ids import long_to_short, normalize_item_id, resolve_ordinal, short_to_long
-from triage.learner import expansion_topics
-from triage.teacher import Verdict, canonical_url, compose, matches_topic
+from viveka.config import Config
+from viveka.ids import long_to_short, normalize_item_id, resolve_ordinal, short_to_long
+from viveka.learner import expansion_topics
+from viveka.teacher import Verdict, canonical_url, compose, matches_topic
 
 
 def test_id_round_trip():

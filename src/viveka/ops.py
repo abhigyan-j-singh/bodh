@@ -45,11 +45,14 @@ class AlreadyRunning(Exception):
 
 
 def log_file(data_dir: Path) -> Path:
-    """Where the run log lives: ~/Library/Logs/triage on a Mac, data/logs elsewhere."""
-    log_dir = Path(os.path.expanduser("~/Library/Logs/triage"))
-    if not log_dir.parent.exists():
-        log_dir = data_dir / "logs"
-    return log_dir / "triage.log"
+    """Where the run log lives: ~/Library/Logs/viveka on a Mac, data/logs elsewhere. An install
+    from before the rename that still has ~/Library/Logs/triage keeps writing there."""
+    logs = Path(os.path.expanduser("~/Library/Logs"))
+    if not logs.exists():
+        return data_dir / "logs" / "viveka.log"
+    if (logs / "triage").is_dir() and not (logs / "viveka").is_dir():
+        return logs / "triage" / "viveka.log"
+    return logs / "viveka" / "viveka.log"
 
 
 class Redactor(logging.Filter):
@@ -149,7 +152,7 @@ def _pid_alive_windows(pid: int) -> bool:
 
 def _pid_record(data_dir: Path) -> tuple[int, str, float] | None:
     try:
-        pid_s, kind, started = (data_dir / "triage.pid").read_text(encoding="utf-8").split()
+        pid_s, kind, started = (data_dir / "viveka.pid").read_text(encoding="utf-8").split()
         return int(pid_s), kind, float(started)
     except (OSError, ValueError):
         return None
@@ -180,17 +183,17 @@ def run_in_progress(data_dir: Path) -> bool:
     rec = _pid_record(data_dir)
     if rec is None or not pid_alive(rec[0]):
         return False
-    return _lock_held_by_someone(data_dir / "triage.lock")
+    return _lock_held_by_someone(data_dir / "viveka.lock")
 
 
 @contextmanager
 def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
     """One run at a time. launchd fires every 30 minutes regardless; a slow run must not overlap.
-    While held, data/triage.pid names the process, so `triage stop` and the panel can end it,
-    and `triage progress` can say how long it has been running."""
-    path = data_dir / "triage.lock"
+    While held, data/viveka.pid names the process, so `viveka stop` and the panel can end it,
+    and `viveka progress` can say how long it has been running."""
+    path = data_dir / "viveka.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
-    pid_path = data_dir / "triage.pid"
+    pid_path = data_dir / "viveka.pid"
     if fcntl is None:
         with _exclusive_file_lock(path):
             with _pid_file(pid_path, kind):
@@ -204,7 +207,7 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
                 break
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise AlreadyRunning("another triage run holds the lock") from None
+                    raise AlreadyRunning("another viveka run holds the lock") from None
                 time.sleep(0.01)
         try:
             with _pid_file(pid_path, kind):
@@ -249,7 +252,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
                     pass
                 continue
             if time.monotonic() >= deadline:
-                raise AlreadyRunning("another triage run holds the lock") from None
+                raise AlreadyRunning("another viveka run holds the lock") from None
             time.sleep(0.01)
     try:
         os.write(fd, f"{os.getpid()}\n".encode())
@@ -274,7 +277,7 @@ def running_process(data_dir: Path) -> dict | None:
 
 
 def stop_process(data_dir: Path, wait: float = 20.0) -> str:
-    """Interrupt the running triage process (Ctrl-C), then insist. The run fails open:
+    """Interrupt the running viveka process (Ctrl-C), then insist. The run fails open:
     what was judged stays, nothing half-cut is left behind the next run cannot finish."""
     proc = running_process(data_dir)
     if proc is None:

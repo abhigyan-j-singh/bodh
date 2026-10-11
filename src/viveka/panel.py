@@ -1,7 +1,7 @@
 """The control room: one page with the whole state of the system and the levers, served
-on the Mac (`triage panel`, kept alive by launchd) and reachable from the phone over
+on the Mac (`viveka panel`, kept alive by launchd) and reachable from the phone over
 Tailscale. Status refreshes every 3 seconds; actions start the same commands you would
-type (`triage run`, `prune`, `undo`, `blast` …) as child processes and stream their
+type (`viveka run`, `prune`, `undo`, `blast` …) as child processes and stream their
 output; Stop interrupts whatever run holds the lock. No framework, one file."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from .config import Config, load_config
 log = logging.getLogger(__name__)
 
 ACTIONS = {
-    # action: (arguments after `triage`, runs in the background?)
+    # action: (arguments after `viveka`, runs in the background?)
     "run": (["run"], True),
     "run_shadow": (["run", "--shadow"], True),
     "run_sync": (["run", "--sync"], True),
@@ -110,11 +110,11 @@ class Panel:
                  host: str = "127.0.0.1", port: int = 8766) -> None:
         self.cfg = cfg
         self.conn = conn
-        self.command = command or [sys.executable, "-m", "triage.cli"]
+        self.command = command or [sys.executable, "-m", "viveka.cli"]
         self.host, self.port = host, port
         self.child = Child()
         self.db_lock = threading.Lock()
-        self.env = {**os.environ, "TRIAGE_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
+        self.env = {**os.environ, "VIVEKA_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
         self._status_cache: tuple[float, dict] | None = None
         self._jobs_cache: tuple[float, dict] | None = None
         self._config_mtime: float | None = None
@@ -146,7 +146,7 @@ class Panel:
     def host_allowed(self, host_header: str | None) -> bool:
         """The page is served on 127.0.0.1 and reached from the phone through tailscale serve;
         a request whose Host is anything else comes from a page that rebound a DNS name to
-        this machine, and gets nothing (the X-Triage header alone does not stop that)."""
+        this machine, and gets nothing (the X-Viveka header alone does not stop that)."""
         host = (host_header or "").strip().lower()
         if host.startswith("["):
             host = host.split("]", 1)[0] + "]"
@@ -155,7 +155,7 @@ class Panel:
         return host in {"127.0.0.1", "localhost", "[::1]", "::1", self.host.lower()} or host.endswith(".ts.net")
 
     def _reload_config(self) -> None:
-        """config.yaml edited by hand (or by `triage enforce` in a terminal) shows on the next
+        """config.yaml edited by hand (or by `viveka enforce` in a terminal) shows on the next
         refresh; a file that does not parse leaves the last good configuration in place."""
         path = self.cfg.root / "config.yaml"
         try:
@@ -196,13 +196,13 @@ class Panel:
             if ops.running_process(self.cfg.root / self.cfg.data_dir):
                 return {"ok": False, "message": "a run holds the lock (started elsewhere); stop it or wait"}
             self.child.start(cmd, self.cfg.root, self.env)
-            return {"ok": True, "message": f"started: triage {' '.join(args)}"}
+            return {"ok": True, "message": f"started: viveka {' '.join(args)}"}
         try:
             res = subprocess.run(cmd, cwd=str(self.cfg.root), env=self.env, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
-            return {"ok": False, "message": f"triage {' '.join(args)} took longer than 10 minutes"}
+            return {"ok": False, "message": f"viveka {' '.join(args)} took longer than 10 minutes"}
         out = (res.stdout + ("\n" + res.stderr if res.stderr.strip() else "")).strip()
-        return {"ok": res.returncode == 0, "message": f"triage {' '.join(args)} → exit {res.returncode}", "output": out[-6000:]}
+        return {"ok": res.returncode == 0, "message": f"viveka {' '.join(args)} → exit {res.returncode}", "output": out[-6000:]}
 
     # -- server ---------------------------------------------------------------
 
@@ -259,7 +259,7 @@ class Panel:
                 if not panel.host_allowed(self.headers.get("Host")):
                     self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
                     return
-                if self.headers.get("X-Triage") != "panel":  # a page of ours, not a stray form from another site
+                if self.headers.get("X-Viveka") != "panel":  # a page of ours, not a stray form from another site
                     self._send(403, b'{"ok":false,"message":"forbidden"}')
                     return
                 length = int(self.headers.get("Content-Length") or 0)
@@ -343,7 +343,7 @@ def _extra_args(action: str, params: dict) -> list[str]:
 
 
 PAGE = r"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>triage control room</title>
+<title>viveka control room</title>
 <style>
 body{font:15px/1.45 -apple-system,system-ui,sans-serif;max-width:1100px;margin:18px auto;padding:0 14px;color:#222;background:#fff}
 h1{font-size:20px;margin:0 0 2px}h2{font-size:16px;margin:22px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
@@ -364,7 +364,7 @@ th{color:#555;font-weight:600}.num{text-align:right}
 iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
 .msg{margin:6px 0;font-size:14px}.flash{background:#fff3b0;transition:background 1.5s}
 </style></head><body>
-<h1>triage control room</h1>
+<h1>viveka control room</h1>
 <div class='muted'>__ROOT__ · <span id='clock'></span></div>
 
 <div class='state'><span id='dot' class='dot'></span><span id='state'>loading…</span></div>
@@ -429,7 +429,7 @@ async function act(action, extra){
     all_ages: document.getElementById('allages').checked}, extra || {});
   msg('working: ' + action + ' …');
   try {
-    var r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json','X-Triage':'panel'}, body: JSON.stringify(p)});
+    var r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json','X-Viveka':'panel'}, body: JSON.stringify(p)});
     var d = await r.json();
     msg(d.message || (d.ok ? 'done' : 'failed'), !d.ok);
     if (d.output !== undefined) { document.getElementById('cmd').textContent = '· ' + action; document.getElementById('out').textContent = d.output || '(no output)'; }
@@ -443,7 +443,7 @@ function apply(d){
   var running = !!r || (c && c.running);
   dot.className = 'dot' + (running ? ' on' : '');
   if (r) st.innerHTML = '<b>' + esc(r.kind) + ' running</b> for ' + mins(r.elapsed) + (r.phase ? ' · ' + esc(r.phase) : '') + ' · ' + Math.round(d.rate_per_min||0) + ' judged/min';
-  else if (c && c.running) st.innerHTML = '<b>triage ' + esc(c.args.join(' ')) + '</b> running for ' + mins(c.elapsed);
+  else if (c && c.running) st.innerHTML = '<b>viveka ' + esc(c.args.join(' ')) + '</b> running for ' + mins(c.elapsed);
   else st.innerHTML = 'idle · <b>' + esc(d.mode) + ' mode</b>' + (d.next_run_in != null ? ' · next scheduled run in ' + mins(d.next_run_in) : ' · schedule ' + esc(d.jobs.run.state));
   document.getElementById('b-stop').disabled = !running;
   var p = d.pile, s = d.spend, cfg = d.config, cp = d.cuts_pending;
@@ -462,7 +462,7 @@ function apply(d){
     var ok = r.ok ? '<span class="ok">yes</span>' : (r.finished_at ? '<span class="bad">no</span>' : '<span class="warn">…</span>');
     rb += '<tr><td>' + esc((r.started_at||'').slice(0,16)) + '</td><td>' + esc(r.kind) + '</td><td>' + ok + '</td><td>' + esc(r.summary || r.error || '') + '</td></tr>'; });
   document.getElementById('runs').innerHTML = rb;
-  if (c && (c.running || c.output.length)) { document.getElementById('cmd').textContent = '· triage ' + c.args.join(' ') + (c.running ? ' (running)' : ' (exit ' + c.code + ')');
+  if (c && (c.running || c.output.length)) { document.getElementById('cmd').textContent = '· viveka ' + c.args.join(' ') + (c.running ? ' (running)' : ' (exit ' + c.code + ')');
     var out = document.getElementById('out'); var txt = c.output.join('\n'); if (out.textContent !== txt) { out.textContent = txt || '(no output yet)'; out.scrollTop = out.scrollHeight; } }
   if (lastChildRunning && c && !c.running) { document.getElementById('dash').contentWindow.location.reload(); }
   lastChildRunning = c && c.running;

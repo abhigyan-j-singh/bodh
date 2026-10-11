@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from conftest import seed_scored
 
-from triage import dashboard, report, store
+from viveka import dashboard, report, store
 
 
 def test_dashboard_and_weekly_note_render(conn, cfg):
@@ -49,7 +49,7 @@ def test_proposal_thresholds(conn, cfg):
     after a day-0 bankruptcy the first report proposed unsubscribing from every big feed."""
     from conftest import make_item
 
-    from triage.config import FolderPolicy
+    from viveka.config import FolderPolicy
 
     now = store.utcnow_iso()
     # 60 unscored articles of one feed, all bankrupted
@@ -89,7 +89,7 @@ def test_links_only_http(conn, cfg):
 
 
 def test_write_live_unique_tmp(conn, cfg):
-    from triage import progress
+    from viveka import progress
 
     path = progress.write_live(cfg, conn)
     assert path is not None and not list(path.parent.glob("*.tmp")) and path.name == "progress.json"

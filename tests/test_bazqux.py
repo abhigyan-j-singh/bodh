@@ -7,13 +7,13 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from triage.bazqux import READ, BazQuxAuthError, BazQuxClient, _int_or_none, _parse_item
-from triage.ids import short_to_long
+from viveka.bazqux import READ, BazQuxAuthError, BazQuxClient, _int_or_none, _parse_item
+from viveka.ids import short_to_long
 
 
 @pytest.fixture(autouse=True)
 def _fast(monkeypatch):
-    import triage.bazqux as bq
+    import viveka.bazqux as bq
 
     monkeypatch.setattr(bq, "MIN_REQUEST_INTERVAL", 0.0)
     monkeypatch.setattr(bq, "BACKOFF_BASE", 0.0)
@@ -60,8 +60,8 @@ def test_login_401_and_403_raise_auth_error():
 def test_pagination_bounded_on_repeating_continuation(monkeypatch):
     """A continuation that repeats, or never ends, is an error: a shorter list than the truth
     would read as "everything else was read" or "nothing else is protected"."""
-    import triage.bazqux as bq
-    from triage.bazqux import BazQuxError
+    import viveka.bazqux as bq
+    from viveka.bazqux import BazQuxError
 
     monkeypatch.setattr(bq, "MAX_PAGES", 10)
     calls = {"n": 0}

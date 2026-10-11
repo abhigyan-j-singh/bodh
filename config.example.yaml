@@ -1,17 +1,17 @@
-# triage configuration. Copy to config.yaml and adjust. Secrets live in .env, never here.
+# viveka configuration. Copy to config.yaml and adjust. Secrets live in .env, never here.
 
 timezone: "Asia/Kolkata"
-data_dir: "./data"                 # triage.db, run logs
+data_dir: "./data"                 # viveka.db, run logs
 profile_dir: "./profile"           # seed.md (yours), learner.md (rewritten weekly), a git repo
 dashboard_dir: "./dashboard"       # index.html, served with: tailscale serve --bg --set-path / $(pwd)/dashboard
-obsidian_note: ""                  # e.g. "~/Obsidian/Main/Triage/Weekly.md"; empty disables the note
+obsidian_note: ""                  # e.g. "~/Obsidian/Main/Viveka/Weekly.md"; empty disables the note
 
 models:
   teacher: "claude-sonnet-5-5"     # reads every article
   second_look: "claude-opus-5-5"   # re-reads close calls with the full text; can only save an article
   learner: "claude-opus-5-5"       # rewrites learner.md on Sundays
   batch: true                      # Message Batches API: half price; judgments arrive on the next run (30 min).
-                                   # `triage run --sync` waits for every call instead.
+                                   # `viveka run --sync` waits for every call instead.
   batch_discount: 0.5
   cache_ttl: "1h"                  # the teacher's cached prefix stays warm between runs ("5m" or "1h")
   daily_budget_usd: 8.0            # scoring pauses (nothing is cut) when a day's spend passes this
@@ -19,7 +19,7 @@ models:
   prices_per_mtok:                 # input, output, cache read (USD per million tokens); cache writes 1.25x / 2x input
     claude-sonnet-5-5: [2.0, 10.0, 0.10]
     claude-opus-5-5: [4.0, 20.0, 0.20]
-    claude-haiku-5-5: [0.10, 0.50, 0.01]   # the stand-in for `triage blast --model claude-haiku-5-5`
+    claude-haiku-5-5: [0.10, 0.50, 0.01]   # the stand-in for `viveka blast --model claude-haiku-5-5`
     claude-haiku-4-5: [1.0, 5.0, 0.10]
 
 scoring:
@@ -30,7 +30,7 @@ scoring:
   workers: 4                       # synchronous runs: teacher calls and second looks in flight at once
   max_per_run: 400                 # synchronous runs: articles scored per run
   batch_max_per_run: 1200          # batch runs: articles submitted per run
-  max_age_days: 14                 # unread articles older than this are never scored; `triage bankruptcy` is for them
+  max_age_days: 14                 # unread articles older than this are never scored; `viveka bankruptcy` is for them
   rejudge_min_score: 50            # what a stand-in model (a blast) rated at least this, the teacher judges again
   opening_chars: 1200              # text the teacher sees on the first pass
   second_look_window: 10           # a floor candidate within this many points of the floor gets a second look...
@@ -39,7 +39,7 @@ scoring:
 
 cut:
   enforce: false                   # start in shadow mode: score and tag, cut nothing; flip to true after the shadow days
-  target_unread: 40                # `triage prune` with no arguments keeps this many
+  target_unread: 40                # `viveka prune` with no arguments keeps this many
   default_floor: 35                # automatic floor for folders without their own
   max_cuts_per_run: 500            # a broken prompt costs one undo, not a library
   concept_cap: 0.25                # in a prune, no concept may hold more than this share of survivors
