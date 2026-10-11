@@ -21,23 +21,40 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 
 from . import __version__, dashboard, learner, pipeline, report, store
-from .config import load_config, load_secrets
+from .config import Config, ConfigError, load_config, load_secrets
 from .ids import normalize_item_id
-from .ops import AlreadyRunning, RunTimeout, run_lock, setup_logging, time_limit
+from .ops import AlreadyRunning, RunTimeout, graceful_sigterm, run_lock, setup_logging, time_limit
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
 
+EXIT_CONFIG = 2  # no usable config.yaml
+VERBOSE = typer.Option(False, "-v", "--verbose", help="Debug-level log lines in the terminal.")
+
+
+def _config() -> Config:
+    """config.yaml, or a one-line refusal: every command but `version` needs it."""
+    try:
+        return load_config()
+    except ConfigError as exc:
+        _fail(str(exc), EXIT_CONFIG)
+        raise  # unreachable; keeps the type checker honest
+    except Exception as exc:  # noqa: BLE001 — a config that does not parse or validate
+        _fail(f"config.yaml does not load: {exc}", EXIT_CONFIG)
+        raise
+
 
 def _ctx(verbose: bool = False) -> pipeline.Context:
-    cfg = load_config()
-    setup_logging(cfg.root / cfg.data_dir, verbose)
+    cfg = _config()
     secrets = load_secrets(cfg.root)
+    setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
     conn = store.connect(cfg.db_path)
     return pipeline.Context(cfg, secrets, conn)
 
@@ -53,14 +70,18 @@ def version() -> None:
 
 
 @app.command()
-def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models.")) -> None:
-    """Connectivity and configuration checks. Run after every update."""
-    try:
-        cfg = load_config()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"config.yaml does not parse: {exc}")
-        return
+def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
+           verbose: bool = VERBOSE) -> None:
+    """Connectivity and configuration checks. Run after every update. Exits 1 when a check
+    fails, so an installer stops on a broken install."""
+    cfg = _config()
     secrets = load_secrets(cfg.root)
+    problems: list[str] = []
+
+    def problem(text: str) -> None:
+        problems.append(text)
+        typer.echo(text)
+
     typer.echo(f"root: {cfg.root}")
     typer.echo(f"models: teacher={cfg.models.teacher} second_look={cfg.models.second_look} learner={cfg.models.learner}"
                f" budget=${cfg.models.daily_budget_usd}/day")
@@ -68,9 +89,12 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
             else f"synchronous ({cfg.scoring.workers} calls at once)")
     typer.echo(f"mode: {mode} · prompt {cfg.scoring.prompt_version} · {cfg.scoring.batch_size} articles per call"
                f" · articles older than {cfg.scoring.max_age_days} days are never scored")
-    typer.echo(f"cut: target {cfg.cut.target_unread}, floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run,"
-               f" folders {list(cfg.cut.folders) or 'none'}")
-    typer.echo(f"seed: {'found' if cfg.read_seed() else 'MISSING (profile/seed.md)'}")
+    typer.echo(f"cut: {'enforcing' if cfg.cut.enforce else 'shadow mode'}, target {cfg.cut.target_unread}, "
+               f"floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run, folders {list(cfg.cut.folders) or 'none'}")
+    if cfg.read_seed():
+        typer.echo("seed: found")
+    else:
+        problem("seed: MISSING (profile/seed.md): the teacher cannot judge for a student it knows nothing about")
     typer.echo(f"learner model: {'found' if cfg.read_learner() else 'missing (will start empty)'}")
     from .teacher import PROMPTS_DIR, load_prompt
 
@@ -79,18 +103,34 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
             load_prompt(name, cfg.root)
             typer.echo(f"prompt {name}: ok")
         except Exception as exc:  # noqa: BLE001
-            typer.echo(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
-    typer.echo(f"bazqux credentials: {'set' if secrets.bazqux_email and secrets.bazqux_password else 'MISSING'}")
-    typer.echo(f"anthropic key: {'set' if secrets.anthropic_api_key else 'MISSING'}")
-    hb = "set" if secrets.healthcheck_url else "not set (no dead-man's switch)"
+            problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
+    if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
+        typer.echo("bazqux credentials: set")
+    else:
+        problem("bazqux credentials: MISSING (BAZQUX_EMAIL, BAZQUX_PASSWORD in .env)")
+    if secrets.is_set("anthropic_api_key"):
+        typer.echo("anthropic key: set")
+    else:
+        problem("anthropic key: MISSING (ANTHROPIC_API_KEY in .env)")
+    hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
     conn = store.connect(cfg.db_path)
-    typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles)")
-    if not live:
-        return
+    typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles, "
+               f"schema v{store.schema_version(conn)})")
+    if live and not problems:
+        _doctor_live(cfg, secrets, conn, problem)
+    elif live:
+        typer.echo("live checks skipped until the problems above are fixed")
+    if problems:
+        typer.echo(f"\n{len(problems)} problem(s); see above", err=True)
+        raise typer.Exit(1)
+    typer.echo("ok")
+
+
+def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
     ctx = pipeline.Context(cfg, secrets, conn)
     try:
-        info = ctx.client.user_info()
+        ctx.client.user_info()
         typer.echo("bazqux login: ok")
         unread = ctx.client.unread_ids()
         typer.echo(f"bazqux unread: {len(unread)}")
@@ -100,16 +140,20 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
         tags = ctx.client.tags()
         typer.echo(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
         want = f"user/-/label/{cfg.cut.must_read_stream}"
-        typer.echo(f"must-read stream '{cfg.cut.must_read_stream}': {'present' if want in tags else 'not found (create it in BazQux)'}")
+        if want in tags:
+            typer.echo(f"must-read stream '{cfg.cut.must_read_stream}': present")
+        else:
+            problem(f"must-read stream '{cfg.cut.must_read_stream}': not found (create it in BazQux, or name yours in "
+                    "cut.must_read_stream)")
         unknown = [f for f in cfg.cut.folders if f not in folders]
         if unknown:
-            typer.echo(f"warning: config folders not in BazQux: {unknown}")
+            problem(f"config folders not in BazQux: {unknown}")
         if unread:
             items, _ = ctx.client.contents([r.id for r in unread[:3]])
             for it in items:
                 typer.echo(f"   - {it.title[:70]} ({it.feed_title[:30]})")
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"bazqux: FAILED ({exc})")
+        problem(f"bazqux: FAILED ({exc})")
     try:
         from .teacher import Teacher, concept_context
 
@@ -119,12 +163,18 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
                  "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once."}
         verdicts = teacher.judge_batch([probe], None)  # type: ignore[list-item]
         v = verdicts.get("probe")
-        typer.echo(f"teacher ({cfg.models.teacher}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}" if v else "teacher: call ok, no verdict parsed")
+        if v:
+            typer.echo(f"teacher ({cfg.models.teacher}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}")
+        else:
+            problem(f"teacher ({cfg.models.teacher}): call ok, no verdict parsed")
         second = teacher.second_look(probe, None)  # type: ignore[arg-type]
-        typer.echo(f"second look ({cfg.models.second_look}): {'ok' if second is not None else 'FAILED'}")
-        typer.echo(f"spend for this doctor run: ${store.spent_since(conn, store.days_ago_iso(0)):.4f} (today total)")
+        if second is not None:
+            typer.echo(f"second look ({cfg.models.second_look}): ok")
+        else:
+            problem(f"second look ({cfg.models.second_look}): FAILED")
+        typer.echo(f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}")
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"models: FAILED ({exc})")
+        problem(f"models: FAILED ({exc})")
 
 
 @app.command()
@@ -132,11 +182,11 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
         limit: int | None = typer.Option(None, "--limit", help="Score (or submit) at most this many articles this run."),
         sync: bool = typer.Option(False, "--sync", help="Wait for every model call instead of using the Batches API."),
         workers: int | None = typer.Option(None, "--workers", help="Model calls in flight at once (--sync); default from config."),
-        verbose: bool = typer.Option(False, "-v")) -> None:
+        verbose: bool = VERBOSE) -> None:
     """One full pass. This is what launchd runs every 30 minutes."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), time_limit(pipeline.RUN_TIMEOUT_SECONDS):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), graceful_sigterm(), time_limit(pipeline.RUN_TIMEOUT_SECONDS):
             res = pipeline.run(ctx, score_limit=limit, enforce=(ctx.cfg.cut.enforce and not shadow),
                                workers=workers, sync=sync)
     except AlreadyRunning:
@@ -156,24 +206,28 @@ def run(shadow: bool = typer.Option(False, "--shadow", help="Score and tag, cut 
 
 @app.command()
 def score(limit: int | None = typer.Option(None, "--limit"), sync: bool = typer.Option(False, "--sync"),
-          workers: int | None = typer.Option(None, "--workers"), verbose: bool = typer.Option(False, "-v")) -> None:
+          workers: int | None = typer.Option(None, "--workers"), verbose: bool = VERBOSE) -> None:
     """Score and tag without cutting (the same as `run --shadow`)."""
     run(shadow=True, limit=limit, sync=sync, workers=workers, verbose=verbose)
 
 
 @app.command()
 def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
-             every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch.")) -> None:
+             every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
+             verbose: bool = VERBOSE) -> None:
     """How far the teacher has got: judged, in flight, pending, by folder; rate and ETA while a
     run is going; batches; spend; the log."""
     import time
 
     from . import progress as progressmod
+    from .ops import log_file
 
-    cfg = load_config()
+    cfg = _config()
     conn = store.connect(cfg.db_path)
     while True:
-        text = progressmod.render_text(progressmod.snapshot(conn, cfg))
+        snap = progressmod.snapshot(conn, cfg)
+        snap["log"] = progressmod.log_tail(log_file(cfg.root / cfg.data_dir), 10)
+        text = progressmod.render_text(snap)
         if watch:
             typer.echo("\033[2J\033[H" + text + f"\n\n(redraws every {every}s; Ctrl-C to stop)")
             try:
@@ -194,7 +248,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
           budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars for the blast."),
           max_seconds: float | None = typer.Option(None, "--max-seconds", help="Start no new call after this long; run again to continue."),
           yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
+          verbose: bool = VERBOSE) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, full price. Scores and tags; cuts nothing. Stop it with Ctrl-C and run
     it again to continue. Watch it on the dashboard or with `triage progress --watch`."""
@@ -218,9 +272,9 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
     if pending == 0:
         typer.echo("nothing pending" + ("" if all_ages else " within the scoring window (--all-ages for the rest)"))
         return
-    p_in, p_out = cfg.models.price(judge)
-    if p_in == 0 and p_out == 0:
+    if not cfg.models.has_price(judge):
         _fail(f"no price for {judge} in models.prices_per_mtok; add it to config.yaml first")
+    p_in, p_out = cfg.models.price(judge)
     est = pending * (450 * p_in + 65 * p_out) / 1_000_000 * 1.1   # synchronous, prefix cached
     left = cfg.models.daily_budget_usd - store.spent_since(ctx.conn, store.local_midnight_iso(cfg.timezone))
     need = max(cfg.models.daily_budget_usd, cfg.models.daily_budget_usd - left + est + 1)
@@ -246,7 +300,7 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
         last_line["n"] = done
 
     try:
-        with run_lock(cfg.root / cfg.data_dir, "blast"):
+        with run_lock(cfg.root / cfg.data_dir, "blast"), graceful_sigterm():
             total = pipeline.blast(ctx, workers=workers, chunk=chunk, all_ages=all_ages, budget=budget,
                                    on_progress=show, model=model, max_seconds=max_seconds)
     except AlreadyRunning:
@@ -271,20 +325,51 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
           fraction: float | None = typer.Option(None, "--fraction", help="Cut this share of what is unread."),
           below: float | None = typer.Option(None, "--below", help="Cut everything scoring under this."),
           dry_run: bool = typer.Option(False, "--dry-run", help="Show the cut without making it."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
-    """Cut the worst of what is still unread. Default keeps the target (40). Run again to cut deeper."""
+          yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+          verbose: bool = VERBOSE) -> None:
+    """Cut the worst of what is still unread. Default keeps the target (40). Run again to cut
+    deeper. Shows what would go and asks first, unless --yes or not in a terminal."""
     if sum(x is not None for x in (keep, fraction, below)) > 1:
         _fail("choose one of --keep, --fraction, --below")
+    if keep is not None and keep < 0:
+        _fail("--keep must be 0 or more")
+    if fraction is not None and not 0 <= fraction <= 1:
+        _fail("--fraction is a share between 0 and 1")
     ctx = _ctx(verbose)
+    lock = ctx.cfg.root / ctx.cfg.data_dir
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "prune"):
-            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=dry_run)
+        with run_lock(lock, "prune"):
+            _, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=True)
+        _show_prune(sel, dry_run=True)
+        if dry_run or not sel.cut:
+            return
+        # the question is asked with the lock released: a run must not be skipped over a prompt
+        if not yes and _interactive() and not typer.confirm(f"Cut these {len(sel.cut)} (undo reverses it)?"):
+            raise typer.Exit(0)
+        with run_lock(lock, "prune"), graceful_sigterm():
+            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
         return
     except KeyboardInterrupt:
         _fail("stopped; the next run finishes the tags and read marks, `triage undo` reverses the prune", 130)
         return
+    except pipeline.cutmod.BreakerTripped as exc:
+        _fail(str(exc))
+        return
+    if n:
+        typer.echo(f"cut {n}; `triage undo` reverses it (run {store.last_runs(ctx.conn, 1)[0]['id']})")
+
+
+def _interactive() -> bool:
+    """Someone is at the keyboard (so a question can be asked); a script or launchd is not."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _show_prune(sel: Any, dry_run: bool) -> None:
     unread_scored = len(sel.cut) + len(sel.survivors)
     verb = "would cut" if dry_run else "cut"
     typer.echo(f"{verb} {len(sel.cut)} of {unread_scored} scored unread articles; boundary "
@@ -294,16 +379,14 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         typer.echo("the best of what goes (this is the boundary you are choosing):")
         for r in best:
             typer.echo(f"  {r['score']:5.1f}  {(r['title'] or '')[:70]}  [{(r['feed_title'] or '')[:25]}]")
-    if not dry_run and n:
-        typer.echo("done; `triage undo` reverses it")
 
 
 @app.command()
-def undo(verbose: bool = typer.Option(False, "-v")) -> None:
+def undo(verbose: bool = VERBOSE) -> None:
     """Reverse the last cut: mark its articles unread again and remove the cut tag."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"), graceful_sigterm():
             run_id, n = pipeline.undo_last(ctx)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
@@ -317,7 +400,7 @@ def undo(verbose: bool = typer.Option(False, "-v")) -> None:
 @app.command()
 def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
                yes: bool = typer.Option(False, "--yes"), dry_run: bool = typer.Option(False, "--dry-run"),
-               verbose: bool = typer.Option(False, "-v")) -> None:
+               verbose: bool = VERBOSE) -> None:
     """Clear the debt: every unread article older than the cutoff is marked read and tagged `cut`.
     Stars and protected articles are exempt. Reversible with `triage undo`."""
     ctx = _ctx(verbose)
@@ -328,7 +411,7 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
     if not yes and not typer.confirm("Mark them read?"):
         raise typer.Exit(0)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "bankruptcy"):
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "bankruptcy"), graceful_sigterm():
             _, done = pipeline.bankruptcy(ctx, older_than, dry_run=False)
     except AlreadyRunning:
         _fail("another run is in progress; `triage stop` it or wait")
@@ -337,7 +420,7 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than", help="Days."),
 
 
 @app.command()
-def status(verbose: bool = typer.Option(False, "-v")) -> None:
+def status(verbose: bool = VERBOSE) -> None:
     """The whole system at a glance: what is running, the schedule, the pile, spend, the last runs."""
     from . import control
 
@@ -347,17 +430,18 @@ def status(verbose: bool = typer.Option(False, "-v")) -> None:
 
 
 @app.command()
-def stop() -> None:
+def stop(verbose: bool = VERBOSE) -> None:
     """Stop the run, prune or blast in progress (the same as Ctrl-C in its terminal)."""
     from .ops import stop_process
 
-    cfg = load_config()
+    cfg = _config()
     typer.echo(stop_process(cfg.root / cfg.data_dir))
 
 
 @app.command()
 def schedule(action: str = typer.Argument("status", help="status, pause, resume or kick (a run now, via launchd)"),
-             job: str = typer.Option("all", "--job", help="run, weekly, report, panel or all")) -> None:
+             job: str = typer.Option("all", "--job", help="run, weekly, report, panel or all"),
+             verbose: bool = VERBOSE) -> None:
     """The launchd jobs: show them, pause them all (nothing fires until resume), resume, or kick a run."""
     from . import control
 
@@ -371,35 +455,71 @@ def schedule(action: str = typer.Argument("status", help="status, pause, resume 
         _fail("action must be status, pause, resume or kick")
     if job != "all" and job not in control.JOBS:
         _fail("--job must be run, weekly, report, panel or all")
-    typer.echo(control.schedule(action, job))
+    cfg = _config()
+    typer.echo(control.schedule(action, job, cfg.root / cfg.data_dir))
 
 
 @app.command()
-def halt() -> None:
+def halt(verbose: bool = VERBOSE) -> None:
     """Stop everything: pause every launchd job, interrupt the run in progress, end any other
     triage process including the control room. `triage schedule resume` brings the jobs back."""
     from . import control
 
-    cfg = load_config()
+    cfg = _config()
     for line in control.halt(cfg):
         typer.echo(line)
 
 
 @app.command()
-def enforce(state: str = typer.Argument(..., help="on or off")) -> None:
+def safety(action: str = typer.Argument("status", help="status, or reset"), verbose: bool = VERBOSE) -> None:
+    """The breaker: a floor that would cut nearly everything newly judged trips it, and the
+    floor then cuts nothing until `triage safety reset` says someone has looked."""
+    from . import cut as cutmod
+
+    if action not in ("status", "reset"):
+        _fail("say status or reset")
+    ctx = _ctx(verbose)
+    tripped = cutmod.breaker_tripped(ctx.conn)
+    given_up = store.given_up(ctx.conn)
+    if action == "reset":
+        if cutmod.reset_breaker(ctx.conn):
+            typer.echo(f"breaker reset (it tripped in run {tripped}); the floor cuts again from the next run")
+        else:
+            typer.echo("the breaker is not tripped")
+        n = store.reset_judge_failures(ctx.conn)
+        typer.echo(f"{given_up} articles the teacher had given up on are pending again" if given_up
+                   else f"no articles were given up on ({n} failure counts cleared)")
+        return
+    if tripped:
+        typer.echo(f"breaker TRIPPED in run {tripped}: the floor cuts nothing. Check the prompt and the model "
+                   "(`triage why ID` on a few newly judged articles), then `triage safety reset`")
+    else:
+        typer.echo("breaker clear: the floor cuts as configured")
+    if given_up:
+        typer.echo(f"{given_up} unread articles given up on after {store.MAX_JUDGE_FAILURES} answers with no judgment; "
+                   "they stay unread and unjudged until `triage safety reset`")
+    else:
+        typer.echo("no article has been given up on")
+
+
+@app.command()
+def enforce(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
     """Flip the automatic floor: on = the floor cuts from the next run; off = shadow mode."""
     from . import control
 
     if state not in ("on", "off"):
         _fail("say on or off")
-    cfg = load_config()
-    typer.echo(control.set_enforce(cfg.root, state == "on"))
+    cfg = _config()
+    ok, msg = control.set_enforce(cfg.root, state == "on")
+    if not ok:
+        _fail(msg)
+    typer.echo(msg)
 
 
 @app.command()
 def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("127.0.0.1", "--host",
           help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`."),
-          verbose: bool = typer.Option(False, "-v")) -> None:
+          verbose: bool = VERBOSE) -> None:
     """The control room: status, run, stop, schedule, prune, undo, blast, log, dashboard, in one page."""
     import traceback
 
@@ -417,9 +537,9 @@ def panel(port: int = typer.Option(8766, "--port"), host: str = typer.Option("12
 
 
 @app.command()
-def why(article_id: str) -> None:
+def why(article_id: str, verbose: bool = VERBOSE) -> None:
     """One article's score, sub-scores, lesson and state."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     try:
         aid = normalize_item_id(article_id)
     except ValueError:
@@ -447,12 +567,16 @@ def why(article_id: str) -> None:
 
 
 @app.command()
-def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk")) -> None:
+def label(article_id: str, judgment: str = typer.Argument(..., help="star or junk"), verbose: bool = VERBOSE) -> None:
     """From the terminal, the same as tagging it great (star) or bad (junk) in BazQux."""
     if judgment not in ("star", "junk"):
         _fail("judgment must be star or junk")
-    ctx = _ctx()
-    aid = normalize_item_id(article_id)
+    ctx = _ctx(verbose)
+    try:
+        aid = normalize_item_id(article_id)
+    except ValueError:
+        _fail(f"not an article id: {article_id!r} (the long tag:google.com form or the signed number)")
+        return
     row = store.article(ctx.conn, aid)
     if row is None:
         _fail("unknown article; it must have been ingested first")
@@ -465,25 +589,37 @@ def label(article_id: str, judgment: str = typer.Argument(..., help="star or jun
 
 
 @app.command()
-def want(phrase: str) -> None:
+def want(phrase: str, verbose: bool = VERBOSE) -> None:
     """Tell the teacher now that you want more on a topic."""
-    ctx = _ctx()
-    typer.echo(learner.nudge(ctx.cfg, ctx.conn, "want", phrase))
+    _nudge("want", phrase, verbose)
 
 
 @app.command()
-def meh(phrase: str) -> None:
+def meh(phrase: str, verbose: bool = VERBOSE) -> None:
     """Tell the teacher now that you want less of a topic."""
-    ctx = _ctx()
-    typer.echo(learner.nudge(ctx.cfg, ctx.conn, "meh", phrase))
+    _nudge("meh", phrase, verbose)
+
+
+def _nudge(kind: str, phrase: str, verbose: bool) -> None:
+    ctx = _ctx(verbose)
+    try:
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "nudge"), graceful_sigterm():   # learner.md is written: not under a run
+            typer.echo(learner.nudge(ctx.cfg, ctx.conn, kind, phrase))
+    except AlreadyRunning:
+        _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
 
 
 @app.command()
-def profile(action: str = typer.Argument("show", help="show or revert")) -> None:
+def profile(action: str = typer.Argument("show", help="show or revert"), verbose: bool = VERBOSE) -> None:
     """Show the learner model, or go back one version."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     if action == "revert":
-        v = learner.revert(ctx.cfg, ctx.conn)
+        try:
+            with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
+                v = learner.revert(ctx.cfg, ctx.conn)
+        except AlreadyRunning:
+            _fail("a run is in progress; try again in a minute", 5)
+            return
         typer.echo("nothing to revert to" if v is None else f"reverted; now version {v}")
         return
     typer.echo(ctx.cfg.read_seed())
@@ -492,9 +628,17 @@ def profile(action: str = typer.Argument("show", help="show or revert")) -> None
 
 
 @app.command()
-def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = typer.Option(False, "-v")) -> None:
+def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VERBOSE) -> None:
     """Sunday's job: rewrite the learner model (gated), write the weekly note, run the drift check."""
     ctx = _ctx(verbose)
+    try:
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "weekly"), graceful_sigterm():
+            _weekly(ctx, dry_run)
+    except AlreadyRunning:
+        _fail("a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later", 5)
+
+
+def _weekly(ctx: pipeline.Context, dry_run: bool) -> None:
     run_id = store.begin_run(ctx.conn, "weekly")
     try:
         result = learner.weekly_rewrite(ctx.cfg, ctx.llm, ctx.conn, run_id, dry_run=dry_run)
@@ -549,17 +693,17 @@ def _drift_check(ctx: pipeline.Context, run_id: int) -> str:
 
 
 @app.command("report")
-def report_cmd(days: int = typer.Option(30, "--days")) -> None:
+def report_cmd(days: int = typer.Option(30, "--days"), verbose: bool = VERBOSE) -> None:
     """The monthly feed report with proposals; written to the dashboard folder."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     path = report.render(ctx.cfg, ctx.conn, days=days)
     typer.echo(path.read_text(encoding="utf-8"))
 
 
 @app.command("dashboard")
-def dashboard_cmd() -> None:
+def dashboard_cmd(verbose: bool = VERBOSE) -> None:
     """Regenerate the dashboard now."""
-    ctx = _ctx()
+    ctx = _ctx(verbose)
     typer.echo(str(dashboard.render(ctx.cfg, ctx.conn)))
 
 
@@ -567,7 +711,7 @@ def dashboard_cmd() -> None:
 def replay(archive: Path = typer.Option(..., "--archive", help="FeedBrain's feedfilter.db"),
            golden: Path | None = typer.Option(None, "--golden", help="FeedBrain's evals/golden.jsonl"),
            sample: int = typer.Option(500, "--sample"), workers: int | None = typer.Option(None, "--workers"),
-           verbose: bool = typer.Option(False, "-v")) -> None:
+           verbose: bool = VERBOSE) -> None:
     """Judge a sample of FeedBrain's archive offline and check the eval gate. Touches nothing live."""
     from . import replay as replaymod
 

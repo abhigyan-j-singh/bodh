@@ -44,7 +44,7 @@ def _no_real_launchd(monkeypatch):
 
     monkeypatch.setattr(control, "_plist_path", lambda label: (None, ""))
     monkeypatch.setattr(control, "launchctl_available", lambda: False)
-    monkeypatch.setattr(control, "stray_processes", lambda: [])
+    monkeypatch.setattr(control, "stray_processes", lambda root=None: [])
 
 
 @pytest.fixture
@@ -59,6 +59,27 @@ def cfg(tmp_path: Path) -> Config:
         encoding="utf-8",
     )
     return c
+
+
+@pytest.fixture(autouse=True)
+def _close_connections(monkeypatch):
+    """Every connection the code under test opens is closed at teardown: the suite runs with
+    ResourceWarning as an error, so an unclosed database fails the test that leaked it."""
+    opened: list[sqlite3.Connection] = []
+    real = store.connect
+
+    def tracking(path):
+        c = real(path)
+        opened.append(c)
+        return c
+
+    monkeypatch.setattr(store, "connect", tracking)
+    yield
+    for c in opened:
+        try:
+            c.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @pytest.fixture
@@ -110,8 +131,13 @@ class FakeClient:
     def starred_ids(self):
         return list(self.starred)
 
-    def label_ids(self, name: str, unread_only: bool = False):
-        return list(self.labels.get(name, []))
+    def label_ids(self, name: str, unread_only: bool = False, strict: bool = False):
+        value = self.labels.get(name, [])
+        if isinstance(value, Exception):  # a label BazQux cannot serve right now
+            if strict:
+                raise value
+            return []
+        return list(value)
 
     def tag(self, ids, name):
         self.tagged.append((name, list(ids)))

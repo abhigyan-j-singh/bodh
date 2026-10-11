@@ -63,17 +63,22 @@ class CC:
 
 def test_cost_accounting_with_cache_tiers_and_batch_discount(cfg, conn):
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
-    usage, usd = llm._cost("claude-sonnet-5-5", U(input_tokens=1_000_000, output_tokens=100_000,
+    usage, usd = llm.cost("claude-sonnet-5-5", U(input_tokens=1_000_000, output_tokens=100_000,
                                                     cache_read_input_tokens=1_000_000,
                                                     cache_creation=CC(ephemeral_1h_input_tokens=100_000, ephemeral_5m_input_tokens=100_000)))
     # 2.00 input + 1.00 output + 0.10 cache read + 0.40 (1h write at 2x) + 0.25 (5m write at 1.25x)
     assert abs(usd - 3.75) < 1e-6 and usage["cache_write"] == 200_000 and usage["cache_read"] == 1_000_000
-    _, half = llm._cost("claude-sonnet-5-5", U(input_tokens=1_000_000), discount=0.5)
+    _, half = llm.cost("claude-sonnet-5-5", U(input_tokens=1_000_000), discount=0.5)
     assert abs(half - 1.0) < 1e-6
     # an older SDK without the breakdown: the total write is priced by the configured ttl
-    _, usd1h = llm._cost("claude-sonnet-5-5", U(cache_creation_input_tokens=1_000_000))
+    _, usd1h = llm.cost("claude-sonnet-5-5", U(cache_creation_input_tokens=1_000_000))
     assert abs(usd1h - 4.0) < 1e-6
-    assert cfg.models.price("claude-opus-5-5") == (4.0, 20.0) and cfg.models.price("nope") == (0.0, 0.0)
+    assert cfg.models.price("claude-opus-5-5") == (4.0, 20.0)
+    # an unknown model is never free: it is charged as the dearest known one until a price is added
+    assert not cfg.models.has_price("nope") and cfg.models.price("nope") == (4.0, 20.0)
+    assert cfg.models.cache_read_price("nope") == 0.2
+    _, unknown = llm.cost("nope", U(input_tokens=1_000_000))
+    assert abs(unknown - 4.0) < 1e-6
     assert cfg.models.cache_read_price("claude-haiku-5-5") == 0.01
     cfg.models.prices_per_mtok["old-style"] = [2.0, 10.0]
     assert abs(cfg.models.cache_read_price("old-style") - 0.2) < 1e-9

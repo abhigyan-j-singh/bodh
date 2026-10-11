@@ -12,21 +12,34 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .dashboard import feeds
 
-MIN_VOLUME_FOR_PROPOSAL = 40
+MIN_VOLUME_FOR_PROPOSAL = 40   # articles in the window, and judged ones: a feed nobody judged proposes nothing
+
+
+def strictest_folder(cfg: Config) -> str | None:
+    """The folder with the highest automatic floor above the default (the owner's "Firehose"),
+    where a high-volume, low-keep feed belongs; None when the config has no such folder."""
+    best: tuple[int, str] | None = None
+    for name, policy in cfg.cut.folders.items():
+        floor = policy.auto_cut_below
+        if floor is not None and not policy.protected and floor > cfg.cut.default_floor:
+            if best is None or floor > best[0]:
+                best = (floor, name)
+    return best[1] if best else None
 
 
 def proposal(row: sqlite3.Row, cfg: Config) -> str:
-    n = row["n"]
-    mean = row["mean_score"] or 0
+    n, judged = row["n"], row["judged"] or 0
+    mean = row["mean_score"]
     cut = row["cut_share"] or 0
     star = row["star_share"] or 0
     read = row["read_share"] or 0
-    if n < MIN_VOLUME_FOR_PROPOSAL:
+    if n < MIN_VOLUME_FOR_PROPOSAL or judged < MIN_VOLUME_FOR_PROPOSAL or mean is None:
         return ""
     if star == 0 and read < 0.02 and cut > 0.85 and mean < 35:
         return "unsubscribe: high volume, almost everything cut, nothing read or starred"
-    if n >= 300 and cut > 0.6 and (row["folder"] or "") != "Firehose":
-        return "move to Firehose: high volume with a low keep rate; a stricter floor fits"
+    strict = strictest_folder(cfg)
+    if strict and n >= 300 and cut > 0.6 and (row["folder"] or "") != strict:
+        return f"move to {strict}: high volume with a low keep rate; a stricter floor fits"
     if star >= 0.08 or (read >= 0.3 and mean >= 60):
         return "consider protecting: you read or star an unusual share of it"
     return ""

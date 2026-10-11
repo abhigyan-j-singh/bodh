@@ -12,7 +12,7 @@ from typing import Any
 
 from . import cut as cutmod
 from . import dashboard, feedback, progress, store
-from .bazqux import BazQuxClient
+from .bazqux import BazQuxClient, BazQuxError
 from .config import Config, Secrets
 from .learner import expansion_topics
 from .ops import Heartbeat
@@ -21,6 +21,7 @@ from .teacher import LLM, Teacher, concept_context
 log = logging.getLogger(__name__)
 
 RUN_TIMEOUT_SECONDS = 15 * 60
+RUN_DEADLINE_MARGIN = 60   # no new model call starts this close to the limit; running ones finish
 INGEST_BATCH = 200
 
 
@@ -77,12 +78,13 @@ class Context:
         self.conn = conn
         self._client: BazQuxClient | None = None
         self._llm: LLM | None = None
-        self.heartbeat = Heartbeat(secrets.healthcheck_url)
+        self.ref_time: dict[str, int] = {}  # article id -> BazQux timestamp, for newest-first ingest
+        self.heartbeat = Heartbeat(secrets.value("healthcheck_url"))
 
     @property
     def client(self) -> BazQuxClient:
         if self._client is None:
-            self._client = BazQuxClient(self.secrets.bazqux_email, self.secrets.bazqux_password)
+            self._client = BazQuxClient(self.secrets.value("bazqux_email"), self.secrets.value("bazqux_password"))
         return self._client
 
     @property
@@ -100,12 +102,17 @@ def folder_map(client: BazQuxClient) -> dict[str, str | None]:
     return {s.stream_id: (s.folders[0] if s.folders else None) for s in client.subscriptions()}
 
 
-def protected_ids(ctx: Context) -> set[str]:
-    """Members of the Must read smart stream and of protected folders."""
-    ids: set[str] = set(ctx.client.label_ids(ctx.cfg.cut.must_read_stream, unread_only=True))
-    for name, policy in ctx.cfg.cut.folders.items():
-        if policy.protected:
-            ids |= set(ctx.client.label_ids(name, unread_only=True))
+def protected_ids(ctx: Context) -> set[str] | None:
+    """Members of the Must read smart stream and of protected folders, or None when BazQux
+    could not say: nothing may then be cut on that answer, and no protection is withdrawn."""
+    try:
+        ids: set[str] = set(ctx.client.label_ids(ctx.cfg.cut.must_read_stream, unread_only=True, strict=True))
+        for name, policy in ctx.cfg.cut.folders.items():
+            if policy.protected:
+                ids |= set(ctx.client.label_ids(name, unread_only=True, strict=True))
+    except BazQuxError as exc:
+        log.warning("bazqux: could not read the protected streams (%s); nothing is cut this run", exc)
+        return None
     return ids
 
 
@@ -115,42 +122,51 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
     if not new_ids:
         return 0
     # newest first, and written batch by batch, so a timeout on a huge first pile keeps its progress
-    ref_time = getattr(ctx, "ref_time", {})
-    if ref_time:
-        new_ids.sort(key=lambda i: -ref_time.get(i, 0))
+    if ctx.ref_time:
+        new_ids.sort(key=lambda i: -ctx.ref_time.get(i, 0))
     done = 0
     for start in range(0, len(new_ids), INGEST_BATCH):
         items, _vanished = ctx.client.contents(new_ids[start: start + INGEST_BATCH])
-        for item in items:
-            folder = folders.get(item.feed_stream_id)
-            if folder is None:
-                # BazQux also lists folders among an item's categories as user/<id>/label/<name>
-                for cat in item.categories:
-                    if "/label/" in cat:
-                        folder = cat.rsplit("/label/", 1)[-1]
-                        break
-            store.upsert_article(ctx.conn, item, folder)
+        with store.transaction(ctx.conn):  # one fsync per batch of 200, not per article
+            for item in items:
+                folder = folders.get(item.feed_stream_id)
+                if folder is None:
+                    # BazQux also lists folders among an item's categories as user/<id>/label/<name>
+                    for cat in item.categories:
+                        if "/label/" in cat:
+                            folder = cat.rsplit("/label/", 1)[-1]
+                            break
+                store.upsert_article(ctx.conn, item, folder)
         done += len(items)
         if done and done % 2000 == 0:
             log.info("ingest: %d of %d fetched", done, len(new_ids))
     return done
 
 
-def refresh_protection(ctx: Context, protected: set[str], starred: set[str]) -> None:
+def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[str]) -> None:
+    """Mark the unread articles BazQux says are protected (and those in protected folders),
+    and clear the rest. With no answer from BazQux (``protected`` is None) a protection is
+    never withdrawn: the flags from the last good answer stand."""
     rows = ctx.conn.execute("SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
-                            "WHERE st.status = 'unread'").fetchall()
-    prot = [r["id"] for r in rows if r["id"] in protected or ctx.cfg.cut.is_protected(r["folder"])]
-    unprot = [r["id"] for r in rows if r["id"] not in set(prot)]
+                            "WHERE st.status = 'unread' "
+                            "OR (st.status = 'cut' AND (st.cut_tagged = 0 OR st.read_marked = 0))").fetchall()
+    prot = {r["id"] for r in rows
+            if (protected is not None and r["id"] in protected) or ctx.cfg.cut.is_protected(r["folder"])}
     store.set_flags(ctx.conn, prot, protected=1)
-    store.set_flags(ctx.conn, unprot, protected=0)
+    if protected is not None:
+        store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in prot], protected=0)
     store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] in starred], starred=1)
 
 
 def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, workers: int | None = None,
-        sync: bool = False) -> RunResult:
+        sync: bool = False, stop_after: float | None = None) -> RunResult:
     """The timer's job. ``enforce=False`` is shadow mode: everything but the cuts.
-    ``sync=True`` waits for every model call instead of using the Batches API."""
+    ``sync=True`` waits for every model call instead of using the Batches API. No model call
+    starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
+    run's limit), so the next scheduled run is not skipped because this one overran."""
     cfg, conn = ctx.cfg, ctx.conn
+    if stop_after is None:
+        stop_after = time.monotonic() + RUN_TIMEOUT_SECONDS - RUN_DEADLINE_MARGIN
     run_id = store.begin_run(conn, "run")
     res = RunResult(run_id=run_id)
     ctx.heartbeat.start()
@@ -169,6 +185,9 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
         res.unread_upstream = len(unread_now)
         starred = set(ctx.client.starred_ids())
         protected = protected_ids(ctx)
+        if protected is None and enforce:
+            enforce = False
+            res.notes.append("could not read the Must read stream; nothing cut this run")
 
         res.feedback = feedback.collect(ctx.client, conn, cfg, unread_now, starred)
         phase("fetching new articles")
@@ -181,14 +200,19 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             teacher.batch_mode = False
         res.batch_mode = teacher.batch_mode
         before = store.scored_ids(conn)
-        if teacher.batch_mode:
-            # judgments submitted last time come back now; what arrived since goes out
+        if store.open_batches(conn):
+            # judgments submitted last time come back now, whatever mode this run is in: a batch
+            # submitted before `models.batch` was turned off must not strand its articles
             phase("collecting finished batches")
             col = teacher.collect(run_id, client=ctx.client, on_progress=live)
             res.scored, res.second_looks, res.saved = col["scored"], col["second_looks"], col["saved"]
             res.notes.extend(col["notes"])
             if col["failed"]:
                 res.notes.append(f"{col['failed']} second look(s) failed; those articles stay unread")
+        else:
+            col = {"scored": 0}
+        if teacher.batch_mode:
+            # what arrived since goes out
             phase("submitting a batch")
             sub = teacher.submit_pending(run_id, limit=score_limit)
             res.submitted, res.dupes = sub["submitted"], sub["dupes"]
@@ -204,8 +228,12 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
         else:
             phase("judging")
             stats = teacher.score_pending(run_id, limit=score_limit or cfg.scoring.max_per_run,
-                                          workers=workers or cfg.scoring.workers, on_progress=live)
-            res.scored, res.dupes, res.pending = stats["scored"], stats["dupes"], stats["pending_after"]
+                                          workers=workers or cfg.scoring.workers, on_progress=live,
+                                          stop_after=stop_after)
+            if stats["stopped_early"]:
+                res.notes.append("time limit near: the rest waits for the next run")
+            res.scored += stats["scored"]
+            res.dupes, res.pending = stats["dupes"], stats["pending_after"]
             if stats["budget_stop"]:
                 res.notes.append("daily budget reached; unscored articles stay unread")
             if stats["failed_batches"]:
@@ -221,7 +249,10 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
                 res.notes.append(f"rescues above {cfg.breakers.rescue_rate_week:.0%} this week; floor lowered to "
                                  f"{cfg.breakers.lowered_floor}")
                 cfg.cut.default_floor = min(cfg.cut.default_floor, cfg.breakers.lowered_floor)
-            sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client)
+            sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client,
+                                      stop_after=stop_after)
+            if sel.blocked:
+                res.notes.append(sel.blocked)
             res.second_looks += sel.second_looks
             res.saved += sel.saved_by_second_look
             res.exploration = sel.reserved_for_exploration
@@ -229,13 +260,21 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
             res.boundary = sel.boundary
             if sel.held:
                 res.held = teacher.submit_second_looks(run_id, sel.held)
-            if res.feedback.get("prune_requested"):
+            if res.feedback.get("prune_requested") and sel.blocked:
+                res.notes.append("prune requested by tag; it waits for `triage safety reset`")
+            elif res.feedback.get("prune_requested"):
                 psel = cutmod.select_prune(conn, cfg)
                 res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, run_id, "prune")
                 res.boundary = psel.boundary
+                feedback.prune_request_done(conn)
                 res.notes.append("prune tag seen: pruned to target")
         else:
             res.notes.append("shadow mode: nothing cut")
+            if res.feedback.get("prune_requested"):
+                res.notes.append("prune requested by tag; it waits for an enforcing run")
+        if res.feedback.get("suspect_flip"):
+            res.notes.append(f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
+                             "as read until the next run sees the same")
 
         res.spend_usd = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
         store.finish_run(conn, run_id, True, unread_upstream=res.unread_upstream, new=res.new, scored=res.scored,
@@ -372,9 +411,23 @@ def blast(ctx: Context, workers: int, chunk: int = 1000, all_ages: bool = False,
 
 
 def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
-          below: float | None = None, dry_run: bool = False) -> tuple[int, cutmod.Selection]:
+          below: float | None = None, dry_run: bool = False,
+          confirmed: set[str] | None = None) -> tuple[int, cutmod.Selection]:
+    """The student's cut. Refused while the breaker is tripped: the scores it would rank by are
+    the ones the breaker declared suspect. ``confirmed`` (the ids shown and agreed to) bounds a
+    real prune to them, so a run between the question and the answer cannot widen the cut."""
     cfg, conn = ctx.cfg, ctx.conn
+    tripped = cutmod.breaker_tripped(conn)
+    if tripped:
+        raise cutmod.BreakerTripped(f"the breaker tripped in run {tripped}: the latest scores may be wrong; "
+                                    "check a few with `triage why ID`, then `triage safety reset`")
     sel = cutmod.select_prune(conn, cfg, keep=keep, fraction=fraction, below=below)
+    if confirmed is not None:
+        unconfirmed = [r for r in sel.cut if r["id"] not in confirmed]
+        if unconfirmed:
+            sel.cut = [r for r in sel.cut if r["id"] in confirmed]
+            sel.survivors.extend(unconfirmed)
+            sel.boundary = min((float(r["score"]) for r in sel.survivors if cutmod.eligible(r)), default=None)
     if dry_run or not sel.cut:
         return 0, sel
     run_id = store.begin_run(conn, "prune")
@@ -414,10 +467,19 @@ def undo_last(ctx: Context) -> tuple[int | None, int]:
 
 
 def bankruptcy(ctx: Context, older_than_days: int, dry_run: bool) -> tuple[int, int]:
+    """A dry run counts and records nothing; a real one is a run of its own, undoable."""
+    refusal = "could not read the Must read stream; bankruptcy refused rather than cut a protected article"
+    if dry_run:
+        protected = protected_ids(ctx)
+        if protected is None:
+            raise BazQuxError(refusal)
+        return cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id=0, dry_run=True)
     run_id = store.begin_run(ctx.conn, "bankruptcy")
     try:
-        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected_ids(ctx),
-                                             run_id, dry_run=dry_run)
+        protected = protected_ids(ctx)
+        if protected is None:
+            raise BazQuxError(refusal)
+        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected, run_id)
         store.finish_run(ctx.conn, run_id, True, cut_prune=done,
                          summary=f"bankruptcy: {candidates} older than {older_than_days}d, {done} marked read")
         return candidates, done

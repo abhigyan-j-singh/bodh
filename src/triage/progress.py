@@ -72,17 +72,16 @@ def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
         if 0 <= i < bins:
             counts[i] += 1
     data_dir = cfg.root / cfg.data_dir
-    running = ops.run_in_progress(data_dir)
-    lock = data_dir / "triage.lock"
-    run_started = None
-    if running and lock.exists():
-        run_started = datetime.fromtimestamp(lock.stat().st_mtime, tz=timezone.utc).isoformat()
+    proc = ops.running_process(data_dir)   # the pid file is the one source of "since when"
+    running = proc is not None
+    run_started = datetime.fromtimestamp(proc["started"], tz=timezone.utc).isoformat() if proc else None
     phase = store.kv_get(conn, "phase") if running else None
+    # no log tail here: this dict is written to progress.json and the dashboard, which may be
+    # published; the terminal and the control room fetch the log on their own (log_tail)
     return {
         "rate_per_min": rate, "judged_2min": two, "judged_10min": ten,
         "series": counts, "series_bin_minutes": SERIES_BIN_MINUTES, "series_start": start.isoformat(),
         "running": running, "run_started": run_started, "phase": phase or "",
-        "log": log_tail(ops.log_file(data_dir), 10),
     }
 
 
@@ -118,7 +117,8 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
                                  "WHERE st.status = 'unread' AND s.prompt_version = ?", (version,))
     pending_rows = store.unscored_unread_folders(conn, version, cfg.scoring.max_age_days, skip, exclude_inflight=True)
     pending = len(pending_rows)
-    unscored_all = store.unscored_unread_count(conn, version)
+    unscored_all = store.unscored_unread_count(conn, version)  # leaves out what the teacher gave up on
+    given_up = store.given_up(conn)
     inflight_teacher = store.inflight_ids(conn, "teacher")
     inflight_second = store.inflight_ids(conn, "second_look")
     skipped = _count(conn, f"SELECT COUNT(*) FROM articles a JOIN state st ON st.article_id = a.id "
@@ -179,12 +179,11 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         if f:
             f["pending"] += 1
     if inflight_teacher:
-        marks = ",".join("?" * len(inflight_teacher))
-        for r in conn.execute(f"SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
-                              tuple(inflight_teacher)):
+        for r in store.fetch_in(conn, "SELECT folder, COUNT(*) n FROM articles WHERE id IN ({marks}) GROUP BY folder",
+                                inflight_teacher):
             f = by_name.get(r["folder"] or "(no folder)")
             if f:
-                f["inflight"] = int(r["n"])
+                f["inflight"] += int(r["n"])
 
     batches = [dict(b) for b in store.recent_batches(conn, 8)]
     for b in batches:
@@ -199,6 +198,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         "unread": unread, "judged_unread": judged_unread, "pending": pending,
         "inflight": len(inflight_teacher), "inflight_second": len(inflight_second),
         "too_old": too_old, "skipped": skipped, "skip_folders": skip, "low_conf": low_conf, "held": held,
+        "given_up": given_up,
         "stand_in": stand_in, "rejudge": max(0, rejudge), "teacher": cfg.models.teacher,
         "today": today, "week": seven, "month": thirty, "all_time": all_time,
         "cache_hit": cache_hit, "per_1000": per_1000, "output_tokens_week": tokens[3],
@@ -229,7 +229,7 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         out_dir = cfg.root / cfg.dashboard_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / LIVE_FILE
-        tmp = path.with_suffix(".json.tmp")
+        tmp = out_dir / f".{LIVE_FILE}.{os.getpid()}.tmp"  # a console child beside a run: two writers, two files
         tmp.write_text(json.dumps(snap, default=str), encoding="utf-8")
         os.replace(tmp, path)
         _last_live_write = now
@@ -307,6 +307,8 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
         notes.append(f"{_n(snap['inflight_second'])} second looks in flight")
     if snap["held"]:
         notes.append(f"{_n(snap['held'])} kept after a failed second look")
+    if snap.get("given_up"):
+        notes.append(f"{_n(snap['given_up'])} given up on after answers with no judgment (`triage safety`)")
     if notes:
         lines.append("  " + " · ".join(notes))
     lines.append("")
@@ -424,7 +426,6 @@ def render_html(snap: dict) -> str:
     parts.append("</tbody></table>")
     parts.append("<h3>Batches</h3><table><tr><th>Batch</th><th>Purpose</th><th class='num'>Articles</th><th>State</th></tr>"
                  f"<tbody id='p-batches'>{_batch_rows(snap['batches'], e)}</tbody></table>")
-    parts.append(f"<pre id='p-log' class='log'>{e(chr(10).join(snap.get('log') or ['(no log yet)']))}</pre>")
     parts.append(LIVE_SCRIPT)
     return "\n".join(parts)
 
@@ -472,7 +473,6 @@ PROGRESS_CSS = """
 .live{font-size:13.5px;color:#444;margin:4px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:5px;background:#bbb;margin-right:6px;vertical-align:middle}
 .dot.on{background:#2a7;animation:pulse 1.2s infinite}@keyframes pulse{0%{opacity:1}50%{opacity:.25}100%{opacity:1}}
 .flash{background:#fff3b0;transition:background 1.5s}.spark{margin:6px 0 10px}.spark svg{display:block;margin-top:2px}
-.log{font-size:12px;max-height:160px;overflow:auto;color:#444}
 """
 
 LIVE_SCRIPT = """<script>
@@ -512,7 +512,6 @@ LIVE_SCRIPT = """<script>
       var state = b.status==='submitted' ? 'in progress, submitted '+ago(b.created_at)+' ago' : b.status; if(b.note) state += ' · '+b.note;
       hb += '<tr><td>'+esc(String(b.id).slice(0,22))+'</td><td>'+esc(b.purpose)+'</td><td class="num">'+n(b.n_articles)+'</td><td>'+esc(state)+'</td></tr>'; });
       bb.innerHTML = hb || '<tr><td colspan="4" class="muted">none yet</td></tr>'; }
-    var lg = document.getElementById('p-log'); if(lg && d.log){ var txt = d.log.join('\\n'); if(lg.textContent !== txt){ lg.textContent = txt; lg.scrollTop = lg.scrollHeight; } }
     lastAt = d.at;
   }
   function tick(){

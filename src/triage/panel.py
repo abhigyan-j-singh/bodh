@@ -32,7 +32,7 @@ ACTIONS = {
     "run_shadow": (["run", "--shadow"], True),
     "run_sync": (["run", "--sync"], True),
     "prune_dry": (["prune", "--dry-run"], False),
-    "prune": (["prune"], True),
+    "prune": (["prune", "--yes"], True),
     "undo": (["undo"], False),
     "bankruptcy_dry": (["bankruptcy", "--dry-run"], False),
     "bankruptcy": (["bankruptcy", "--yes"], True),
@@ -71,10 +71,13 @@ class Child:
 
     def _pump(self, proc: subprocess.Popen) -> None:
         assert proc.stdout is not None
-        for raw in proc.stdout:
-            for piece in raw.replace("\r", "\n").split("\n"):
-                if piece.strip():
-                    self.output.append(piece.rstrip()[:300])
+        try:
+            for raw in proc.stdout:
+                for piece in raw.replace("\r", "\n").split("\n"):
+                    if piece.strip():
+                        self.output.append(piece.rstrip()[:300])
+        finally:
+            proc.stdout.close()  # one descriptor per command would otherwise stay open for the panel's life
         proc.wait()
         with self.lock:
             self.code, self.ended = proc.returncode, time.time()
@@ -98,6 +101,10 @@ class Child:
                 "code": self.code, "output": list(self.output)}
 
 
+STATUS_CACHE_SECONDS = 2.0   # one page polls every 3 s; several tabs (or the phone) share one query
+JOBS_CACHE_SECONDS = 10.0    # four `launchctl print` subprocesses per status were the dearest part
+
+
 class Panel:
     def __init__(self, cfg: Config, conn: sqlite3.Connection, command: list[str] | None = None,
                  host: str = "127.0.0.1", port: int = 8766) -> None:
@@ -108,15 +115,44 @@ class Panel:
         self.child = Child()
         self.db_lock = threading.Lock()
         self.env = {**os.environ, "TRIAGE_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
+        self._status_cache: tuple[float, dict] | None = None
+        self._jobs_cache: tuple[float, dict] | None = None
+        self._config_mtime: float | None = None
 
     # -- data -----------------------------------------------------------------
 
     def status(self) -> dict:
         self._reload_config()
+        now = time.monotonic()
         with self.db_lock:
-            st = control.status(self.cfg, self.conn)
+            if self._status_cache is None or now - self._status_cache[0] > STATUS_CACHE_SECONDS:
+                st = control.status(self.cfg, self.conn, jobs=self._jobs())
+                self._status_cache = (now, st)
+            st = dict(self._status_cache[1])
         st["child"] = self.child.state()
         return st
+
+    def _jobs(self) -> dict:
+        now = time.monotonic()
+        if self._jobs_cache is None or now - self._jobs_cache[0] > JOBS_CACHE_SECONDS:
+            self._jobs_cache = (now, {name: control.job_state(label) for name, label in control.JOBS.items()})
+        return self._jobs_cache[1]
+
+    def forget(self) -> None:
+        """After an action: the next status is fresh."""
+        self._status_cache = None
+        self._jobs_cache = None
+
+    def host_allowed(self, host_header: str | None) -> bool:
+        """The page is served on 127.0.0.1 and reached from the phone through tailscale serve;
+        a request whose Host is anything else comes from a page that rebound a DNS name to
+        this machine, and gets nothing (the X-Triage header alone does not stop that)."""
+        host = (host_header or "").strip().lower()
+        if host.startswith("["):
+            host = host.split("]", 1)[0] + "]"
+        else:
+            host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        return host in {"127.0.0.1", "localhost", "[::1]", "::1", self.host.lower()} or host.endswith(".ts.net")
 
     def _reload_config(self) -> None:
         """config.yaml edited by hand (or by `triage enforce` in a terminal) shows on the next
@@ -131,6 +167,7 @@ class Panel:
         try:
             self.cfg = load_config(self.cfg.root)
             self._config_mtime = mtime
+            self.forget()
         except Exception as exc:  # noqa: BLE001
             log.warning("panel: config.yaml not reloaded: %s", exc)
 
@@ -139,11 +176,15 @@ class Panel:
             msg = self.child.stop() if self.child.alive() else ops.stop_process(self.cfg.root / self.cfg.data_dir)
             return {"ok": True, "message": msg}
         if action in ("schedule_pause", "schedule_resume", "schedule_kick"):
-            return {"ok": True, "message": control.schedule(action.split("_", 1)[1], params.get("job", "run"))}
+            msg = control.schedule(action.split("_", 1)[1], params.get("job", "run"), self.cfg.root / self.cfg.data_dir)
+            return {"ok": not msg.startswith("not kicked"), "message": msg}
         if action in ("enforce_on", "enforce_off"):
-            msg = control.set_enforce(self.cfg.root, action == "enforce_on")
-            self.cfg.cut.enforce = action == "enforce_on"
-            return {"ok": True, "message": msg}
+            # the file is the truth: the page shows what the next run will read, never a wish
+            ok, msg = control.set_enforce(self.cfg.root, action == "enforce_on")
+            if ok:
+                self._config_mtime = None
+                self._reload_config()
+            return {"ok": ok, "message": msg}
         if action not in ACTIONS:
             return {"ok": False, "message": f"unknown action {action}"}
         args, background = ACTIONS[action]
@@ -181,10 +222,14 @@ class Panel:
                 self.wfile.write(body)
 
             def do_GET(self) -> None:  # noqa: N802
+                if not panel.host_allowed(self.headers.get("Host")):
+                    self._send(403, b'{"error":"forbidden: unexpected Host"}')
+                    return
                 url = urlsplit(self.path)
                 if url.path in ("/", "/index.html"):
-                    self._send(200, PAGE.replace("__ROOT__", html.escape(str(panel.cfg.root))).encode("utf-8"),
-                               "text/html; charset=utf-8")
+                    page = (PAGE.replace("__ROOT__", html.escape(str(panel.cfg.root)))
+                                .replace("__KEEP__", str(panel.cfg.cut.target_unread)))
+                    self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
                 elif url.path == "/api/status":
                     try:
                         body = json.dumps(panel.status(), default=str).encode("utf-8")
@@ -211,6 +256,9 @@ class Panel:
                 self._send(200, path.read_bytes(), ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("json") else ""))
 
             def do_POST(self) -> None:  # noqa: N802
+                if not panel.host_allowed(self.headers.get("Host")):
+                    self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
+                    return
                 if self.headers.get("X-Triage") != "panel":  # a page of ours, not a stray form from another site
                     self._send(403, b'{"ok":false,"message":"forbidden"}')
                     return
@@ -228,6 +276,7 @@ class Panel:
                 except Exception as exc:  # noqa: BLE001
                     log.exception("panel: action failed")
                     result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
+                panel.forget()
                 self._send(200, json.dumps(result, default=str).encode("utf-8"))
 
         data_dir = self.cfg.root / self.cfg.data_dir
@@ -332,7 +381,7 @@ iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
   <button onclick="act('enforce_off')">Enforce off</button>
 </div>
 <div class='actions'>
-  keep <input id='keep' type='number' value='40'>
+  keep <input id='keep' type='number' value='__KEEP__'>
   <button onclick="act('prune_dry')">Prune: dry run</button>
   <button class='danger' onclick="confirmAct('prune','Prune to the number kept? Everything else that is scored and unread is marked read in BazQux. Undo reverses it.')">Prune</button>
   <button class='danger' onclick="confirmAct('undo','Undo the last cut? Its articles are marked unread again.')">Undo last cut</button>

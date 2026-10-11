@@ -131,8 +131,8 @@ def near_misses(conn: sqlite3.Connection, days: int = 7, limit: int = 20) -> lis
 def feeds(conn: sqlite3.Connection, days: int = 30, limit: int = 40) -> list[sqlite3.Row]:
     since = store.days_ago_iso(days)
     return conn.execute(
-        """SELECT a.feed_title, a.folder, COUNT(*) n, AVG(s.score) mean_score,
-                  AVG(CASE WHEN st.status = 'cut' THEN 1.0 ELSE 0.0 END) cut_share,
+        """SELECT a.feed_title, a.folder, COUNT(*) n, COUNT(s.score) judged, AVG(s.score) mean_score,
+                  AVG(CASE WHEN st.status = 'cut' AND st.cut_mode != 'bankruptcy' THEN 1.0 ELSE 0.0 END) cut_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='read') THEN 1.0 ELSE 0.0 END) read_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='star') THEN 1.0 ELSE 0.0 END) star_share,
                   AVG(CASE WHEN EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = a.id AND f.kind='rescue') THEN 1.0 ELSE 0.0 END) rescue_share
@@ -203,6 +203,12 @@ def _e(s: Any) -> str:
 
 def _pct(x: float | None) -> str:
     return "–" if x is None else f"{x * 100:.0f}%"
+
+
+def _href(url: str | None) -> str:
+    """A feed's link, escaped, and only ever http(s): escaping does not stop `javascript:`."""
+    u = (url or "").strip()
+    return _e(u) if u.lower().startswith(("http://", "https://")) else "#"
 
 
 def _bars_svg(rows: list[dict], keys: list[str], colors: list[str]) -> str:
@@ -312,7 +318,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
                          "<th>Article</th><th>Concept</th></tr>")
             for r in disagree:
                 parts.append(f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
-                             f"<td><a href='{_e(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
+                             f"<td><a href='{_href(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
                              f"<td>{_e(r['concept'] or '')}</td></tr>")
             parts.append("</table>")
         parts.append("<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
@@ -325,7 +331,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     parts.append("<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
                  "<th>Lesson</th><th>Concept</th></tr>")
     for r in misses:
-        parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_e(r['url'])}'>{_e(r['title'][:90])}</a>"
+        parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
                      f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div></td>"
                      f"<td>{_e(r['lesson'])}</td><td>{_e(r['concept'])}</td></tr>")
     parts.append("</table><p class='muted'>To rescue one, mark it unread in BazQux or NetNewsWire; the next run records the rescue.</p>")
@@ -346,7 +352,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     for concept, rows in lessons.items():
         parts.append(f"<h3>{_e(concept)}</h3><ul>")
         for r in rows:
-            parts.append(f"<li><a href='{_e(r['url'])}'>{_e(r['title'][:80])}</a>: {_e(r['lesson'])}</li>")
+            parts.append(f"<li><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a>: {_e(r['lesson'])}</li>")
         parts.append("</ul>")
 
     parts.append("<h2>Map: concepts read in the last 90 days</h2>")
@@ -357,7 +363,7 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     parts.append("<h3>Frontier: high-scoring arrivals in fields you have not been reading</h3><table>")
     for r in frontier:
         parts.append(f"<tr><td class='num'>{r['score']:.0f}</td><td>{_e(r['concept'])}</td>"
-                     f"<td><a href='{_e(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>")
+                     f"<td><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>")
     parts.append("</table>")
 
     parts.append("<h2>Learner model</h2><pre>" + _e(learner_text) + "</pre>")

@@ -5,6 +5,7 @@ the control room (`triage panel`)."""
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -16,6 +17,8 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
+
+import yaml
 
 from . import ops, progress, store
 from .config import Config
@@ -88,13 +91,23 @@ def job_state(label: str) -> dict:
     return out
 
 
-def schedule(action: str, which: str = "all") -> str:
+def schedule(action: str, which: str = "all", data_dir: Path | None = None) -> str:
     """'pause' unloads the jobs (the plists stay; nothing fires until 'resume'); 'resume' loads
-    them; 'kick' starts a run now. ``which`` is a job name or 'all' (pause and resume only)."""
+    them; 'kick' starts a run now. ``which`` is a job name or 'all' (pause and resume only).
+    A kick is refused while a run holds the lock (``data_dir`` given): launchctl's kickstart
+    -k would kill it, and the new one would exit at once on the lock anyway."""
     if action == "kick":
         which = "run" if which == "all" else which
+        if data_dir is not None and which == "run":
+            proc = ops.running_process(data_dir)
+            if proc is not None:
+                return (f"not kicked: {proc['kind']} (pid {proc['pid']}) is running; wait for it or `triage stop` "
+                        "it first")
     names = list(JOBS) if which == "all" else [which]
-    return "\n".join(_schedule_one(action, name) for name in names)
+    lines = [_schedule_one(action, name) for name in names]
+    if action == "pause" and which == "all":
+        lines.append("the control room is paused too; `triage schedule resume` brings everything back")
+    return "\n".join(lines)
 
 
 def _schedule_one(action: str, which: str) -> str:
@@ -145,11 +158,12 @@ def panel_state(cfg: Config) -> dict:
     return {"up": up, "url": f"http://{host}:{port}", "pid": info.get("pid"), "note": note}
 
 
-def stray_processes() -> list[tuple[int, str]]:
-    """triage commands still alive on this machine (run, prune, blast, panel …), except this one."""
+def stray_processes(root: Path | None = None) -> list[tuple[int, str]]:
+    """triage commands of this checkout still alive on this machine (run, prune, blast,
+    panel …), except this one. Anchored to the checkout's path: a halt from one checkout must
+    not end another's control room, or an editor whose arguments mention the path."""
     try:
-        res = subprocess.run(["pgrep", "-fl", r"\.venv/bin/triage|-m triage\.cli"], capture_output=True, text=True,
-                             timeout=10)
+        res = subprocess.run(["pgrep", "-fl", stray_pattern(root)], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return []
     out = []
@@ -160,20 +174,32 @@ def stray_processes() -> list[tuple[int, str]]:
     return out
 
 
+def stray_pattern(root: Path | None) -> str:
+    """The pgrep pattern for this checkout's own commands, anchored at the start of the
+    command line so a path merely mentioned in another program's arguments does not match."""
+    # a console script runs as `<venv>/bin/python <venv>/bin/triage …` (its shebang), so the
+    # interpreter may come first
+    if root is not None:
+        return (rf"^(\S+/python\S* )?{re.escape(str(root))}/\.venv/bin/triage( |$)"
+                r"|^\S*python\S* -m triage\.cli( |$)")
+    return r"^(\S+/python\S* )?\S*/\.venv/bin/triage( |$)|^\S*python\S* -m triage\.cli( |$)"
+
+
 def halt(cfg: Config) -> list[str]:
-    """Stop everything: pause every launchd job, interrupt the run that holds the lock, end
-    any other triage process (the control room included). Nothing is lost: judged articles
-    stay judged, half-written cuts are finished by the next run."""
-    notes = [schedule("pause", "all")]
-    notes.append(ops.stop_process(cfg.root / cfg.data_dir))
-    for pid, cmd in stray_processes():
+    """Stop everything: interrupt the run that holds the lock (so it finishes its run row and
+    pings the heartbeat), then pause every launchd job, then end any other triage process of
+    this checkout (the control room included). Nothing is lost: judged articles stay judged,
+    half-written cuts are finished by the next run."""
+    notes = [ops.stop_process(cfg.root / cfg.data_dir)]
+    notes.append(schedule("pause", "all"))
+    for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGTERM)
             notes.append(f"ended pid {pid}: {cmd[:80]}")
         except OSError as exc:
             notes.append(f"could not end pid {pid}: {exc}")
     time.sleep(1.0)
-    for pid, cmd in stray_processes():
+    for pid, cmd in stray_processes(cfg.root):
         try:
             os.kill(pid, signal.SIGKILL)
             notes.append(f"killed pid {pid}: {cmd[:80]}")
@@ -189,21 +215,92 @@ def halt(cfg: Config) -> list[str]:
 
 # -- config levers --------------------------------------------------------------
 
-def set_enforce(root: Path, on: bool) -> str:
-    """Flip `cut.enforce` in config.yaml in place, keeping every other line as it is."""
+def set_enforce(root: Path, on: bool) -> tuple[bool, str]:
+    """Flip `cut.enforce` in config.yaml in place, keeping every other line (and every
+    comment) as it is. The key is found under the `cut:` section whatever its spelling
+    (true, True, yes, "false" …), added there when missing, and the result is read back:
+    the edit counts only if the loaded configuration differs in that one value and nothing
+    else. Returns (ok, message)."""
     path = root / "config.yaml"
-    text = path.read_text(encoding="utf-8")
-    new, n = re.subn(r"^(\s*enforce:\s*)(true|false)", lambda m: f"{m.group(1)}{'true' if on else 'false'}", text,
-                     count=1, flags=re.M)
-    if n == 0:
-        return "config.yaml has no `enforce:` line under cut"
-    path.write_text(new, encoding="utf-8")
-    return f"cut.enforce is now {'true: the floor cuts from the next run' if on else 'false: shadow mode, nothing is cut'}"
+    try:
+        text = path.read_text(encoding="utf-8")
+        before = yaml.safe_load(text) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"config.yaml could not be read: {exc}"
+    if not isinstance(before, dict):
+        return False, "config.yaml does not hold a mapping of sections; edit it by hand"
+    new_text = _edit_cut_enforce(text, on)
+    try:
+        after = yaml.safe_load(new_text) or {}
+    except yaml.YAMLError as exc:
+        return False, f"the edit would break config.yaml ({exc}); edit it by hand"
+    expected = copy.deepcopy(before)
+    expected.setdefault("cut", {})
+    if not isinstance(expected["cut"], dict):
+        return False, "the `cut:` section is not a mapping; edit config.yaml by hand"
+    expected["cut"]["enforce"] = on
+    if after != expected:
+        return False, "could not find a place for cut.enforce in config.yaml; edit it by hand"
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"config.yaml could not be written: {exc}"
+    return True, f"cut.enforce is now {'true: the floor cuts from the next run' if on else 'false: shadow mode, nothing is cut'}"
+
+
+_SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")                      # a top-level `name:` line
+_ENFORCE_RE = re.compile(r"^(?P<indent>\s+)(?P<key>['\"]?enforce['\"]?:)(?P<rest>.*)$")
+
+
+def _edit_cut_enforce(text: str, on: bool) -> str:
+    """The text of config.yaml with cut.enforce set, by lines: the `enforce:` line directly
+    under `cut:` is rewritten (its trailing comment kept), inserted after `cut:` when there is
+    none, or a `cut:` section is appended when there is none."""
+    value = "true" if on else "false"
+    lines = text.splitlines(keepends=True)
+    cut_at = None
+    for i, line in enumerate(lines):
+        m = _SECTION_RE.match(line.rstrip("\n"))
+        if m and m.group(1) == "cut":
+            cut_at = i
+            break
+        if line.startswith("cut:"):
+            return text  # `cut: { ... }` on one line: not a shape to edit blind; the caller's check refuses
+    if cut_at is None:
+        tail = "" if not text or text.endswith("\n") else "\n"
+        return text + f"{tail}\ncut:\n  enforce: {value}\n"
+    end = len(lines)
+    for i in range(cut_at + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped and not stripped.startswith("#") and not lines[i][0].isspace():
+            end = i  # the next top-level key
+            break
+    child_indent: int | None = None
+    for i in range(cut_at + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        if child_indent is None:
+            child_indent = indent
+        m = _ENFORCE_RE.match(lines[i].rstrip("\n"))
+        if m and indent == child_indent:
+            rest = m.group("rest")
+            comment = ""
+            hash_at = rest.find(" #")
+            if hash_at >= 0:
+                comment = rest[hash_at:]
+            lines[i] = f"{m.group('indent')}enforce: {value}{comment}\n"
+            return "".join(lines)
+    indent = " " * (child_indent if child_indent else 2)
+    lines.insert(cut_at + 1, f"{indent}enforce: {value}\n")
+    return "".join(lines)
 
 
 # -- the whole picture ------------------------------------------------------------
 
-def status(cfg: Config, conn: sqlite3.Connection) -> dict:
+def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> dict:
+    """The whole picture. ``jobs`` lets a caller pass launchd's answers from a cache."""
     data_dir = cfg.root / cfg.data_dir
     proc = ops.running_process(data_dir)
     snap = progress.snapshot(conn, cfg)
@@ -211,19 +308,22 @@ def status(cfg: Config, conn: sqlite3.Connection) -> dict:
     runs = [dict(r) for r in store.last_runs(conn, 15)]
     last_ok = next((r for r in runs if r["ok"] and r["kind"] == "run"), None)
     last_err = next((r for r in runs if not r["ok"] and (r["error"] or r["finished_at"])), None)
-    jobs = {name: job_state(label) for name, label in JOBS.items()}
+    if jobs is None:
+        jobs = {name: job_state(label) for name, label in JOBS.items()}
     spend_today = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     now = time.time()
     next_run = None
     if proc is None and jobs["run"]["loaded"] and jobs["run"]["state"] != "running":
         interval = jobs["run"]["interval"] or 1800
-        last_start = _parse_ts(runs[0]["started_at"]) if runs else None
+        last_timer_run = next((r for r in runs if r["kind"] == "run"), None)  # a prune or an undo is not the timer
+        last_start = _parse_ts(last_timer_run["started_at"]) if last_timer_run else None
         if last_start:
             next_run = max(0.0, interval - (now - last_start))
     return {
         "now": store.utcnow_iso(),
         "panel": panel_state(cfg),
         "mode": "enforce" if cfg.cut.enforce else "shadow",
+        "breaker_tripped": store.kv_get(conn, "breaker_tripped"),
         "batch_mode": cfg.models.batch,
         "running": None if proc is None else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
         "jobs": jobs,
@@ -250,7 +350,7 @@ def status(cfg: Config, conn: sqlite3.Connection) -> dict:
         "last_ok": last_ok,
         "last_error": last_err,
         "batches": snap["batches"],
-        "log": snap.get("log", []),
+        "log": progress.log_tail(ops.log_file(data_dir), 10),  # local only: the control room never leaves the Mac
     }
 
 
@@ -280,6 +380,8 @@ def render_status_text(st: dict) -> str:
         lines.append(f"○ idle · {when}")
     lines.append(f"mode: {st['mode']}{' (nothing is cut)' if st['mode'] == 'shadow' else ' (the floor cuts)'} · "
                  f"{'batch' if st['batch_mode'] else 'synchronous'} judging · teacher {st['config']['teacher']}")
+    if st.get("breaker_tripped"):
+        lines.append(f"BREAKER TRIPPED in run {st['breaker_tripped']}: the floor cuts nothing until `triage safety reset`")
     j = st["jobs"]
     def jstate(name: str) -> str:
         s = j[name]

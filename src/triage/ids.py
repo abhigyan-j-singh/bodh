@@ -61,9 +61,14 @@ def resolve_ordinal(raw: int | str, ordered_ids: list[str]) -> str | None:
     Accepts "3", "[3]", "3." or an int. Returns None when nothing resolves;
     callers drop the result rather than guess.
     """
-    s = str(raw or "").strip().strip("[].# ")
-    if s.isdigit():
-        idx = int(s)
+    if raw is None or isinstance(raw, bool):
+        return None
+    s = str(raw).strip().strip("[].# ")
+    if s.isdecimal():  # isdigit() admits "³", which int() then refuses
+        try:
+            idx = int(s)
+        except ValueError:
+            idx = 0
         if 1 <= idx <= len(ordered_ids):
             return ordered_ids[idx - 1]
     m = re.search(r"([0-9a-fA-F]{16})\s*$", str(raw or ""))

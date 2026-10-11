@@ -24,6 +24,7 @@ from .teacher import Teacher, has_more_to_read
 log = logging.getLogger(__name__)
 
 BAND = 20  # one scoring band; the concept cap never displaces an article by more than this
+BREAKER_KEY = "breaker_tripped"  # kv: the run whose floor tripped the breaker; set until `triage safety reset`
 
 
 class BreakerTripped(Exception):
@@ -39,6 +40,8 @@ class Selection:
     saved_by_second_look: int = 0
     reserved_for_exploration: int = 0
     second_looks: int = 0
+    kept_after_failed_look: int = 0  # earlier runs' failed looks: they stay unread, and are not this run's saves
+    blocked: str = ""  # why the floor cut nothing this run (the breaker is tripped), else empty
 
     @property
     def cut_ids(self) -> list[str]:
@@ -46,22 +49,44 @@ class Selection:
 
 
 def eligible(row: sqlite3.Row) -> bool:
-    """Never cut, by either path: starred or protected (Must read, protected folders)."""
-    return not row["starred"] and not row["protected"]
+    """Never cut, by either path: starred, protected (Must read, protected folders), or rescued
+    by the student (marked unread again, or tagged `wrong`, after a cut)."""
+    return not row["starred"] and not row["protected"] and not row["rescued_at"]
+
+
+def breaker_tripped(conn: sqlite3.Connection) -> str | None:
+    """The run id whose floor tripped the breaker, while the trip stands."""
+    return store.kv_get(conn, BREAKER_KEY)
+
+
+def reset_breaker(conn: sqlite3.Connection) -> bool:
+    return store.kv_delete(conn, BREAKER_KEY)
 
 
 # -- the automatic floor ------------------------------------------------------
 
 def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None, run_id: int | None,
-                 newly_scored: set[str] | None = None, client: BazQuxClient | None = None) -> Selection:
+                 newly_scored: set[str] | None = None, client: BazQuxClient | None = None,
+                 stop_after: float | None = None) -> Selection:
     """Everything unread, scored with medium or high confidence, below its folder's floor,
-    minus the second look's saves, minus the exploration quota, capped per run."""
+    minus the second look's saves, minus the exploration quota, capped per run. Exempt as
+    well: what an undo restored (``exempt``), until a prune takes it."""
     pool = store.unread_scored(conn)
     sel = Selection()
+    tripped = breaker_tripped(conn)
+    if tripped:
+        # a trip stands until someone has looked: the same scores would trip it again next run
+        sel.blocked = (f"breaker tripped in run {tripped}; the floor cuts nothing until "
+                       "`triage safety reset`")
+        log.warning("cut: %s", sel.blocked)
+        sel.survivors = list(pool)
+        sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
+        return sel
     candidates: list[sqlite3.Row] = []
     for row in pool:
         floor = cfg.cut.floor_for(row["folder"])
-        if floor is None or not eligible(row) or row["exploration"] or row["confidence"] == "low":
+        if (floor is None or not eligible(row) or row["exploration"] or row["exempt"]
+                or row["confidence"] == "low"):
             sel.survivors.append(row)
             continue
         if row["score"] < floor:
@@ -74,16 +99,19 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
         new_candidates = sum(1 for r in candidates if r["id"] in newly_scored)
         share = new_candidates / len(newly_scored)
         if share > cfg.breakers.max_cut_share:
+            store.kv_set(conn, BREAKER_KEY, str(run_id if run_id is not None else "?"))
             raise BreakerTripped(
                 f"floor would cut {new_candidates} of {len(newly_scored)} newly scored articles "
-                f"({share:.0%}); stopping before any write. The prompt or model has probably broken."
+                f"({share:.0%}); stopping before any write. The prompt or model has probably broken; "
+                "the floor stays off until `triage safety reset`."
             )
 
     # second look: a close call whose full text holds more than the opening gets the stronger
     # model, once; the higher score stands. In batch mode the look arrives on the next run,
     # so the article is held (unread) until then.
     if teacher is not None:
-        saved: list[sqlite3.Row] = []
+        saved: list[sqlite3.Row] = []       # this run's second look cleared them, or never got to them
+        kept: list[sqlite3.Row] = []        # an earlier run's look failed: kept, but not a save of this run
         remaining: list[sqlite3.Row] = []
         to_look: list[sqlite3.Row] = []
         for row in candidates:
@@ -92,7 +120,7 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
                 remaining.append(row)
             elif row["second_look_model"] is not None:
                 if row["second_look_model"] == "failed":
-                    saved.append(row)  # fail open: a look that could not be had keeps the article
+                    kept.append(row)  # fail open: a look that could not be had keeps the article
                 else:
                     remaining.append(row)  # looked at already; the higher score still sits below the floor
             elif not has_more_to_read(row, cfg):
@@ -102,23 +130,21 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
             else:
                 to_look.append(row)
         if to_look:
-            results, _budget_hit = teacher.second_looks(to_look, run_id)
+            results = teacher.second_looks(to_look, run_id, client=client, stop_after=stop_after)
             for row in to_look:
                 if row["id"] not in results:
-                    saved.append(row)  # never examined (budget): stays unread
+                    saved.append(row)  # never examined (budget, deadline, cap): stays unread
                     continue
                 sel.second_looks += 1
-                second = results[row["id"]]
-                if second is None:
-                    store.record_second_look_failure(conn, row["id"])
-                    saved.append(row)  # fail open
-                elif teacher.apply_second_look(row["id"], float(row["score"]), float(second), row["folder"], client):
-                    saved.append(row)
+                if results[row["id"]] is False:
+                    remaining.append(row)  # the stronger model agreed: the cut stands
                 else:
-                    remaining.append(row)
+                    saved.append(row)  # cleared the floor, or the look failed: fail open
         sel.saved_by_second_look = len(saved)
+        sel.kept_after_failed_look = len(kept)
         candidates = remaining
         sel.survivors.extend(saved)
+        sel.survivors.extend(kept)
         sel.survivors.extend(sel.held)
 
     # exploration quota: new ground of decent quality is exempt from the floor
@@ -208,7 +234,16 @@ def apply_cut(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, ids: 
 
 def finish_pending_cuts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config) -> tuple[int, int]:
     """Tag first, then mark read. A crash between the two leaves a tagged unread
-    article that the next run finishes here."""
+    article that the next run finishes here. An article starred or protected since it was
+    chosen (the student got to it first) is restored instead."""
+    changed = store.cut_pending_now_exempt(conn)
+    if changed:
+        log.info("cut: %d pending cuts restored: starred or protected since", len(changed))
+        store.restore_unread(conn, changed, rescued=False)
+        try:
+            client.untag(changed, cfg.tags.cut)
+        except Exception:  # noqa: BLE001 — the tag is cosmetic; the read state is what matters
+            log.warning("cut: could not remove the cut tag from %d restored articles", len(changed))
     untagged, unmarked = store.cut_pending(conn)
     if untagged:
         client.tag(untagged, cfg.tags.cut)
@@ -243,40 +278,39 @@ def tag_buckets(client: BazQuxClient, conn: sqlite3.Connection) -> int:
 
 
 def undo(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, run_id: int) -> int:
+    """Reverse one run's cut. The restored articles are exempt from the automatic floor from
+    then on (their scores have not changed, so it would only repeat the cut); a prune, the
+    student's own decision, may still take them."""
     ids = store.run_cut_ids(conn, run_id)
     if not ids:
         return 0
     client.mark_unread(ids)
     client.untag(ids, cfg.tags.cut)
-    store.restore_unread(conn, ids, rescued=False)
+    store.restore_unread(conn, ids, rescued=False, exempt=True)
     return len(ids)
 
 
 def bankruptcy(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, older_than_days: int,
                protected_ids: set[str], run_id: int, dry_run: bool = False) -> tuple[int, int]:
-    """Mark read every unread article older than the cutoff, stars and protections exempt.
-    Returns (candidates, done)."""
+    """Mark read every unread article older than the cutoff, stars, protections and the
+    student's rescues exempt. Returns (candidates, done)."""
     import time
 
     refs = client.unread_ids()
     cutoff_usec = int((time.time() - older_than_days * 86400) * 1_000_000)
     starred = set(client.starred_ids())
-    exempt = starred | protected_ids
+    exempt = starred | protected_ids | store.rescued_ids(conn)
     ids = [r.id for r in refs if r.timestamp_usec and r.timestamp_usec < cutoff_usec and r.id not in exempt]
     if dry_run or not ids:
         return len(ids), 0
     now = store.utcnow_iso()
     known = store.known_ids(conn)
-    for aid in ids:
-        if aid not in known:
-            conn.execute(
-                """INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)""",
-                (aid, "(bankruptcy: not fetched)", now),
-            )
-            conn.execute(
-                """INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)""",
-                (aid, now),
-            )
-    store.mark_cut(conn, ids, run_id, "bankruptcy")
+    unknown = [aid for aid in ids if aid not in known]
+    with store.transaction(conn):
+        conn.executemany("INSERT OR IGNORE INTO articles (id, title, fetched_at) VALUES (?, ?, ?)",
+                         [(aid, "(bankruptcy: not fetched)", now) for aid in unknown])
+        conn.executemany("INSERT OR IGNORE INTO state (article_id, status, first_seen_at) VALUES (?, 'unread', ?)",
+                         [(aid, now) for aid in unknown])
+        store.mark_cut(conn, ids, run_id, "bankruptcy")
     finish_pending_cuts(client, conn, cfg)
     return len(ids), len(ids)

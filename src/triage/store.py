@@ -1,5 +1,6 @@
-"""SQLite store: an audit cache, not the system of record. BazQux's tags can
-rebuild the scored set; this file makes the dashboard, undo and feedback cheap."""
+"""SQLite store: the system's memory of what it judged, cut and learned, next to BazQux,
+which stays the only source of truth for what is read and tagged. (A rebuild of the
+scored set from the bucket tags in BazQux is planned, not written: `triage rebuild`.)"""
 
 from __future__ import annotations
 
@@ -7,7 +8,8 @@ import html
 import json
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,8 @@ CREATE TABLE IF NOT EXISTS state (
   starred INTEGER DEFAULT 0,
   protected INTEGER DEFAULT 0,
   exploration INTEGER DEFAULT 0,
+  exempt INTEGER DEFAULT 0,
+  judge_failures INTEGER DEFAULT 0,
   cut_run_id INTEGER, cut_mode TEXT, cut_at TEXT,
   cut_tagged INTEGER DEFAULT 0, read_marked INTEGER DEFAULT 0,
   rescued_at TEXT, read_at TEXT,
@@ -100,7 +104,67 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.executescript(SCHEMA)
+    migrate(conn)
     return conn
+
+
+# -- migrations ---------------------------------------------------------------
+# SCHEMA above is the current shape, so a new database needs no migration. A database made
+# by an older version carries kv.schema_version (missing = 1, the shape before migrations
+# existed); each numbered step below brings it one version on, inside one transaction, and
+# is written so that running it on a database that already has the change is harmless.
+
+SCHEMA_VERSION = 3
+SCHEMA_VERSION_KEY = "schema_version"
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_2(conn: sqlite3.Connection) -> None:
+    """state.exempt: an undone cut must not be repeated by the next automatic floor."""
+    if "exempt" not in _columns(conn, "state"):
+        conn.execute("ALTER TABLE state ADD COLUMN exempt INTEGER DEFAULT 0")
+
+
+def _migrate_3(conn: sqlite3.Connection) -> None:
+    """state.judge_failures: how often the model answered for this article with no judgment,
+    so a broken prompt stops being resubmitted every half hour."""
+    if "judge_failures" not in _columns(conn, "state"):
+        conn.execute("ALTER TABLE state ADD COLUMN judge_failures INTEGER DEFAULT 0")
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3}
+
+
+def schema_version(conn: sqlite3.Connection) -> int:
+    return int(kv_get(conn, SCHEMA_VERSION_KEY) or 1)
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """Bring the database to SCHEMA_VERSION. Returns the version it is at afterwards."""
+    version = schema_version(conn)
+    if version >= SCHEMA_VERSION:
+        return version
+    with transaction(conn):
+        for step in range(version + 1, SCHEMA_VERSION + 1):
+            MIGRATIONS[step](conn)
+            kv_set(conn, SCHEMA_VERSION_KEY, str(step))
+    return SCHEMA_VERSION
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """All or nothing, and one fsync instead of one per row: the connection runs in
+    autocommit, so bulk writes and multi-step updates ask for a transaction explicitly."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
 
 
 # -- text ---------------------------------------------------------------------
@@ -154,6 +218,32 @@ def known_ids(conn: sqlite3.Connection) -> set[str]:
     return {r[0] for r in conn.execute("SELECT id FROM articles")}
 
 
+IN_CHUNK = 900  # ids per `IN (...)`: SQLite caps the variables in one statement
+
+
+def in_chunks(ids: Iterable[str], size: int = IN_CHUNK) -> Iterator[list[str]]:
+    """``ids`` in lists small enough for one ``IN (...)`` clause."""
+    batch: list[str] = []
+    for i in ids:
+        batch.append(i)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def fetch_in(conn: sqlite3.Connection, sql: str, ids: Iterable[str], before: tuple = (),
+             after: tuple = ()) -> list[sqlite3.Row]:
+    """Run ``sql`` (with ``{marks}`` where the ids go) once per chunk of ids and gather the rows,
+    so a mark-all-read of a big pile never exceeds the variable limit."""
+    rows: list[sqlite3.Row] = []
+    for chunk in in_chunks(ids):
+        marks = ",".join("?" * len(chunk))
+        rows.extend(conn.execute(sql.format(marks=marks), (*before, *chunk, *after)).fetchall())
+    return rows
+
+
 def scored_ids(conn: sqlite3.Connection, prompt_version: str | None = None) -> set[str]:
     if prompt_version:
         rows = conn.execute("SELECT article_id FROM scores WHERE prompt_version = ?", (prompt_version,))
@@ -175,6 +265,27 @@ def article(conn: sqlite3.Connection, article_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+MAX_JUDGE_FAILURES = 3  # empty answers from the model for one article before it is left alone
+
+
+def bump_judge_failures(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
+    """The model answered for these articles and said nothing usable; three times and they
+    are left unread, unjudged, until `triage safety reset`."""
+    conn.executemany("UPDATE state SET judge_failures = judge_failures + 1 WHERE article_id = ?", [(i,) for i in ids])
+
+
+def given_up(conn: sqlite3.Connection) -> int:
+    """Unread articles the teacher has stopped asking about."""
+    return int(conn.execute(
+        "SELECT COUNT(*) FROM state st LEFT JOIN scores s ON s.article_id = st.article_id "
+        "WHERE st.status = 'unread' AND st.judge_failures >= ? AND s.article_id IS NULL", (MAX_JUDGE_FAILURES,)
+    ).fetchone()[0] or 0)
+
+
+def reset_judge_failures(conn: sqlite3.Connection) -> int:
+    return conn.execute("UPDATE state SET judge_failures = 0 WHERE judge_failures > 0").rowcount
+
+
 def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders: Iterable[str],
                     exclude_inflight: bool, rejudge: tuple[str, float] | None = None) -> tuple[list[str], list[Any]]:
     """``rejudge`` = (teacher model, min score): a judgment by another model at or above the
@@ -186,6 +297,8 @@ def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders:
         params += [rejudge[0], float(rejudge[1])]
     else:
         where = ["st.status = 'unread'", "s.article_id IS NULL"]
+    where.append("st.judge_failures < ?")  # given up on after repeated empty answers (see given_up)
+    params.append(MAX_JUDGE_FAILURES)
     if max_age_days is not None:
         cutoff_ms = int((utcnow() - timedelta(days=max_age_days)).timestamp() * 1000)
         where.append("((a.crawled_msec IS NULL AND a.published IS NULL) "
@@ -248,7 +361,7 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         """SELECT a.id, a.feed_title, a.folder, a.title, a.url, a.crawled_msec, LENGTH(a.text) AS text_len,
                   s.score, s.quality, s.concept, s.confidence, s.dupe_of, s.flags,
                   s.second_look_score, s.second_look_model,
-                  st.starred, st.protected, st.exploration
+                  st.starred, st.protected, st.exploration, st.exempt, st.rescued_at
            FROM articles a JOIN state st ON st.article_id = a.id
                            JOIN scores s ON s.article_id = a.id
            WHERE st.status = 'unread'
@@ -286,6 +399,7 @@ def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_
             bucket, utcnow_iso(),
         ),
     )
+    conn.execute("UPDATE state SET judge_failures = 0 WHERE article_id = ? AND judge_failures > 0", (article_id,))
     return stale
 
 
@@ -323,17 +437,42 @@ def set_flags(conn: sqlite3.Connection, ids: Iterable[str], **cols: Any) -> None
     if not cols:
         return
     assignments = ", ".join(f"{k} = ?" for k in cols)
-    conn.executemany(f"UPDATE state SET {assignments} WHERE article_id = ?",
-                     [(*cols.values(), i) for i in ids])
+    rows = [(*cols.values(), i) for i in ids]
+    if not rows:
+        return
+    with _bulk(conn):
+        conn.executemany(f"UPDATE state SET {assignments} WHERE article_id = ?", rows)
 
 
 def mark_cut(conn: sqlite3.Connection, ids: Iterable[str], run_id: int, mode: str) -> None:
     now = utcnow_iso()
-    conn.executemany(
-        """UPDATE state SET status = 'cut', cut_run_id = ?, cut_mode = ?, cut_at = ?,
-                            cut_tagged = 0, read_marked = 0 WHERE article_id = ?""",
-        [(run_id, mode, now, i) for i in ids],
-    )
+    rows = [(run_id, mode, now, i) for i in ids]
+    if not rows:
+        return
+    with _bulk(conn):
+        conn.executemany(
+            """UPDATE state SET status = 'cut', cut_run_id = ?, cut_mode = ?, cut_at = ?,
+                                cut_tagged = 0, read_marked = 0 WHERE article_id = ?""",
+            rows,
+        )
+
+
+@contextmanager
+def _bulk(conn: sqlite3.Connection) -> Iterator[None]:
+    """One transaction around a bulk write, unless the caller already holds one (then the
+    rows join it): autocommit would fsync once per row, 3.5 s for 20,000 flags."""
+    if conn.in_transaction:
+        yield
+        return
+    with transaction(conn):
+        yield
+
+
+def cut_pending_now_exempt(conn: sqlite3.Connection) -> list[str]:
+    """Cuts not yet written to BazQux whose article is starred or protected by now."""
+    return [r[0] for r in conn.execute(
+        "SELECT article_id FROM state WHERE status = 'cut' AND (cut_tagged = 0 OR read_marked = 0) "
+        "AND (starred = 1 OR protected = 1)")]
 
 
 def cut_pending(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
@@ -347,13 +486,17 @@ def run_cut_ids(conn: sqlite3.Connection, run_id: int) -> list[str]:
     return [r[0] for r in conn.execute("SELECT article_id FROM state WHERE cut_run_id = ?", (run_id,))]
 
 
-def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool) -> None:
+def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool, exempt: bool = False) -> None:
+    """Back to unread. ``rescued`` stamps the student's rescue (the article is never cut again,
+    by any path); ``exempt`` (an undo) keeps it clear of the automatic floor, so the next run
+    does not repeat the cut that was just reversed; a prune may still take it."""
     now = utcnow_iso()
     conn.executemany(
         """UPDATE state SET status = 'unread', cut_run_id = NULL, cut_mode = NULL, cut_at = NULL,
-                            cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at)
+                            cut_tagged = 0, read_marked = 0, rescued_at = COALESCE(?, rescued_at),
+                            exempt = MAX(exempt, ?)
            WHERE article_id = ?""",
-        [(now if rescued else None, i) for i in ids],
+        [(now if rescued else None, 1 if exempt else 0, i) for i in ids],
     )
 
 
@@ -361,11 +504,16 @@ def status_ids(conn: sqlite3.Connection, status: str) -> set[str]:
     return {r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = ?", (status,))}
 
 
+def rescued_ids(conn: sqlite3.Connection) -> set[str]:
+    """Articles the student rescued after a cut; no path cuts them again."""
+    return {r[0] for r in conn.execute("SELECT article_id FROM state WHERE rescued_at IS NOT NULL")}
+
+
 # -- runs and costs -----------------------------------------------------------
 
 def begin_run(conn: sqlite3.Connection, kind: str) -> int:
     cur = conn.execute("INSERT INTO runs (kind, started_at, ok) VALUES (?, ?, 0)", (kind, utcnow_iso()))
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def finish_run(conn: sqlite3.Connection, run_id: int, ok: bool, **cols: Any) -> None:
@@ -530,7 +678,7 @@ def recent_batches(conn: sqlite3.Connection, n: int = 10) -> list[sqlite3.Row]:
 def save_learner_version(conn: sqlite3.Connection, text: str, reason: str) -> int:
     cur = conn.execute("INSERT INTO learner_versions (text, reason, created_at) VALUES (?, ?, ?)",
                        (text, reason, utcnow_iso()))
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def learner_versions(conn: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:
@@ -545,3 +693,7 @@ def kv_get(conn: sqlite3.Connection, key: str, default: str | None = None) -> st
 def kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                  (key, value))
+
+
+def kv_delete(conn: sqlite3.Connection, key: str) -> bool:
+    return conn.execute("DELETE FROM kv WHERE key = ?", (key,)).rowcount > 0

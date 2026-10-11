@@ -9,6 +9,10 @@ cd "$(dirname "$0")"
 TRIAGE_DIR="$(pwd)"
 MODE="${1:-agent}"
 PANEL_PORT=8766
+case "$MODE" in
+  agent|--daemon) ;;
+  *) echo "usage: ./install-launchd.sh [--daemon]"; exit 2;;
+esac
 [ -x .venv/bin/triage ] || { echo "run ./install.sh first"; exit 1; }
 mkdir -p "$HOME/Library/Logs/triage"
 
@@ -42,12 +46,20 @@ for job in com.antriksh.triage com.antriksh.triage.weekly com.antriksh.triage.re
     tmp="$(mktemp)"; render "launchd/$job.plist" "$tmp"
     sudo cp "$tmp" "/Library/LaunchDaemons/$job.plist"
     sudo chown root:wheel "/Library/LaunchDaemons/$job.plist"; sudo chmod 644 "/Library/LaunchDaemons/$job.plist"
-    sudo launchctl bootstrap system "/Library/LaunchDaemons/$job.plist"
     rm -f "$tmp"
+    if ! sudo launchctl bootstrap system "/Library/LaunchDaemons/$job.plist"; then
+      echo "could not load $job as a daemon. See: sudo launchctl print system/$job; the plist is /Library/LaunchDaemons/$job.plist"
+      exit 1
+    fi
   else
     mkdir -p "$HOME/Library/LaunchAgents"
     render "launchd/$job.plist" "$HOME/Library/LaunchAgents/$job.plist"
-    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$job.plist"
+    if ! launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/$job.plist"; then
+      echo "could not load $job. Usual causes: the checkout moved (run ./install.sh again), or the job is still"
+      echo "loaded under an older path (launchctl bootout gui/$(id -u)/$job, then run this again)."
+      echo "See: launchctl print gui/$(id -u)/$job; the plist is ~/Library/LaunchAgents/$job.plist"
+      exit 1
+    fi
   fi
   echo "installed $job"
 done

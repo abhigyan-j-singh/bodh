@@ -93,23 +93,26 @@ class JudgmentIn(BaseModel):
 
     n: int
     s: list[int]
-    lesson: str = ""
-    concept: str = ""
-    kind: str = "other"
-    flags: list[str] = Field(default_factory=list)
+    lesson: str | None = ""          # None in any of these is read as "not given", never as a dropped judgment
+    concept: str | None = ""
+    kind: str | None = "other"
+    flags: list[str | None] | None = None
     dupe: int | str | None = None
-    conf: str = "medium"
+    conf: str | None = "medium"
 
     def to_verdict(self) -> Verdict:
         if len(self.s) != len(SUBSCORES):
             raise ValueError(f"expected {len(SUBSCORES)} sub-scores, got {len(self.s)}")
         scores = {name: max(0, min(100, int(val))) for name, val in zip(SUBSCORES, self.s, strict=True)}
-        flags = [FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags) if f in FLAG_CODES]
+        flags = [FLAG_CODES[f] for f in ((x or "").strip().lower() for x in self.flags or []) if f in FLAG_CODES]
         dupe: int | None = None
         if isinstance(self.dupe, int):
             dupe = self.dupe
-        elif isinstance(self.dupe, str) and self.dupe.strip().isdigit():
-            dupe = int(self.dupe.strip())
+        elif isinstance(self.dupe, str) and self.dupe.strip().isdecimal():
+            try:
+                dupe = int(self.dupe.strip())
+            except ValueError:
+                dupe = None
         conf = (self.conf or "").strip().lower()
         return Verdict(
             n=self.n, **scores, lesson=(self.lesson or "").strip(), concept=(self.concept or "").strip().lower(),
@@ -138,6 +141,23 @@ class ModelConfigError(TeacherError):
     the run stops at once so the problem is visible instead of 27 identical tracebacks."""
 
 
+class BatchNotFound(TeacherError):
+    """The API no longer knows the batch (deleted in the console, or submitted under another
+    key): it is closed as lost and its articles are pending again, nothing else stops."""
+
+
+class NoJudgments(TeacherError):
+    """The model answered, but with nothing a judgment could be read from."""
+
+
+def _batch_classify(exc: Exception) -> Exception:
+    import anthropic
+
+    if isinstance(exc, anthropic.NotFoundError):
+        return BatchNotFound(f"batch not found: {exc}")
+    return _classify(exc)
+
+
 def _classify(exc: Exception) -> Exception:
     import anthropic
 
@@ -146,14 +166,17 @@ def _classify(exc: Exception) -> Exception:
     return exc
 
 
+_STRUCTURED_WORDS = re.compile(r"\b(output_config|output_format|structured|json_schema)\b", re.I)
+_TTL_WORDS = re.compile(r"\b(ttl|cache_control)\b", re.I)
+
+
 def _mentions_structured_outputs(text: str) -> bool:
-    text = text.lower()
-    return "output_config" in text or "output_format" in text or "structured" in text or "json_schema" in text
+    return bool(_STRUCTURED_WORDS.search(text or ""))
 
 
 def _mentions_cache_ttl(text: str) -> bool:
-    text = text.lower()
-    return "ttl" in text or "cache_control" in text
+    # whole words only: "throttled" contains "ttl" and used to disable the 1-hour cache for good
+    return bool(_TTL_WORDS.search(text or ""))
 
 
 def load_prompt(name: str, root: Path | None = None) -> str:
@@ -314,7 +337,7 @@ class LLM:
     """Anthropic client with cost accounting and a daily budget. Nothing else talks to the API."""
 
     def __init__(self, cfg: Config, secrets: Secrets, conn: sqlite3.Connection) -> None:
-        if not secrets.anthropic_api_key:
+        if not secrets.is_set("anthropic_api_key"):
             raise TeacherError("ANTHROPIC_API_KEY not configured")
         import anthropic
 
@@ -324,7 +347,7 @@ class LLM:
         # same query on one connection can hand each other empty results
         self._lock = threading.Lock()
         self.conn = self._private_connection(cfg, conn)
-        self._client = anthropic.Anthropic(api_key=secrets.anthropic_api_key, max_retries=2, timeout=180.0)
+        self._client = anthropic.Anthropic(api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0)
         self._format = _output_format()
         # once a model has rejected structured outputs, every later call asks for plain JSON instead;
         # once the API has rejected the 1-hour cache, the default 5-minute cache is used instead
@@ -358,7 +381,8 @@ class LLM:
 
     # -- accounting -----------------------------------------------------------
 
-    def _cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict, float]:
+    def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict, float]:
+        """(token counts, USD) for one response's usage, the batch discount applied if any."""
         p_in, p_out = self.cfg.models.price(model)
         creation = getattr(usage, "cache_creation", None)
         write_1h = int(getattr(creation, "ephemeral_1h_input_tokens", 0) or 0)
@@ -379,7 +403,7 @@ class LLM:
         return u, usd * discount
 
     def record(self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0) -> float:
-        u, usd = self._cost(model, usage, discount)
+        u, usd = self.cost(model, usage, discount)
         with self._lock:
             store.record_cost(self.conn, run_id, model, purpose, u, usd)
         return usd
@@ -452,7 +476,7 @@ class LLM:
         self.record(run_id, model, purpose, response.usage)
         verdicts = parse_judgments(self.message_text(response))
         if verdicts is None:
-            raise TeacherError(f"{model} returned no parsable judgments")
+            raise NoJudgments(f"{model} returned no parsable judgments")
         return verdicts
 
     def complete(self, model: str, system_text: str, user_text: str, run_id: int | None,
@@ -484,14 +508,14 @@ class LLM:
         try:
             return self._client.messages.batches.retrieve(batch_id).processing_status
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
 
     def batch_counts(self, batch_id: str) -> dict:
         """How many requests of a batch are processing, succeeded, errored, canceled, expired."""
         try:
             counts = self._client.messages.batches.retrieve(batch_id).request_counts
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
         return {k: int(getattr(counts, k, 0) or 0) for k in ("processing", "succeeded", "errored", "canceled", "expired")}
 
     def retries(self, n: int) -> None:
@@ -502,7 +526,7 @@ class LLM:
         try:
             return list(self._client.messages.batches.results(batch_id))
         except Exception as exc:  # noqa: BLE001
-            raise _classify(exc) from exc
+            raise _batch_classify(exc) from exc
 
 
 # -- the teacher --------------------------------------------------------------
@@ -510,7 +534,10 @@ class LLM:
 def _fmt_date(published: int | None) -> str:
     if not published:
         return "unknown date"
-    return datetime.fromtimestamp(int(published), tz=timezone.utc).strftime("%Y-%m-%d")
+    try:
+        return datetime.fromtimestamp(int(published), tz=timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError, TypeError):
+        return "unknown date"  # a feed's bad timestamp must not fail its batch every run for two weeks
 
 
 def article_block(n: int, row: sqlite3.Row | dict, chars: int) -> str:
@@ -535,7 +562,9 @@ def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
 
 class Teacher:
     def __init__(self, cfg: Config, llm: LLM, conn: sqlite3.Connection, context: str = "",
-                 expansion_topics: list[str] | None = None) -> None:
+                 expansion_topics: list[str] | None = None, learner_text: str | None = None) -> None:
+        """``learner_text`` stands in for profile/learner.md (the weekly rewrite's gate judges
+        with a proposed model without writing it to disk)."""
         self.cfg = cfg
         self.llm = llm
         self.conn = conn
@@ -544,7 +573,7 @@ class Teacher:
         base = load_prompt(self.prompt_version, cfg.root)
         intro, _, rubric = base.partition("\n\n")
         seed = cfg.read_seed() or "(no seed written yet)"
-        learner = cfg.read_learner() or "(no learner model yet)"
+        learner = (cfg.read_learner() if learner_text is None else learner_text) or "(no learner model yet)"
         # the cached prefix changes only when the seed or the learner model does; the concept
         # lists change with every star and read, so they travel in the user message instead
         student = f"# Seed\n{seed}\n\n# Learner model\n{learner}"
@@ -602,14 +631,24 @@ class Teacher:
 
     @staticmethod
     def _by_article(verdicts: list[Verdict], ordered: list[str]) -> dict[str, Verdict]:
+        """Verdicts keyed by article id, in batch order. A duplicate may point only at an
+        earlier article of the batch that is not itself a duplicate: a forward pointer or a
+        mutual pair would cap both copies of a good story at 20, and the later copy then has
+        no original to be a duplicate of. Otherwise the pointer and the flag are dropped."""
         out: dict[str, Verdict] = {}
-        for v in verdicts:
+        dupes: set[str] = set()
+        for v in sorted(verdicts, key=lambda v: v.n):
             aid = resolve_ordinal(v.n, ordered)
             if aid is None or aid in out:
                 continue
-            if v.dupe_of is not None:
-                target = resolve_ordinal(v.dupe_of, ordered)
-                v = v.model_copy(update={"dupe_of": None if target in (None, aid) else target})
+            if v.dupe_of is not None or "duplicate" in v.flags:
+                target = resolve_ordinal(v.dupe_of, ordered) if v.dupe_of is not None else None
+                earlier = target is not None and target != aid and ordered.index(target) < ordered.index(aid)
+                if earlier and target not in dupes:
+                    v = v.model_copy(update={"dupe_of": target})
+                    dupes.add(aid)
+                else:
+                    v = v.model_copy(update={"dupe_of": None, "flags": [f for f in v.flags if f != "duplicate"]})
             out[aid] = v
         return out
 
@@ -619,21 +658,23 @@ class Teacher:
         scored stays pending for the next run. ``on_progress(stats)`` is called after every
         batch that lands; past ``stop_after`` (a time.monotonic() value) no new call starts.
         Returns stats."""
-        stats = {"scored": 0, "dupes": 0, "failed_batches": 0, "budget_stop": False, "pending_after": 0,
-                 "total": 0, "stopped_early": False}
+        stats = {"scored": 0, "dupes": 0, "failed_batches": 0, "empty_batches": 0, "budget_stop": False,
+                 "pending_after": 0, "total": 0, "stopped_early": False}
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)  # a batch may hold some
         stats["total"] = len(todo)
         size = self.cfg.scoring.batch_size
         batches = [todo[i: i + size] for i in range(0, len(todo), size)]
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        workers = max(1, workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = {}
             queue = list(enumerate(batches))
             running: set = set()
 
             def feed() -> None:
-                # keep the pool full but never more than one batch queued per worker, so a
-                # deadline or the budget stops new calls promptly
-                while queue and len(running) < max(1, workers) * 2:
+                # at most one call per worker in flight and nothing queued behind it, so the
+                # deadline and the budget stop new calls at once, not after a backlog drains
+                while queue and len(running) < workers:
                     if self.llm.budget_left() <= 0:
                         stats["budget_stop"] = True
                         queue.clear()
@@ -651,8 +692,11 @@ class Teacher:
             while running:
                 done = next(as_completed(list(running)))
                 running.discard(done)
-                feed()
                 self._absorb_future(done, batches[futures[done]], stats, on_progress, len(todo))
+                feed()  # after the absorb: a rejection or an interrupt must not let one more call out
+        finally:
+            # a rejected key or model id, a timeout, Ctrl-C: whatever is queued is never sent
+            pool.shutdown(wait=True, cancel_futures=True)
         stats["pending_after"] = self.pending_count(exclude_inflight=True)
         return stats
 
@@ -664,6 +708,12 @@ class Teacher:
             return
         except ModelConfigError:
             raise
+        except NoJudgments as exc:  # the model answered with nothing: counted against the articles
+            stats["failed_batches"] += 1
+            stats["empty_batches"] += 1
+            store.bump_judge_failures(self.conn, [r["id"] for r in batch])
+            log.warning("teacher: batch of %d: %s; they stay pending", len(batch), exc)
+            return
         except Exception:  # noqa: BLE001 — one bad batch, not the run
             stats["failed_batches"] += 1
             log.exception("teacher: batch of %d failed; they stay pending", len(batch))
@@ -672,6 +722,10 @@ class Teacher:
         for aid, v in verdicts.items():
             self._record(by_id[aid], v)
             stats["scored"] += 1
+        if not verdicts and batch:
+            stats["empty_batches"] += 1
+            store.bump_judge_failures(self.conn, [r["id"] for r in batch])
+            log.warning("teacher: a batch of %d came back with no judgment", len(batch))
         log.info("teacher: judged %d of %d", stats["scored"], total)
         if on_progress is not None:
             on_progress(stats)
@@ -751,10 +805,13 @@ class Teacher:
     def collect(self, run_id: int | None, client: Any = None, on_progress: Any = None) -> dict:
         """Record the judgments of every finished batch. Articles whose request failed go
         back to pending (first pass) or count as examined and stay unread (second look)."""
-        stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "open": 0, "notes": []}
+        stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "empty": 0, "open": 0, "notes": []}
         for b in store.open_batches(self.conn):
             try:
                 status = self.llm.batch_status(b["id"])
+            except BatchNotFound as exc:
+                self._give_up(b, f"vanished from the API ({exc})", stats)
+                continue
             except ModelConfigError:
                 raise
             except Exception:  # noqa: BLE001
@@ -763,23 +820,39 @@ class Teacher:
                 continue
             if status != "ended":
                 if self._lost(b):
-                    store.close_batch(self.conn, b["id"], "lost", f"still {status} after {BATCH_LOST_HOURS}h")
-                    stats["notes"].append(f"batch {b['id']} given up on; its articles are pending again")
+                    self._give_up(b, f"still {status} after {BATCH_LOST_HOURS}h", stats)
                 else:
                     stats["open"] += 1
                 continue
             try:
                 results = self.llm.batch_results(b["id"])
+            except BatchNotFound as exc:
+                self._give_up(b, f"vanished from the API ({exc})", stats)
+                continue
             except ModelConfigError:
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("teacher: could not fetch results of batch %s", b["id"])
-                stats["open"] += 1
+                if self._lost(b):  # ended, but its results will not come: the same deadline applies
+                    self._give_up(b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats)
+                else:
+                    stats["open"] += 1
                 continue
             self._absorb(b, results, run_id, client, stats)
             if on_progress is not None:
                 on_progress(stats)
         return stats
+
+    def _give_up(self, b: sqlite3.Row, why: str, stats: dict) -> None:
+        """Close a batch whose results will never come; its articles are pending again (first
+        pass) or count as examined and stay unread (second looks)."""
+        if b["purpose"] == "second_look":
+            for ids in store.batch_members(self.conn, b["id"]).values():
+                store.record_second_look_failure(self.conn, ids[0])
+                stats["failed"] += 1
+        store.close_batch(self.conn, b["id"], "lost", why)
+        log.warning("teacher: batch %s given up on: %s", b["id"], why)
+        stats["notes"].append(f"batch {b['id'][:12]} given up on ({why}); its articles are pending again")
 
     @staticmethod
     def _lost(b: sqlite3.Row) -> bool:
@@ -792,12 +865,25 @@ class Teacher:
         return store.utcnow() - created > timedelta(hours=BATCH_LOST_HOURS)
 
     def _absorb(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict) -> None:
+        """Record one finished batch: judgments, second looks, costs and the batch's closing in
+        one transaction, so an interrupt leaves it open and untouched for the next run to
+        absorb again rather than half-recorded with its costs counted twice."""
+        with store.transaction(self.conn):
+            model, first_error = self._absorb_results(b, results, run_id, client, stats)
+        if first_error:
+            # after the commit: the LLM remembers a rejected request shape on its own connection,
+            # and that write would wait on this one's open transaction until it timed out
+            self.llm.adapt_to_error(model, first_error)
+
+    def _absorb_results(self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any,
+                        stats: dict) -> tuple[str, str]:
+        """Returns (model, first error message) for the caller to act on once the transaction is over."""
         members = store.batch_members(self.conn, b["id"])
         purpose, model = b["purpose"], b["model"]
-        errored, first_error, answered = 0, "", set()
+        errored, empty, first_error, answered = 0, 0, "", set()
         for res in results:
             ids = members.get(res.custom_id)
-            if not ids:
+            if not ids or res.custom_id in answered:  # unknown, or listed twice: once is enough
                 continue
             answered.add(res.custom_id)
             result = res.result
@@ -810,22 +896,34 @@ class Teacher:
                     stats["failed"] += 1
                 continue
             message = result.message
-            self.llm.record(run_id, model, purpose, message.usage, self.cfg.models.batch_discount)
+            usage, usd = self.llm.cost(model, message.usage, self.cfg.models.batch_discount)
+            store.record_cost(self.conn, run_id, model, purpose, usage, usd)
             verdicts = parse_judgments(self.llm.message_text(message))
             if purpose == "teacher":
-                stats["scored"] += self._absorb_teacher(ids, verdicts or [])
+                done = self._absorb_teacher(ids, verdicts or [])
+                stats["scored"] += done
+                if not done:
+                    empty += 1
+                    store.bump_judge_failures(self.conn, ids)
             else:
                 self._absorb_second_look(ids[0], verdicts, client, stats)
         for custom_id, ids in members.items():
             if custom_id not in answered and purpose == "second_look":
                 store.record_second_look_failure(self.conn, ids[0])
                 stats["failed"] += 1
-        note = f"{errored} of {b['n_requests']} requests failed: {first_error}" if errored else ""
-        store.close_batch(self.conn, b["id"], "partial" if errored else "done", note)
+        notes = []
         if errored:
+            notes.append(f"{errored} of {b['n_requests']} requests failed: {first_error}")
+        if empty:
+            stats["empty"] += empty
+            notes.append(f"{empty} of {b['n_requests']} requests came back with no judgment "
+                         f"(an article is left alone after {store.MAX_JUDGE_FAILURES}; `triage safety` shows how many)")
+        note = "; ".join(notes)
+        store.close_batch(self.conn, b["id"], "partial" if errored or empty else "done", note)
+        if note:
             log.warning("teacher: batch %s: %s", b["id"], note)
             stats["notes"].append(f"batch {b['id'][:12]}: {note}")
-            self.llm.adapt_to_error(model, first_error)
+        return model, first_error if errored else ""
 
     def _absorb_teacher(self, ids: list[str], verdicts: list[Verdict]) -> int:
         by_id = {r["id"]: r for r in self.conn.execute(
@@ -893,38 +991,78 @@ class Teacher:
 
     # -- second look, synchronous -------------------------------------------------
 
-    def second_looks(self, rows: list[sqlite3.Row], run_id: int | None,
-                     workers: int | None = None) -> tuple[dict[str, float | None], bool]:
-        """Several second looks at once. Returns ({article id: composed score or None if the
-        look failed}, budget_hit). Articles missing from the dict were never examined because
-        the budget ran out; the caller leaves them unread."""
-        results: dict[str, float | None] = {}
+    def second_looks(self, rows: list[sqlite3.Row], run_id: int | None, client: Any = None,
+                     workers: int | None = None, stop_after: float | None = None,
+                     max_looks: int | None = None) -> dict[str, bool | None]:
+        """Several second looks at once, each recorded the moment it lands (a look that was
+        paid for is never lost to a timeout or a Ctrl-C later in the run). ``rows`` are
+        floor candidates with their score and folder. Returns {article id: True when the
+        article now clears its floor, False when the cut stands, None when the look failed
+        (recorded as failed; the article stays unread)}. An article missing from the result
+        was never examined (the budget, the deadline, or the per-run cap): it stays unread."""
+        results: dict[str, bool | None] = {}
+        cap = self.cfg.scoring.second_look_max_per_run if max_looks is None else max_looks
+        todo = [r for r in rows[:cap] if store.article(self.conn, r["id"]) is not None]
+        if len(rows) > cap:
+            log.info("teacher: %d close calls; looking at %d this run", len(rows), cap)
+        workers = max(1, workers or self.cfg.scoring.workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
         budget_hit = False
-        fulls = [(r["id"], store.article(self.conn, r["id"])) for r in rows]
-        fulls = [(aid, f) for aid, f in fulls if f is not None]
-        with ThreadPoolExecutor(max_workers=max(1, workers or self.cfg.scoring.workers)) as pool:
-            futures = {}
-            for aid, full in fulls:
-                if self.llm.budget_left() <= 0:
-                    budget_hit = True
-                    break
-                futures[pool.submit(self.second_look, full, run_id)] = aid
-            for future in as_completed(futures):
-                aid = futures[future]
+        try:
+            futures: dict[Any, sqlite3.Row] = {}
+            queue = list(todo)
+            running: set = set()
+
+            def feed() -> None:
+                nonlocal budget_hit
+                while queue and len(running) < workers:
+                    if self.llm.budget_left() <= 0:
+                        budget_hit = True
+                        queue.clear()
+                        return
+                    if stop_after is not None and time.monotonic() > stop_after:
+                        queue.clear()
+                        return
+                    row = queue.pop(0)
+                    full = store.article(self.conn, row["id"])
+                    if full is None:
+                        continue
+                    fut = pool.submit(self.second_look, full, run_id)
+                    futures[fut] = row
+                    running.add(fut)
+
+            feed()
+            while running:
+                done = next(as_completed(list(running)))
+                running.discard(done)
+                row = futures[done]
+                aid = row["id"]
                 try:
-                    results[aid] = future.result()
+                    second = done.result()
                 except BudgetExceeded:
                     budget_hit = True
+                    second = None
+                    skip = True
                 except ModelConfigError:
-                    for other in futures:
-                        other.cancel()
                     raise
                 except Exception:  # noqa: BLE001
                     log.exception("teacher: second look failed for %s", aid)
+                    second, skip = None, False
+                else:
+                    skip = False
+                if skip:
+                    pass  # unexamined: the budget ran out while it waited
+                elif second is None:
+                    store.record_second_look_failure(self.conn, aid)
                     results[aid] = None
+                else:
+                    results[aid] = self.apply_second_look(aid, float(row["score"]), float(second), row["folder"], client)
+                feed()
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
         if budget_hit:
             log.warning("teacher: budget reached during second looks; unexamined close calls stay unread")
-        return results, budget_hit
+        return results
 
     def second_look(self, row: sqlite3.Row, run_id: int | None) -> float | None:
         """Re-read one article with the full text on the stronger model, now. Returns the

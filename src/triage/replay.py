@@ -100,7 +100,7 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
                         key=lambda x: -x["n"])[:25],
         "old_keep_now_below_floor": sum(1 for r in below_floor if r["old_decision"] == "keep"),
         "old_junk_now_above_70": sum(1 for r in scored if r["old_decision"] == "junk" and r["score"] >= 70),
-        "spend_usd": store.spent_since(conn, store.days_ago_iso(0)) ,
+        "spend_usd": store.spent_since(conn, store.local_midnight_iso(cfg.timezone)),
         "sample": sorted(scored, key=lambda r: -r["score"])[:15] + sorted(scored, key=lambda r: r["score"])[:15],
     }
     store.finish_run(conn, run_id, True, scored=len(scored), summary=f"replay: {len(scored)} scored, gate {'passed' if report['gate_passed'] else 'FAILED'}")

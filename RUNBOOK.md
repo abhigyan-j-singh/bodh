@@ -12,7 +12,7 @@ Conventions: every command below is typed in Terminal on the Mac, in `~/triage`,
     alias triage="$HOME/triage/.venv/bin/triage"
 
 (then open a new Terminal window). `TRIAGE_HOME` matters: without it, `triage` run from another
-folder would look for `config.yaml` there and start an empty database.
+folder looks for `config.yaml` there and, finding none, refuses to do anything (exit code 2).
 
 
 ## 1. What runs by itself
@@ -43,12 +43,14 @@ Three or four times a day, in this order; two minutes each time.
 3. Cut, when the unread list is too long:
 
        triage prune --dry-run        # shows the boundary score and what would go
-       triage prune                  # keeps the best 40 (cut.target_unread), spread across concepts
+       triage prune                  # shows the same, asks, then keeps the best 40 (cut.target_unread)
        triage undo                   # if you regret it: everything from the last cut comes back unread
 
    `triage prune --keep 60`, `--fraction 0.3` (cut the worst 30%), `--below 65` (cut everything
-   under 65) are the other shapes. Starred articles, the `Must read` stream and protected folders
-   never move.
+   under 65) are the other shapes; `--yes` skips the question (a script, the control room).
+   Starred articles, the `Must read` stream, protected folders and anything you rescued never
+   move. What an undo brought back is left alone by the automatic floor from then on (a prune
+   may still take it).
 4. Teach, in passing (section 5): star or tag `great` what was best, `good`, `meh` or `bad` the
    rest; `wrong` on a cut article you wanted; `more` or `less` to steer by an article's concept.
 
@@ -67,10 +69,12 @@ In order, with the phase shown on the control room and in `triage progress`:
 1. talking to BazQux: reads what is unread and starred now; collects your feedback (stars,
    articles you read, the `wrong` and `prune` commands, your verdict tags: grades, levels, steers).
 2. fetching new articles: everything unread the database has not seen, with its text.
-3. collecting finished batches: the judgments submitted last time come back and are stored.
+3. collecting finished batches: the judgments submitted last time come back and are stored
+   (in every mode: a batch submitted before `models.batch` was turned off is still collected).
 4. submitting a batch: up to 1,200 new articles go to the teacher (Sonnet 5.5), 20 per call.
    Articles older than 14 days (`scoring.max_age_days`) and the folders with `score: false` are
-   never sent.
+   never sent; an article the model has answered about three times with no judgment is left
+   alone (`triage safety` counts them, `triage safety reset` tries again).
 5. tagging in BazQux: every judged article gets its `score-…` tag.
 6. applying the floor, only when `cut.enforce: true`: unread articles under their folder's floor
    are marked read and tagged `cut`, at most 500 a run; a close call (within 10 points of the
@@ -79,8 +83,9 @@ In order, with the phase shown on the control room and in `triage progress`:
    prunes to the target as well. In shadow mode (`cut.enforce: false`) nothing is cut, ever.
 7. rendering the dashboard; heartbeat ping.
 
-A run takes a lock: a second `triage run` while one is going says so and exits. A run kills
-itself after 15 minutes; the next one picks up what is left.
+A run takes a lock: a second `triage run` while one is going says so and exits. A run starts no
+model call after 14 minutes and ends itself after 15; the next one picks up what is left. If
+BazQux cannot serve the `Must read` stream, the run judges and tags but cuts nothing.
 
 
 ## 4. Modes: shadow and enforcing
@@ -95,9 +100,14 @@ would have read?), switch the automatic floor on:
     triage enforce off               # back to shadow
 
 The floors: `cut.default_floor: 35` for every folder, and in `cut.folders` the ones with their
-own (`World News & Politics`, `Sports`, `Fashion & Lifestyle` cut below 70, `Aggregators` below
-60). Start with 25 if you want it gentle; raise it when the kept list is still too long.
-`triage run --shadow` is one run without cutting even while enforcing.
+own (`World News & Politics` and `Sports` cut below 70, `Aggregators` below 60). Start with 25
+if you want it gentle; raise it when the kept list is still too long. `triage run --shadow` is
+one run without cutting even while enforcing.
+
+The breaker: a floor that would cut more than 95% of at least 50 newly judged articles stops
+before writing, the run fails, and the floor stays off (every later run says so in its notes,
+`triage status` says BREAKER TRIPPED) until you have looked at a few scores and typed
+`triage safety reset`.
 
 
 ## 5. Teaching the teacher: the tags
@@ -125,8 +135,8 @@ Two tags are commands rather than opinions, and the run removes them when done:
 
 | Tag | It does |
 | --- | --- |
-| `wrong` | on a cut article you wanted: it comes back unread, counts as a rescue and as the strongest positive; many rescues in a week lower the floor to 25 |
-| `prune` | on any article: the next enforcing run prunes to the target |
+| `wrong` | on a cut article you wanted: it comes back unread, counts as a rescue and as the strongest positive, and is never cut again by any path; many rescues in a week lower the floor to 25. On an article that was never cut it is the positive only |
+| `prune` | on any article: the next enforcing run prunes to the target (the request is kept until one does) |
 
 Without a tag: a star counts like `great` and protects the article from every cut; an article you
 read (it goes read in BazQux without a cut) is a mild positive, inferred within 7 days of arrival.
@@ -169,7 +179,8 @@ or rescued would score under the floor. Fewer than five positives in a week and 
 as it is. Every version is kept (`triage profile revert`); the dashboard shows the week's diff.
 
 Two more loops run beside the model. Rescues (`wrong`, or marking a cut article unread) above 5%
-of a week's cuts lower the floor to 25 until they fall. And 20% of what the floor would leave is
+of a week's cuts (twenty cuts at least; bankruptcy and undone runs do not count) lower the floor
+to 25 until they fall. And 20% of what the floor would leave is
 reserved for new ground: articles of decent quality on a concept not in your record, so the
 teacher keeps showing you fields you have not read yet.
 
@@ -196,9 +207,9 @@ disagreements shrink week by week, it is learning you.
 | Want | Command |
 | --- | --- |
 | stop the run, prune or blast in progress | `triage stop` (the same as Ctrl-C in its terminal; a cut half-written to BazQux is finished by the next run) |
-| nothing fires for a while | `triage schedule pause` (`--job run` for one job); `triage schedule resume` |
-| a run now, through launchd | `triage schedule kick` |
-| stop everything, control room included | `triage halt`; `triage schedule resume` brings the jobs back |
+| nothing fires for a while | `triage schedule pause` (`--job run` for one job; without it the control room pauses too); `triage schedule resume` |
+| a run now, through launchd | `triage schedule kick` (refused while a run holds the lock) |
+| stop everything, control room included | `triage halt`; `triage schedule resume` brings the jobs back. It ends the commands of this checkout started by their full path (launchd's jobs, the alias above); one started as `.venv/bin/triage …` from inside the folder is not found, Ctrl-C that one |
 | after a code update, or after moving the folder | `./install.sh && ./install-launchd.sh` |
 | the control room in the foreground | `triage panel` (Ctrl-C ends it; launchd restarts its own copy) |
 
@@ -207,10 +218,11 @@ disagreements shrink week by week, it is learning you.
 
 | Where | What |
 | --- | --- |
-| http://127.0.0.1:8766 | the control room: status, buttons for every command above, their output streamed, the log, the dashboard underneath |
+| http://127.0.0.1:8766 | the control room: status, buttons for every command above, their output streamed, the log, the dashboard underneath. It answers only to a Host of 127.0.0.1, localhost or a `*.ts.net` name |
 | `triage status` | the same in the terminal |
-| `triage progress [--watch]` | the teacher's progress: judged, in flight, pending, by folder, batches, spend, cache hits, cost per 1,000 |
-| `dashboard/index.html` | the dashboard: flow, calibration, near misses, feeds, learnings, knowledge map, learner model, health |
+| `triage safety` | the breaker, and the articles the teacher gave up on |
+| `triage progress [--watch]` | the teacher's progress: judged, in flight, pending, by folder, batches, spend, cache hits, cost per 1,000, the log |
+| `dashboard/index.html` | the dashboard: flow, calibration, near misses, feeds, learnings, knowledge map, learner model, health (no log: the page may be published) |
 | `~/Library/Logs/triage/triage.log` | the run log (`tail -f`); `launchd.*.log`, `panel.err.log` next to it |
 | `data/panel.log` | why the control room could not start, if ever |
 | healthchecks.io | a check with period 30 minutes and grace 30 minutes, its ping URL in `.env` as `HEALTHCHECK_URL`: an hour of silence (laptop off, network down, launchd not firing) raises an alert; a failed run pings `/fail` with the error |
@@ -220,7 +232,8 @@ disagreements shrink week by week, it is learning you.
 ## 9. The knobs (config.yaml)
 
 The file is read at the start of every run; edit it with any editor, no restart needed (the
-control room picks it up on its next refresh). Current values in brackets.
+control room picks it up on its next refresh). A misspelt key, a value out of range or an
+unknown timezone is refused with the key named, by every command. Current values in brackets.
 
 **Top level**
 
@@ -242,7 +255,7 @@ control room picks it up on its next refresh). Current values in brackets.
 | `cache_ttl` [1h] | how long the teacher's cached prompt prefix stays warm between runs (`5m` or `1h`) |
 | `daily_budget_usd` [8.0] | the day's cap: scoring pauses when passed; nothing is cut because of it. A normal day is under a dollar |
 | `est_usd_per_article` [0.001] | the budget check before a batch is submitted |
-| `prices_per_mtok` | input, output, cache-read price per million tokens for each model; update when prices change |
+| `prices_per_mtok` | input, output, cache-read price per million tokens for each model; update when prices change. A model with no price is charged as the most expensive known one, with a warning |
 
 **scoring**
 
@@ -260,6 +273,7 @@ control room picks it up on its next refresh). Current values in brackets.
 | `opening_chars` [1200] | the text the teacher sees on the first pass |
 | `second_look_window` [10] | a floor candidate within this many points of the floor gets the second look |
 | `second_look_chars` [6000] | the text the second look sees |
+| `second_look_max_per_run` [50] | synchronous runs: second looks per run at most |
 
 **cut**
 
@@ -281,9 +295,9 @@ the tag names written to and read from BazQux; change them only before the first
 
 | Key | Means |
 | --- | --- |
-| `max_cut_share` [0.95], `min_new_for_breaker` [50] | a run that would cut more than 95% of at least 50 newly judged articles stops before writing: the prompt or model has probably broken |
+| `max_cut_share` [0.95], `min_new_for_breaker` [50] | a run that would cut more than 95% of at least 50 newly judged articles stops before writing: the prompt or model has probably broken. The floor stays off until `triage safety reset` |
 | `rescue_rate_week` [0.05], `lowered_floor` [25] | rescues above 5% of a week's cuts lower the floor to 25 until they fall |
-| `bulk_dismiss_threshold` [30] | this many kept articles going read in one run counts as mark-all-as-read, not as 30 reads |
+| `bulk_dismiss_threshold` [30] | this many kept articles going read in one run counts as mark-all-as-read, not as 30 reads. More than 80% of the pool going read at once is believed only when the next run sees the same (an empty answer from BazQux looks like that) |
 
 **feedback**: `concept_window_days` [90], how far back stars, reads and rescues count as what the
 student knows.
@@ -299,7 +313,9 @@ student knows.
 
 | Symptom | Do |
 | --- | --- |
-| anything | `triage doctor` (configuration, prompts, credentials present, database), then `triage doctor --live` (logs in to BazQux, one call to each model, a few cents) |
+| anything | `triage doctor` (configuration, prompts, credentials present, database; exit code 1 when something is wrong), then `triage doctor --live` (logs in to BazQux, one call to each model, a few cents) |
+| the run notes say the breaker tripped, or `triage status` says BREAKER TRIPPED | look at a few newly judged articles (`triage why ID`); if the scores are sane, `triage safety reset`; if not, the prompt or the model changed: check `models.teacher`, the prompt file, `triage doctor --live` |
+| `triage safety` says articles were given up on | the model answered three times with nothing for them (a prompt that does not fit the model, usually); fix that, then `triage safety reset` |
 | the control room does not answer | `triage status` shows "control room: not answering · last: …"; `tail -5 data/panel.log`; `./install-launchd.sh` reinstalls the job and waits for it; `triage panel` runs it in the foreground with the error on screen |
 | "already running" when you run something | something holds the lock: `triage status` names it; `triage stop` ends it |
 | a launchd job shows exit code 126 or "Operation not permitted" | the checkout is under Documents, Desktop or Downloads, or in a path with spaces; keep it at `~/triage` (`./install-launchd.sh` refuses the others) |
@@ -307,7 +323,7 @@ student knows.
 | the floor cut something good | tag it `wrong` (it comes back); `triage undo` for the whole last cut; lower the folder's floor in `cut.folders` or `cut.default_floor` |
 | the teacher's taste drifted | `triage profile show`; `triage profile revert`; edit `profile/seed.md` |
 | a model id was rejected ("model call rejected") | `models.*` in config.yaml, or the key in `.env`; `triage doctor --live` |
-| after `git pull` or any code change | `./install.sh` (also runs doctor), then `./install-launchd.sh`; `.venv/bin/pytest -q` runs the 54 tests |
+| after `git pull` or any code change | `./install.sh` (also runs doctor), then `./install-launchd.sh`; `.venv/bin/pytest -q` runs the tests |
 
 
 ## 11. What it costs

@@ -175,6 +175,10 @@ class FakeLLM:
         self.recorded.append((model, purpose, discount))
         return 0.0
 
+    def cost(self, model, usage, discount=1.0):
+        self.recorded.append((model, "batch", discount))
+        return {"input_tokens": 1000, "output_tokens": 100, "cache_write": 0, "cache_read": 0}, 0.001 * discount
+
     def adapt_to_error(self, model, message):
         return False
 
@@ -492,3 +496,395 @@ def test_blast_stops_at_the_time_limit(cfg, conn):
     assert "time limit" in store.last_runs(conn, 1)[0]["summary"]
     total = pipeline.blast(ctx, workers=3)
     assert total["pending"] == 0 and not total["timed_out"]
+
+
+# -- the student's rescue and the undo hold against the next floor -----------------
+
+def test_rescued_article_survives_the_floor(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "plain news"])
+    res = pipeline.run(ctx, enforce=True)
+    junk = items[1].id
+    assert res.cut_floor == 1 and store.article(conn, junk)["status"] == "cut"
+    client.labels[cfg.tags.wrong] = [junk]          # the student tags it `wrong` in BazQux
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["rescues"] == 1 and res.cut_floor == 0
+    row = store.article(conn, junk)
+    assert row["status"] == "unread" and row["rescued_at"]
+    assert [k for k, _ in store.feedback_for(conn, junk)] == ["rescue", "wrong"]
+    assert client.unread_marked[-1] == [junk] and (cfg.tags.wrong, [junk]) in client.untagged
+    res = pipeline.run(ctx, enforce=True)              # and it stays
+    assert res.cut_floor == 0 and store.article(conn, junk)["status"] == "unread"
+
+
+def test_undo_is_not_reversed_by_the_next_floor(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle", "junk again"])
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 2
+    run_id, restored = pipeline.undo_last(ctx)
+    assert restored == 2
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 0 and store.status_ids(conn, "cut") == set()
+
+
+def test_tripped_breaker_blocks_later_floors_and_shows_in_status(cfg, conn):
+    from triage import control, cut
+
+    cfg.breakers.min_new_for_breaker = 3
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b", "junk c", "junk d"])
+    import pytest
+
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.run(ctx, enforce=True)
+    assert client.read == [] and not store.last_runs(conn, 1)[0]["ok"]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_floor == 0 and "safety reset" in " ".join(res.notes)
+    assert "BREAKER TRIPPED" in control.render_status_text(control.status(cfg, conn))
+    assert cut.reset_breaker(conn)
+    res = pipeline.run(ctx, enforce=True)   # nothing newly scored: the share test does not apply; the floor cuts
+    assert res.cut_floor == 4
+
+
+def test_must_read_protection_survives_label_failure(cfg, conn):
+    """A failed read of the Must read stream used to clear every protection and let the floor
+    cut a protected article while the run reported ok."""
+    import pytest
+
+    from triage.bazqux import BazQuxError
+
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk one", "junk two"])
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 1 and client.read[0] == [items[1].id]
+    assert store.article(conn, items[0].id)["protected"] == 1
+    # the stream cannot be read on the next run: the protection stands and nothing is cut
+    client.labels[cfg.cut.must_read_stream] = BazQuxError("HTTP 500 from stream/items/ids")
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_floor == 0 and len(client.read) == 1
+    assert store.article(conn, items[0].id)["protected"] == 1
+    assert "could not read the Must read stream" in " ".join(res.notes)
+    with pytest.raises(BazQuxError):
+        pipeline.bankruptcy(ctx, 0, dry_run=False)
+    assert len(client.read) == 1 and not store.last_runs(conn, 1)[0]["ok"]
+    # the stream answers again: the article is still protected, and is not cut
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 0 and store.article(conn, items[0].id)["protected"] == 1
+
+
+def test_prune_tag_survives_shadow_mode_and_a_failed_run(cfg, conn):
+    cfg.cut.target_unread = 1
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold a", "plain b", "plain c"])
+    client.labels[cfg.tags.prune] = [items[1].id]
+    res = pipeline.run(ctx, enforce=False)                      # shadow: the tag is removed, the request kept
+    assert res.cut_prune == 0 and "waits for an enforcing run" in " ".join(res.notes)
+    assert any(name == cfg.tags.prune for name, _ in client.untagged)
+    client.labels[cfg.tags.prune] = []
+    real = client.starred_ids
+
+    def broken():
+        raise RuntimeError("BazQux down")
+
+    client.starred_ids = broken
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)                         # a failed run keeps it too
+    assert store.kv_get(conn, "prune_requested") is not None and client.read == []
+    client.starred_ids = real
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_prune == 2 and store.kv_get(conn, "prune_requested") is None
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_prune == 0                                   # applied once
+
+
+# -- the batch lifecycle under trouble --------------------------------------------
+
+def test_vanished_batch_is_closed_as_lost(cfg, conn):
+    """A batch deleted in the console (or submitted under a rotated key) used to fail every
+    run forever as a ModelConfigError; it is closed as lost and its articles are pending again."""
+    from triage.teacher import BatchNotFound
+
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+
+    def gone(bid):
+        raise BatchNotFound("batch not found: 404")
+
+    ctx.llm.batch_status = gone
+    res = pipeline.run(ctx, enforce=False)
+    assert res.ok and "given up on" in " ".join(res.notes)
+    assert [b["status"] for b in store.recent_batches(conn)][-1] == "lost"
+    assert res.submitted == 2 and res.inflight == 2        # resubmitted at once
+
+
+def test_ended_batch_with_unfetchable_results_is_given_up(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+
+    def broken(bid):
+        raise RuntimeError("results stream reset")
+
+    ctx.llm.batch_results = broken
+    res = pipeline.run(ctx, enforce=False)
+    assert res.scored == 0 and store.recent_batches(conn)[0]["status"] == "submitted"   # young: kept open
+    conn.execute("UPDATE batches SET created_at = '2020-01-01T00:00:00+00:00'")
+    res = pipeline.run(ctx, enforce=False)
+    assert store.recent_batches(conn)[-1]["status"] == "lost" and res.submitted == 2       # old: given up, resubmitted
+
+
+def test_batch_mode_off_still_collects_open_batches(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+    cfg.models.batch = False                                   # the owner turns batches off
+    res = pipeline.run(ctx, enforce=False)
+    assert not res.batch_mode and res.scored == 2 and res.inflight == 0 and ctx.llm.batches
+    assert store.article(conn, items[0].id)["score"] == 90.0
+
+
+def test_zero_verdict_batch_result_is_noted_and_resubmission_stops(cfg, conn):
+    """A succeeded request with nothing parsable in it was silent, done, and resubmitted at
+    once: a broken prompt cost half price every thirty minutes with no signal."""
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["plain a", "plain b"], batch=True)
+    real = ctx.llm._verdicts
+    ctx.llm._verdicts = lambda user_text, purpose: []
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+    for attempt in range(1, 4):
+        ctx.llm.finish_all()
+        res = pipeline.run(ctx, enforce=False)                  # collected: nothing in it; resubmitted or not
+        assert res.scored == 0 and "no judgment" in " ".join(res.notes), attempt
+        assert "partial" in [b["status"] for b in store.recent_batches(conn)]
+        if attempt < 3:
+            assert res.submitted == 2, attempt                  # tried again
+        else:
+            assert res.submitted == 0 and res.pending == 0      # given up on: not resubmitted
+    assert store.given_up(conn) == 2
+    from triage import progress
+
+    assert "given up on" in progress.render_text(progress.snapshot(conn, cfg))
+    ctx.llm._verdicts = real
+    assert store.reset_judge_failures(conn) == 2                # `triage safety reset`
+    res = pipeline.run(ctx, enforce=False)
+    assert res.submitted == 2
+    ctx.llm.finish_all()
+    assert pipeline.run(ctx, enforce=False).scored == 2 and store.given_up(conn) == 0
+
+
+def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interrupt(cfg, conn):
+    cfg.scoring.batch_size = 2
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    ctx.llm.finish_all()
+    real_results = ctx.llm.batch_results
+    ctx.llm.batch_results = lambda bid: real_results(bid) * 2   # the same result listed twice
+    # the first absorb is interrupted half way: nothing of it may stick
+    from triage import teacher as teachermod
+
+    real_absorb = teachermod.Teacher._absorb_teacher
+
+    def interrupted(self, ids, verdicts):
+        raise KeyboardInterrupt
+
+    teachermod.Teacher._absorb_teacher = interrupted
+    import pytest
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            pipeline.run(ctx, enforce=False)
+    finally:
+        teachermod.Teacher._absorb_teacher = real_absorb
+    assert store.recent_batches(conn)[0]["status"] == "submitted"
+    assert conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 0 and store.scored_ids(conn) == set()
+    res = pipeline.run(ctx, enforce=False)
+    assert res.scored == 2 and conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 1
+    assert store.recent_batches(conn)[0]["status"] == "done"
+
+
+def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
+    """The 15-minute limit was one SIGALRM in the main thread while the pool kept queued calls
+    going for minutes; the run now stops starting calls at its deadline and reports ok."""
+    import time as _t
+
+    cfg.scoring.batch_size = 1
+    ctx, client, items = build(cfg, conn, [f"plain {i}" for i in range(8)], batch=False)
+    real = ctx.llm.judge
+
+    def slow(*a, **k):
+        _t.sleep(0.1)
+        return real(*a, **k)
+
+    ctx.llm.judge = slow
+    res = pipeline.run(ctx, enforce=False, workers=1, stop_after=_t.monotonic() + 0.25)
+    assert res.ok and 0 < res.scored < 8 and "time limit near" in " ".join(res.notes)
+    assert res.pending == 8 - res.scored and store.last_runs(conn, 1)[0]["ok"]
+    res = pipeline.run(ctx, enforce=False, workers=4)
+    assert res.pending == 0
+
+
+def test_bankruptcy_dry_run_records_no_run_row(cfg, conn):
+    ctx, client, items = build(cfg, conn, ["old a", "old b"])
+    pipeline.run(ctx, enforce=False)
+    client.unread_ids = lambda: [__import__("triage.bazqux", fromlist=["ItemRef"]).ItemRef(id=i.id, timestamp_usec=1) for i in items]
+    before = len(store.last_runs(conn, 50))
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=True)
+    assert candidates == 2 and done == 0 and len(store.last_runs(conn, 50)) == before and client.read == []
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=False)
+    assert done == 2 and len(store.last_runs(conn, 50)) == before + 1 and len(client.read[0]) == 2
+    # a rescued article is spared by bankruptcy
+    pipeline.undo_last(ctx)
+    store.restore_unread(conn, [items[0].id], rescued=True)
+    client.unread = [i.id for i in items]
+    candidates, done = pipeline.bankruptcy(ctx, 1, dry_run=False)
+    assert done == 1 and client.read[-1] == [items[1].id]
+
+
+def test_refresh_protection_is_linear(cfg, conn):
+    """set(prot) was rebuilt inside a comprehension for every unread row: 23 s at 20,000."""
+    import time as _t
+
+    from conftest import make_item
+
+    now = store.utcnow_iso()
+    ids = [make_item(n).id for n in range(1, 50_001)]
+    with store.transaction(conn):
+        conn.executemany("INSERT INTO articles (id, title, folder, fetched_at) VALUES (?, 'a', 'F', ?)", [(i, now) for i in ids])
+        conn.executemany("INSERT INTO state (article_id, status) VALUES (?, 'unread')", [(i,) for i in ids])
+    ctx = pipeline.Context(cfg, Secrets(), conn)
+    t0 = _t.monotonic()
+    pipeline.refresh_protection(ctx, set(ids[:25_000]), set(ids[:10]))
+    assert _t.monotonic() - t0 < 2.0
+    assert conn.execute("SELECT COUNT(*) FROM state WHERE protected = 1").fetchone()[0] == 25_000
+
+
+# -- the review's findings ---------------------------------------------------------
+
+def test_absorb_adapts_to_a_rejected_shape_outside_its_transaction(cfg, conn):
+    """adapt_to_error writes through the LLM's own connection; called inside the absorb's
+    transaction it waited on that transaction's lock until it timed out, and every run after
+    failed on the same batch."""
+    from triage import store as storemod
+    from triage.teacher import LLM
+
+    cfg.scoring.batch_size = 1
+    ctx, client, items = build(cfg, conn, ["junk a"], batch=True)
+    pipeline.run(ctx, enforce=False)
+    first = next(iter(ctx.llm.batches.values()))
+    ctx.llm.fail_ids.add(first[0]["custom_id"])
+    ctx.llm.finish_all()
+    # a real LLM-style adapt_to_error: a write on a second connection to the same database
+    other = storemod.connect(cfg.db_path)
+
+    def adapt(model, message):
+        other.execute("PRAGMA busy_timeout=500")
+        storemod.kv_set(other, "plain_json", "1")
+        return True
+
+    ctx.llm.adapt_to_error = adapt
+    res = pipeline.run(ctx, enforce=False)
+    assert res.ok and storemod.kv_get(conn, "plain_json") == "1"
+    assert store.recent_batches(conn)[-1]["status"] == "partial" and LLM is not None
+
+
+def test_read_then_unread_again_is_not_cut_by_the_floor(cfg, conn):
+    """The common reader gesture: read it, mark it unread to finish later. Its old score sits
+    under the floor; the floor must leave it (a prune may still take it)."""
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["gold essay", "junk listicle"])
+    pipeline.run(ctx, enforce=False)
+    junk = items[1].id
+    client.mark_read([junk])                        # the student reads it
+    res = pipeline.run(ctx, enforce=False)
+    assert res.feedback["reads"] == 1 and store.article(conn, junk)["status"] == "read"
+    client.mark_unread([junk])                      # and keeps it for later
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["returned"] == 1 and res.cut_floor == 0
+    assert store.article(conn, junk)["status"] == "unread" and len(client.read) == 1   # only the student's own read
+    cfg.cut.target_unread = 1
+    n, sel = pipeline.prune(ctx)
+    assert n == 1 and sel.cut_ids == [junk]        # the student's own prune still may
+
+
+def test_tag_prune_waits_while_the_breaker_is_tripped(cfg, conn):
+    from triage import cut
+
+    cfg.breakers.min_new_for_breaker = 3
+    cfg.cut.target_unread = 1
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b", "junk c", "junk d"])
+    client.labels[cfg.tags.prune] = [items[0].id]
+    import pytest
+
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.run(ctx, enforce=True)
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_prune == 0 and client.read == [] and "waits for `triage safety reset`" in " ".join(res.notes)
+    with pytest.raises(cut.BreakerTripped):
+        pipeline.prune(ctx)                         # the student's own prune is refused too
+    assert cut.reset_breaker(conn)
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 4 and res.cut_prune == 0 and store.kv_get(conn, "prune_requested") is None
+
+
+def test_wrong_on_a_pending_cut_rescues_it(cfg, conn):
+    """A cut whose read mark failed is still unread in BazQux, carrying the cut tag; `wrong` on it
+    used to record the positive only, and finish_pending_cuts then marked it read."""
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b"])
+    real = client.mark_read
+
+    def failing(ids):
+        raise RuntimeError("edit-tag 500")
+
+    client.mark_read = failing
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)              # tagged cut, not marked read
+    client.mark_read = real
+    assert store.cut_pending(conn)[1] and client.read == []
+    client.labels[cfg.tags.wrong] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.feedback["rescues"] == 1
+    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["rescued_at"]
+    assert client.read == [[items[1].id]]            # the other pending cut is finished
+    assert store.feedback_ids(conn, "rescue") == {items[0].id}
+
+
+def test_pending_cut_moved_into_must_read_is_restored(cfg, conn):
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk a", "junk b"])
+
+    def failing(ids):
+        raise RuntimeError("edit-tag 500")
+
+    real = client.mark_read
+    client.mark_read = failing
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        pipeline.run(ctx, enforce=True)
+    client.mark_read = real
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]   # the student moved it into Must read meanwhile
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and client.read == [[items[1].id]]
+    assert store.article(conn, items[0].id)["status"] == "unread" and store.article(conn, items[0].id)["protected"] == 1
+
+
+def test_prune_cuts_only_what_was_confirmed(cfg, conn):
+    cfg.cut.target_unread = 1
+    ctx, client, items = build(cfg, conn, ["gold a", "plain b", "plain c"])
+    pipeline.run(ctx, enforce=False)
+    _, shown = pipeline.prune(ctx, dry_run=True)
+    assert len(shown.cut) == 2
+    n, sel = pipeline.prune(ctx, confirmed={items[1].id})      # a run in between would have widened it
+    assert n == 1 and sel.cut_ids == [items[1].id]
