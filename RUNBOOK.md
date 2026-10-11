@@ -196,6 +196,7 @@ disagreements shrink week by week, it is learning you.
 | --- | --- |
 | thousands pending and you want them judged now, cheaply | `bodh catch-up` (synchronous, 8 calls at once, 1,000 a round, with the quick judge: 20x cheaper; the judge re-judges what it rates 50 or more on the following runs; Ctrl-C and run again to continue) |
 | the same, with the judge itself | `bodh catch-up --model claude-sonnet-5-5` (full price) |
+| what a catch-up leaves behind | the judge re-judges what the quick judge rated `catch_up.rejudge_at` (50) or more; what it rated below keeps the quick judge's verdict for good. Changing `models.judge` has the same effect: every unread article the old model rated 50 or more is judged again by the new one |
 | the list includes articles older than 14 days | add `--all-ages` |
 | today's budget would stop it | add `--budget 20` |
 | only ten minutes now | add `--max-seconds 600` |

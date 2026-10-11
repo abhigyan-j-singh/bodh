@@ -252,11 +252,11 @@ class Judge:
         dupes: set[str] = set()
         for v in sorted(verdicts, key=lambda v: v.n):
             aid = resolve_ordinal(v.n, ordered)
-            if aid is None or aid in out:
+            if not aid or aid in out:  # out of range, a gap left by a resubmitted article, or listed twice
                 continue
             if v.dupe_of is not None or "duplicate" in v.flags:
                 target = resolve_ordinal(v.dupe_of, ordered) if v.dupe_of is not None else None
-                earlier = target is not None and target != aid and ordered.index(target) < ordered.index(aid)
+                earlier = bool(target) and target != aid and ordered.index(target or "") < ordered.index(aid)
                 if earlier and target not in dupes:
                     verdict = v.model_copy(update={"dupe_of": target})
                     dupes.add(aid)
@@ -499,8 +499,9 @@ class Judge:
         pass) or count as examined and stay unread (reviews)."""
         if b["purpose"] == "second_look":
             for ids in store.batch_members(self.conn, b["id"]).values():
-                store.record_review_failure(self.conn, ids[0])
-                stats["failed"] += 1
+                if ids and ids[0]:
+                    store.record_review_failure(self.conn, ids[0])
+                    stats["failed"] += 1
         store.close_batch(self.conn, b["id"], "lost", why)
         log.warning("judge: batch %s given up on: %s", b["id"], why)
         stats["notes"].append(f"batch {b['id'][:12]} given up on ({why}); its articles are pending again")
@@ -537,7 +538,7 @@ class Judge:
         errored, empty, first_error, answered = 0, 0, "", set()
         for res in results:
             ids = members.get(res.custom_id)
-            if not ids or res.custom_id in answered:  # unknown, or listed twice: once is enough
+            if not ids or not any(ids) or res.custom_id in answered:  # unknown, all moved on, or listed twice
                 continue
             answered.add(res.custom_id)
             result = res.result
@@ -547,7 +548,7 @@ class Judge:
                 first_error = (
                     first_error or f"{getattr(result, 'type', '?')}: {getattr(err, 'message', '') or ''}"
                 )
-                if purpose == "second_look":
+                if purpose == "second_look" and ids[0]:
                     store.record_review_failure(self.conn, ids[0])
                     stats["failed"] += 1
                 continue
@@ -560,11 +561,11 @@ class Judge:
                 stats["scored"] += done
                 if not done:
                     empty += 1
-                    store.bump_judge_failures(self.conn, ids)
-            else:
+                    store.bump_judge_failures(self.conn, [aid for aid in ids if aid])
+            elif ids[0]:
                 self._absorb_review(ids[0], verdicts, client, stats)
         for custom_id, ids in members.items():
-            if custom_id not in answered and purpose == "second_look":
+            if custom_id not in answered and purpose == "second_look" and ids[0]:
                 store.record_review_failure(self.conn, ids[0])
                 stats["failed"] += 1
         notes = []

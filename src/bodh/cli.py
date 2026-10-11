@@ -378,7 +378,13 @@ def progress(
 @_handled
 def catch_up(
     workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
-    chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
+    chunk: int = typer.Option(
+        1000,
+        "--chunk",
+        min=1,
+        max=5000,
+        help="Articles per round (at most 5,000: a round's texts are held in memory).",
+    ),
     all_ages: bool = typer.Option(
         False, "--all-ages", help="Also the unread articles older than limits.max_age_days."
     ),

@@ -244,12 +244,19 @@ def upsert_article(conn: sqlite3.Connection, item: Any, folder: str | None) -> N
     )
 
 
-def unread_without_text(conn: sqlite3.Connection) -> list[str]:
+TEXT_RETRY_HOURS = 6  # an article the feed gave no text for is fetched again for this long, then left alone
+
+
+def unread_without_text(conn: sqlite3.Connection, within_hours: float = TEXT_RETRY_HOURS) -> list[str]:
+    """Unread articles whose feed gave no text, fetched first within the window: a feed sometimes
+    fills a body in later, so they are tried again for a few hours, not every run for two weeks."""
+    since = (utcnow() - timedelta(hours=within_hours)).isoformat()
     return [
         r[0]
         for r in conn.execute(
             "SELECT a.id FROM articles a JOIN state st ON st.article_id = a.id "
-            "WHERE st.status = 'unread' AND (a.text IS NULL OR a.text = '')"
+            "WHERE st.status = 'unread' AND (a.text IS NULL OR a.text = '') AND a.fetched_at >= ?",
+            (since,),
         )
     ]
 
@@ -857,13 +864,19 @@ def open_batches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def batch_members(conn: sqlite3.Connection, batch_id: str) -> dict[str, list[str]]:
-    """custom_id -> article ids in request order."""
+    """custom_id -> article ids by request position (ordinal 1 first). An article resubmitted
+    in a later batch leaves a gap, kept as "" so the model's numbering still lines up: the
+    judgment it writes for that number resolves to nothing and is dropped."""
     out: dict[str, list[str]] = {}
     for row in conn.execute(
-        "SELECT custom_id, article_id FROM inflight WHERE batch_id = ? ORDER BY custom_id, ordinal",
+        "SELECT custom_id, article_id, ordinal FROM inflight WHERE batch_id = ? ORDER BY custom_id, ordinal",
         (batch_id,),
     ):
-        out.setdefault(row["custom_id"], []).append(row["article_id"])
+        ids = out.setdefault(row["custom_id"], [])
+        position = int(row["ordinal"] or len(ids) + 1)
+        while len(ids) < position - 1:
+            ids.append("")
+        ids.append(row["article_id"])
     return out
 
 

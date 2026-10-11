@@ -77,6 +77,25 @@ of the aliases go away in the release after 1.0.0.
 
 ### Changed
 
+- The score's caps (promo 30, off-field funding 40, duplicate 20) now come after the bonuses
+  (the home angle, the expansion topics), so a bonus never lifts a capped article over the
+  cut-off; vendor marketing on an expansion topic used to score 40. Nothing already judged
+  is re-scored; the order is documented in `compose` and tested.
+- Every error bodh raises on purpose is one line on stderr and an exit code a script can act
+  on: 2 configuration, 3 BazQux, 4 the model, 5 a run in progress, 1 anything else.
+- `bodh doctor --values` prints every setting in effect with its source (config.yaml or the
+  default); `doctor` runs the database's `quick_check` and `integrity_check`.
+- The plain-JSON and 5-minute-cache fallbacks are remembered per model, not for every model
+  at once (the single flag written before October 2026 still means every model).
+- A batch is submitted without the client's automatic retries, so a create that timed out
+  after the server accepted it can no longer be retried into a second, paid batch.
+- An article resubmitted in a later batch leaves a gap in the earlier batch's numbering, so
+  the model's judgments never land on the wrong article.
+- A synchronous review that moves an article's band retags it in the same run.
+- An article the feed gave no text for is fetched again for six hours, not every run for two
+  weeks; `bodh catch-up --chunk` is capped at 5,000.
+- The console, the dashboard and the progress section share one HTML layer (`html.py`) with
+  the colours as variables and a dark mode.
 - `config.yaml` is no longer tracked by git: it is yours, like `.env` and `profile/`, and
   `config.example.yaml` is the template. An install that loses its `config.yaml` while it has a
   database is refused by `install.sh` until the file is restored, so a fresh copy of the template

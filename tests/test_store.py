@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
 from bodh import store
 
@@ -82,3 +83,31 @@ def test_bulk_writes_scale(conn):
     except RuntimeError:
         pass
     assert conn.execute("SELECT COUNT(*) FROM state WHERE protected = 0").fetchone()[0] == 0
+
+
+def test_batch_members_keep_the_request_numbering_when_an_article_moves_on(conn):
+    """An article resubmitted in a later batch (the first was given up on, say) is moved to the
+    new batch by the ON CONFLICT update; the old batch's request keeps a gap at its position so
+    the model's numbering still lines up with the remaining articles."""
+    store.add_batch(conn, "b1", None, "teacher", "m", [("r1", ["a", "b", "c"])])
+    store.add_batch(conn, "b2", None, "teacher", "m", [("r9", ["b"])])
+    assert store.batch_members(conn, "b1") == {"r1": ["a", "", "c"]}
+    assert store.batch_members(conn, "b2") == {"r9": ["b"]}
+
+
+def test_text_less_articles_are_refetched_for_a_few_hours_only(conn):
+    """A feed that gives no body text used to have its articles fetched again every run for two
+    weeks; now for TEXT_RETRY_HOURS after they were first seen."""
+    conn.execute(
+        "INSERT INTO articles (id, title, text, fetched_at) VALUES ('fresh', 't', '', ?), ('old', 't', '', ?), ('full', 't', 'x', ?)",
+        (
+            store.utcnow_iso(),
+            (store.utcnow() - timedelta(hours=store.TEXT_RETRY_HOURS + 1)).isoformat(),
+            store.utcnow_iso(),
+        ),
+    )
+    conn.executemany(
+        "INSERT INTO state (article_id, status) VALUES (?, 'unread')", [("fresh",), ("old",), ("full",)]
+    )
+    assert store.unread_without_text(conn) == ["fresh"]
+    assert set(store.unread_without_text(conn, within_hours=10_000)) == {"fresh", "old"}

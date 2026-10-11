@@ -74,6 +74,21 @@ def test_compose_expansion_bonus_and_topic_matching():
     cfg = Config()
     assert compose(base_verdict(concept="small modular reactors"), cfg, ["nuclear power"]) == 80.0
     assert compose(base_verdict(concept="nuclear power economics"), cfg, ["nuclear power"]) == 90.0
+
+
+def test_compose_caps_come_after_the_bonuses():
+    """Decided in Phase 3 (October 2026): a bonus never lifts a capped article over the cut-off.
+    Vendor marketing on an expansion topic used to score 40 and clear a cut-off of 35."""
+    cfg = Config()
+    cfg.judge.home_angle = "India"
+    promo = base_verdict(kind="promo", concept="nuclear power economics", flags=["home_angle"])
+    assert compose(promo, cfg, ["nuclear power"]) == 30.0
+    funding = base_verdict(flags=["funding_offfield", "home_angle"], concept="nuclear power economics")
+    assert compose(funding, cfg, ["nuclear power"]) == 40.0
+    assert compose(base_verdict(dupe_of=2, flags=["home_angle"]), cfg) == 20.0
+    # a good article still gets both bonuses, bounded at 100
+    good = base_verdict(flags=["home_angle"], concept="nuclear power economics")
+    assert compose(good, cfg, ["nuclear power"]) == 100.0
     assert matches_topic("medieval trade history", ["medieval history"])
     assert not matches_topic("liquid cooling", ["medieval history"])
 

@@ -4,6 +4,7 @@ JSON instead of structured outputs, the 5-minute cache instead of the 1-hour one
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -67,6 +68,20 @@ def _mentions_structured_outputs(text: str) -> bool:
     return bool(_STRUCTURED_WORDS.search(text or ""))
 
 
+def _flagged_models(stored: str | None, legacy: str) -> set[str]:
+    """The models a provider flag names: a JSON list, or "*" for every model when the value is
+    the single flag the code wrote before October 2026."""
+    if not stored:
+        return set()
+    if stored == legacy:
+        return {"*"}
+    try:
+        models = json.loads(stored)
+    except ValueError:
+        return {"*"}
+    return {str(m) for m in models} if isinstance(models, list) else {"*"}
+
+
 def _mentions_cache_ttl(text: str) -> bool:
     # whole words only: "throttled" contains "ttl" and used to disable the 1-hour cache for good
     return bool(_TTL_WORDS.search(text or ""))
@@ -103,11 +118,20 @@ class LLM:
             api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0
         )
         self._format = _output_format()
-        # once a model has rejected structured outputs, every later call asks for plain JSON instead;
-        # once the API has rejected the 1-hour cache, the default 5-minute cache is used instead
+        # once a model has rejected structured outputs, every later call to it asks for plain JSON
+        # instead; once it has rejected the 1-hour cache, it gets the default 5-minute cache. Both are
+        # remembered per model in the database ("1"/"5m" alone, from before October 2026: every model)
         with self._lock:
-            self.plain_json = store.kv_get(self.conn, store.PLAIN_JSON_KEY) == "1"
-            self.long_ttl_ok = store.kv_get(self.conn, store.CACHE_TTL_KEY) != "5m"
+            self._plain_json_models = _flagged_models(store.kv_get(self.conn, store.PLAIN_JSON_KEY), "1")
+            self._short_ttl_models = _flagged_models(store.kv_get(self.conn, store.CACHE_TTL_KEY), "5m")
+
+    def plain_json(self, model: str) -> bool:
+        """Does this model get the plain-JSON instruction instead of structured outputs?"""
+        return "*" in self._plain_json_models or model in self._plain_json_models
+
+    def long_ttl_ok(self, model: str) -> bool:
+        """May this model's prompt prefix be cached for an hour?"""
+        return "*" not in self._short_ttl_models and model not in self._short_ttl_models
 
     @staticmethod
     def _private_connection(cfg: Config, shared: sqlite3.Connection) -> sqlite3.Connection:
@@ -170,35 +194,37 @@ class LLM:
         return usd
 
     def _enable_plain_json(self, model: str) -> None:
-        if not self.plain_json:
-            log.warning("judge: %s rejected structured outputs; asking for plain JSON from now on", model)
-            self.plain_json = True
+        if not self.plain_json(model):
+            log.warning("judge: %s rejected structured outputs; asking it for plain JSON from now on", model)
+            self._plain_json_models.add(model)
             with self._lock:
-                store.kv_set(self.conn, store.PLAIN_JSON_KEY, "1")
+                store.kv_set(self.conn, store.PLAIN_JSON_KEY, json.dumps(sorted(self._plain_json_models)))
 
-    def _disable_long_ttl(self) -> None:
-        if self.long_ttl_ok:
-            log.warning("judge: the API rejected the 1-hour cache; using the 5-minute cache from now on")
-            self.long_ttl_ok = False
+    def _disable_long_ttl(self, model: str) -> None:
+        if self.long_ttl_ok(model):
+            log.warning(
+                "judge: %s rejected the 1-hour cache; using the 5-minute cache for it from now on", model
+            )
+            self._short_ttl_models.add(model)
             with self._lock:
-                store.kv_set(self.conn, store.CACHE_TTL_KEY, "5m")
+                store.kv_set(self.conn, store.CACHE_TTL_KEY, json.dumps(sorted(self._short_ttl_models)))
 
     def adapt_to_error(self, model: str, message: str) -> bool:
-        """A rejected request shape is remembered so the next request is different.
-        Returns True when something changed (so a retry makes sense)."""
-        if not self.plain_json and _mentions_structured_outputs(message):
+        """A rejected request shape is remembered for that model, so the next request to it is
+        different. Returns True when something changed (so a retry makes sense)."""
+        if not self.plain_json(model) and _mentions_structured_outputs(message):
             self._enable_plain_json(model)
             return True
-        if self.long_ttl_ok and _mentions_cache_ttl(message):
-            self._disable_long_ttl()
+        if self.long_ttl_ok(model) and _mentions_cache_ttl(message):
+            self._disable_long_ttl(model)
             return True
         return False
 
     # -- request shapes -------------------------------------------------------
 
-    def _system(self, system_text: str, ttl: str | None = None) -> list[dict[str, Any]]:
+    def _system(self, model: str, system_text: str, ttl: str | None = None) -> list[dict[str, Any]]:
         cache: dict[str, Any] = {"type": "ephemeral"}
-        if ttl == "1h" and self.long_ttl_ok:
+        if ttl == "1h" and self.long_ttl_ok(model):
             cache["ttl"] = "1h"
         return [{"type": "text", "text": system_text, "cache_control": cache}]
 
@@ -206,17 +232,17 @@ class LLM:
         self, model: str, system_text: str, user_text: str, ttl: str | None = None
     ) -> dict[str, Any]:
         """One judgment request, the same shape for a direct call and for a batch."""
-        if self.plain_json:
+        if self.plain_json(model):
             return {
                 "model": model,
                 "max_tokens": 8000,
-                "system": self._system(system_text, ttl),
+                "system": self._system(model, system_text, ttl),
                 "messages": [{"role": "user", "content": user_text + PLAIN_JSON_INSTRUCTION}],
             }
         return {
             "model": model,
             "max_tokens": 8000,
-            "system": self._system(system_text, ttl),
+            "system": self._system(model, system_text, ttl),
             "messages": [{"role": "user", "content": user_text}],
             "output_config": {"format": self._format},
         }
@@ -279,7 +305,11 @@ class LLM:
     def submit_batch(self, requests: list[dict[str, Any]]) -> str:
         """requests: [{"custom_id": ..., "params": ...}]. Returns the batch id."""
         try:
-            batch = self._client.messages.batches.create(requests=requests)  # type: ignore[arg-type]  # the SDK wants its TypedDict; the dicts have that shape
+            # no automatic retry here: a create that timed out after the server accepted it would
+            # be retried into a second, paid batch nobody collects. A failed create is raised, its
+            # articles stay pending, and the next run submits them again.
+            no_retry = self._client.with_options(max_retries=0)
+            batch = no_retry.messages.batches.create(requests=requests)  # type: ignore[arg-type]  # the SDK's TypedDict; the dicts have its shape
         except Exception as exc:
             raise _classify(exc) from exc
         return batch.id

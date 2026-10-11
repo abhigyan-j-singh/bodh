@@ -15,13 +15,15 @@ obsidian_note: ""                  # also write the weekly note here, e.g. "~/Ob
                                    # empty writes it to dashboard_dir only
 
 models:
-  judge: "claude-sonnet-5-5"       # reads every article once: the judgment
+  judge: "claude-sonnet-5-5"       # reads every article once: the judgment. Changing it re-judges every unread article
+                                   # another model rated catch_up.rejudge_at or more (the keepers rest on the judge's opinion)
   reviewer: "claude-opus-5-5"      # re-reads close calls with the full text; can only save an article
   profiler: "claude-opus-5-5"      # rewrites profile/learned.md on Sundays
   batch: true                      # Message Batches API: half price; judgments arrive on the next run (30 min).
                                    # false: every call at once, full price (`bodh run --sync` does it once)
   batch_discount: 0.5              # what the API charges for a batch, for the spend figures
-  cache_ttl: "1h"                  # the judge's cached prompt prefix stays warm between runs ("5m" or "1h")
+  cache_ttl: "1h"                  # the judge's cached prompt prefix stays warm between runs ("5m" or "1h"). 1h costs more
+                                   # to write and less to read: a batch may take the hour, and the next run reads the same prefix
   daily_budget_usd: 8.0            # judging pauses (nothing is cut) when a day's spend passes this
   est_usd_per_article: 0.001       # the budget check before a batch is submitted, before its usage is known
   prices_per_mtok:                 # input, output, cache read (USD per million tokens); cache writes 1.25x / 2x input.
@@ -49,7 +51,8 @@ review:
 
 catch_up:
   model: "claude-haiku-5-5"        # the quick judge `bodh catch-up` uses unless --model says otherwise
-  rejudge_at: 50                   # what the quick judge rated at least this, the judge reads again; null: never
+  rejudge_at: 50                   # what the quick judge rated at least this, the judge reads again; null: never.
+                                   # What it rated below stays with the quick judge's verdict: a catch-up's junk is final
 
 limits:
   per_run_sync: 400                # synchronous runs: articles judged per run

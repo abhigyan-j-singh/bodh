@@ -104,15 +104,23 @@ def test_request_params_shapes(cfg, conn):
     p = llm.request_params("m", "SYS", "USER")
     assert "output_config" not in p and "JSON object" in p["messages"][0]["content"]
     assert p["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert store.kv_get(conn, store.PLAIN_JSON_KEY) == "1"
-    assert LLM(cfg, Secrets(anthropic_api_key="k"), conn).plain_json  # remembered across runs
-    # a rejected 1-hour cache falls back to the default cache, and that is remembered too
-    assert llm.adapt_to_error("m", "cache_control: ttl is not supported") and not llm.long_ttl_ok
+    assert store.kv_get(conn, store.PLAIN_JSON_KEY) == '["m"]'
+    again = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
+    assert again.plain_json("m") and not again.plain_json("other")  # remembered across runs, per model
+    assert "output_config" in again.request_params("other", "SYS", "USER")
+    # a rejected 1-hour cache falls back to the default cache, for that model, and that is remembered too
+    assert llm.adapt_to_error("m", "cache_control: ttl is not supported") and not llm.long_ttl_ok("m")
     assert llm.request_params("m", "SYS", "USER", ttl="1h")["system"][0]["cache_control"] == {
         "type": "ephemeral"
     }
-    assert not LLM(cfg, Secrets(anthropic_api_key="k"), conn).long_ttl_ok
+    assert llm.request_params("other", "SYS", "USER", ttl="1h")["system"][0]["cache_control"]["ttl"] == "1h"
+    assert not LLM(cfg, Secrets(anthropic_api_key="k"), conn).long_ttl_ok("m")
     assert not llm.adapt_to_error("m", "something else")
+    # the single flag written before October 2026 means every model
+    store.kv_set(conn, store.PLAIN_JSON_KEY, "1")
+    store.kv_set(conn, store.CACHE_TTL_KEY, "5m")
+    old = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
+    assert old.plain_json("anything") and not old.long_ttl_ok("anything")
 
 
 def test_has_more_to_read(cfg):

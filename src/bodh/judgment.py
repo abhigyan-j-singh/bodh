@@ -192,22 +192,30 @@ def matches_topic(concept: str, topics: list[str]) -> bool:
     return False
 
 
+PROMO_CAP = 30  # vendor marketing without data, or a promo: never above this
+FUNDING_CAP = 40  # a funding round outside the student's own field
+DUPLICATE_CAP = 20  # a second telling of a story already in the list
+
+
 def compose(v: Verdict | dict[str, Any], cfg: Config, expansion_topics: list[str] | None = None) -> float:
-    """Sub-scores to one score, deterministically, so weights can change without re-prompting."""
+    """Sub-scores to one score, deterministically, so weights can change without re-prompting:
+    the weighted sum, then the bonuses (the home angle, this week's expansion topics), then the
+    caps. The caps come last on purpose (decided October 2026): a bonus may lift a good article,
+    never a promo, an off-field funding round or a duplicate over the cut-off."""
     d = v.model_dump() if isinstance(v, Verdict) else dict(v)
     w = cfg.judge.weights
     s = sum(w[k] * float(d.get(k, 0)) for k in w)
     flags = set(normalize_flags(d.get("flags")))
     if "home_angle" in flags and cfg.judge.home_angle:
         s += cfg.judge.home_bonus
-    if "vendor_marketing_no_data" in flags or d.get("kind") == "promo":
-        s = min(s, 30)
-    if "funding_offfield" in flags:
-        s = min(s, 40)
-    if d.get("dupe_of") or "duplicate" in flags:
-        s = min(s, 20)
     if expansion_topics and matches_topic(d.get("concept", ""), expansion_topics):
         s += cfg.judge.expansion_bonus
+    if "vendor_marketing_no_data" in flags or d.get("kind") == "promo":
+        s = min(s, PROMO_CAP)
+    if "funding_offfield" in flags:
+        s = min(s, FUNDING_CAP)
+    if d.get("dupe_of") or "duplicate" in flags:
+        s = min(s, DUPLICATE_CAP)
     return round(max(0.0, min(100.0, s)), 1)
 
 

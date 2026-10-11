@@ -402,6 +402,9 @@ def _autocut(st: _Run) -> None:
     res.new_ground = sel.reserved_for_new_ground
     res.cut_autocut = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, st.run_id, "autocut")
     res.boundary = sel.boundary
+    if sel.reviews:  # a synchronous review that moved an article's band retags it now, not next run
+        cutmod.untag_stale(ctx.client, judge.stale_tags)
+        cutmod.tag_bands(ctx.client, conn)
     if sel.held:
         res.held = judge.submit_reviews(st.run_id, sel.held)
     if res.feedback.get("prune_requested") and sel.blocked:
