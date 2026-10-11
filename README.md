@@ -15,8 +15,10 @@ This file is the overview and the install; `RUNBOOK.md` is the operator's sheet.
 | --- | --- | --- |
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
 | `CHANGELOG.md`, `LICENSE` | What changed, by release; the MIT licence | yes |
+| `PLAN.md` | The complete prompt: the three plans combined in the order they run, with the gates between them | yes, until the release |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
 | `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
+| `DASHBOARD_PLAN.md` | The specification of the dashboard: the five questions, the design system, every panel, the chart rules, the data contract, the quality bar; replaces Phase 7 of the open-source plan | yes, until the release |
 | `src/viveka/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/viveka/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
 | `tests/` | the test suite, with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
