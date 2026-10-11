@@ -51,6 +51,7 @@ from .llm import (
     ModelConfigError,
     NoJudgments,
 )
+from .providers.base import model_name
 
 log = logging.getLogger(__name__)
 
@@ -194,9 +195,16 @@ class Judge:
         self.system_text = f"{intro}\n\n{rubric}\n\n{student}"
         self.second_look_text = f"{load_prompt('review.v1', cfg.root)}\n\n{rubric}\n\n{student}"
         self.context = context or "(no reading history yet)"
-        self.batch_mode = cfg.models.batch  # a run may switch this off (`bodh run --sync`)
+        # a run may switch this off (`bodh run --sync`); a judge whose provider has no batch API
+        # judges synchronously whatever models.batch says
+        self.batch_mode = cfg.models.batch and llm.capabilities(cfg.models.judge).batch
         self.rejudge = self.rejudge_rule(cfg)  # None when a quick judge must not touch the judge's work
         self.stale_tags: dict[str, list[str]] = {}  # band tag -> articles a re-score moved out of it
+
+    @property
+    def review_batch_mode(self) -> bool:
+        """Do close calls wait for a batched review (next run), or get one now?"""
+        return self.batch_mode and self.llm.capabilities(self.cfg.models.reviewer).batch
 
     def _user_text(self, rows: Sequence[sqlite3.Row | dict[str, Any]], chars: int) -> str:
         blocks = "\n".join(article_block(i, r, chars) for i, r in enumerate(rows, 1))
@@ -246,7 +254,7 @@ class Judge:
         judged again by the judge, so the keepers rest on the judge's opinion."""
         if cfg.catch_up.rejudge_at is None:
             return None
-        return cfg.models.judge, float(cfg.catch_up.rejudge_at)
+        return model_name(cfg.models.judge), float(cfg.catch_up.rejudge_at)
 
     # -- first pass, synchronous ----------------------------------------------
 
@@ -402,8 +410,8 @@ class Judge:
             )
             requests.append({"custom_id": custom_id, "params": params})
             members.append((custom_id, [r["id"] for r in batch]))
-        batch_id = self.llm.submit_batch(requests)
-        store.add_batch(self.conn, batch_id, run_id, "teacher", model, members)
+        batch_id = self.llm.submit_batch(model, requests)
+        store.add_batch(self.conn, batch_id, run_id, "teacher", model_name(model), members)
         stats.update({"submitted": len(todo), "requests": len(requests), "batch_id": batch_id})
         log.info("judge: submitted batch %s: %d articles in %d requests", batch_id, len(todo), len(requests))
         return stats
@@ -441,8 +449,8 @@ class Judge:
             members.append((custom_id, [row["id"]]))
         if not requests:
             return 0
-        batch_id = self.llm.submit_batch(requests)
-        store.add_batch(self.conn, batch_id, run_id, "second_look", model, members)
+        batch_id = self.llm.submit_batch(model, requests)
+        store.add_batch(self.conn, batch_id, run_id, "second_look", model_name(model), members)
         log.info("judge: submitted %d reviews as batch %s", len(requests), batch_id)
         return len(requests)
 
@@ -464,7 +472,7 @@ class Judge:
         still open (counted) or has been given up on (closed as lost). A rejected key or model
         is raised: nothing else can go right after it."""
         try:
-            status = self.llm.batch_status(b["id"])
+            status = self.llm.batch_status(b["model"], b["id"])
         except BatchNotFound as exc:
             self._give_up(b, f"vanished from the API ({exc})", stats)
             return None
@@ -481,7 +489,7 @@ class Judge:
                 stats["open"] += 1
             return None
         try:
-            return self.llm.batch_results(b["id"])
+            return self.llm.batch_results(b["model"], b["id"])
         except BatchNotFound as exc:
             self._give_up(b, f"vanished from the API ({exc})", stats)
         except ModelConfigError:
@@ -541,21 +549,16 @@ class Judge:
             if not ids or not any(ids) or res.custom_id in answered:  # unknown, all moved on, or listed twice
                 continue
             answered.add(res.custom_id)
-            result = res.result
-            if getattr(result, "type", "") != "succeeded":
+            if res.status != "succeeded" or res.answer is None:
                 errored += 1
-                err = getattr(getattr(result, "error", None), "error", None)
-                first_error = (
-                    first_error or f"{getattr(result, 'type', '?')}: {getattr(err, 'message', '') or ''}"
-                )
+                first_error = first_error or res.error or res.status
                 if purpose == "second_look" and ids[0]:
                     store.record_review_failure(self.conn, ids[0])
                     stats["failed"] += 1
                 continue
-            message = result.message
-            usage, usd = self.llm.cost(model, message.usage, self.cfg.models.batch_discount)
+            usage, usd = self.llm.cost(model, res.answer.usage, self.cfg.models.batch_discount)
             store.record_cost(self.conn, run_id, model, purpose, usage, usd)
-            verdicts = parse_judgments(self.llm.message_text(message))
+            verdicts = parse_judgments(res.answer.text)
             if purpose == "teacher":
                 done = self._absorb_judge(ids, verdicts or [])
                 stats["scored"] += done
@@ -624,7 +627,9 @@ class Judge:
         new_score = max(first, second)
         new_bucket = self.cfg.tags.band_for(new_score)
         old_bucket = self.cfg.tags.band_for(first)
-        store.record_review(self.conn, aid, second, self.cfg.models.reviewer, new_score, new_bucket)
+        store.record_review(
+            self.conn, aid, second, model_name(self.cfg.models.reviewer), new_score, new_bucket
+        )
         if new_bucket != old_bucket and client is not None:
             try:
                 client.untag([aid], old_bucket)
@@ -649,7 +654,7 @@ class Judge:
             score=score,
             bucket=self.cfg.tags.band_for(score),
             prompt_version=self.prompt_version,
-            model=self.cfg.models.judge,
+            model=model_name(self.cfg.models.judge),
         )
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])

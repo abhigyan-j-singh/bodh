@@ -86,7 +86,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/bodh/cli.py" = ["B008"]        # typer's Option() in defaults is the library's idiom
-"tests/*" = ["PLR0911", "PLR0915", "RUF059", "PLW2901", "RUF015"]   # a long test tells one story; a fake server returns from many branches; unused unpacked values document a shape
+"tests/*" = ["PLR0911", "PLR0912", "PLR0915", "RUF059", "PLW2901", "RUF015"]   # a long test tells one story; a fake server returns from many branches; unused unpacked values document a shape
 
 [tool.mypy]
 strict = true

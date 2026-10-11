@@ -32,6 +32,7 @@ import httpx
 from bodh.config import Config, Secrets
 from bodh.ids import long_to_short, normalize_item_id, short_to_long
 from bodh.llm import LLM
+from bodh.providers.anthropic import AnthropicProvider
 from bodh.readers.bazqux import READ, READING_LIST, STARRED, BazQuxClient, ItemRef, Subscription, label
 
 # -- articles -------------------------------------------------------------------
@@ -732,10 +733,12 @@ class FakeLLM(LLM):
     """The real client over a ``FakeAnthropic`` (``self.api``). ``calls`` lists (model, purpose)
     per synchronous call; ``recorded`` lists (model, purpose, discount) per cost computed."""
 
-    def __init__(self, cfg: Config, conn: Any, scores: Any = score_for) -> None:
-        super().__init__(cfg, Secrets(anthropic_api_key="sk-ant-test-key"), conn)
+    def __init__(
+        self, cfg: Config, conn: Any, scores: Any = score_for, secrets: Secrets | None = None
+    ) -> None:
+        super().__init__(cfg, secrets or Secrets(anthropic_api_key="sk-ant-test-key"), conn)
         self.api = FakeAnthropic(scores)
-        self._client: Any = self.api
+        self._providers["anthropic"] = AnthropicProvider("sk-ant-test-key", self._flags(), client=self.api)
         self.calls: list[tuple[str, str]] = []
         self.recorded: list[tuple[str, str, float]] = []
         self._recording = threading.local()
@@ -781,3 +784,331 @@ class FakeLLM(LLM):
     def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict[str, int], float]:
         self.recorded.append((model, getattr(self._recording, "purpose", None) or "batch", discount))
         return super().cost(model, usage, discount)
+
+
+# -- the other providers' HTTP APIs ------------------------------------------------
+
+PROFILE_TEXT = (
+    "## What the student has been learning\nGold things.\n\n## Moving past\nnothing\n\n"
+    "## Concepts covered, last 90 days\ngold things\n\n## Expansion topics for next week\n- silver things: adjacent\n\n"
+    "## Notes to the teacher\nbe kind"
+)
+
+
+class ScriptedJudge:
+    """What every fake service answers with: judgments by title (see `score_for`), or prose,
+    or a fixed completion; and the knobs the contract suite turns."""
+
+    def __init__(self, scores: Any = score_for) -> None:
+        self.scores = scores
+        self.prose = False
+        self.prose_ns: set[int] = set()
+        self.completion: str | None = None
+        self.purpose = "teacher"
+
+    def judgments(self, user_text: str) -> str:
+        if self.prose:
+            return "I would rather not score these today."
+        out = []
+        for m in _BLOCK.finditer(user_text):
+            n, title = int(m.group(1)), m.group(2)
+            if n in self.prose_ns:
+                continue
+            s = self.scores(title, self.purpose)
+            out.append(
+                {
+                    "n": n,
+                    "s": [s, s, s, s, s],
+                    "lesson": f"lesson {n}",
+                    "concept": "gold things" if "gold" in title.lower() else f"topic {n % 3}",
+                    "kind": "news",
+                    "flags": [],
+                    "dupe": None,
+                    "conf": "high",
+                }
+            )
+        return json.dumps({"judgments": out})
+
+    def completion_text(self) -> str:
+        return self.completion or PROFILE_TEXT
+
+
+class FakeHttpService:
+    """The knobs and the bookkeeping the three HTTP fakes share: a transport, every request
+    recorded, failures to answer with once, a batch store."""
+
+    def __init__(self, scripted: ScriptedJudge | None = None, key: str = "sk-test-key-0123456789") -> None:
+        self.judge = scripted or ScriptedJudge()
+        self.key = key
+        self.requests: list[tuple[str, str, Any]] = []  # method, path, body
+        self.fail_next: list[tuple[int, str]] = []  # (status, body text) answered once each, in order
+        self.raise_next: list[Exception] = []
+        self.wrong_key = False  # every authenticated call is a 401
+        self.unknown_model = False  # a 404 naming the model
+        self.batches: dict[str, dict[str, Any]] = {}
+        self.ended: set[str] = set()
+        self.fail_ids: set[str] = set()
+        self.expire_ids: set[str] = set()
+        self.missing_batches: set[str] = set()
+        self.broken_results: set[str] = set()
+        self.usage: dict[str, int] | None = None  # None: the service reports nothing (an estimate is used)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handler)
+
+    def finish_all(self) -> None:
+        self.ended.update(self.batches)
+
+    def _common(self, request: httpx.Request) -> httpx.Response | None:
+        body = None
+        if request.content:
+            try:
+                body = json.loads(request.content)
+            except ValueError:
+                body = request.content[:200]
+        self.requests.append((request.method, request.url.path, body))
+        if self.raise_next:
+            raise self.raise_next.pop(0)
+        if self.fail_next:
+            status, text = self.fail_next.pop(0)
+            return httpx.Response(status, text=text)
+        if self.wrong_key or not self.authorised(request):
+            return httpx.Response(
+                401, json={"error": {"message": "invalid api key", "type": "authentication_error"}}
+            )
+        return None
+
+    def authorised(self, request: httpx.Request) -> bool:
+        return request.headers.get("Authorization") == f"Bearer {self.key}"
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        raise NotImplementedError
+
+
+class FakeOpenAIServer(FakeHttpService):
+    """OpenAI: the Responses API and the Batch API (files, batches, output file)."""
+
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        self.files: dict[str, bytes] = {}
+        self.cancelled: set[str] = set()
+
+    def _usage(self) -> dict[str, Any]:
+        if self.usage is None:
+            return {}
+        return {
+            "input_tokens": self.usage.get("input", 1000)
+            + self.usage.get("cached", 0),  # the total, as OpenAI counts it
+            "output_tokens": self.usage.get("output", 100),
+            "input_tokens_details": {"cached_tokens": self.usage.get("cached", 0)},
+        }
+
+    def _response(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.unknown_model:
+            return {
+                "__status__": 404,
+                "error": {
+                    "message": f"The model `{body.get('model')}` does not exist",
+                    "type": "invalid_request_error",
+                },
+            }
+        is_judgment = "text" in body
+        user = str(body.get("input") or "")
+        text = self.judge.judgments(user) if is_judgment else self.judge.completion_text()
+        usage = self._usage()
+        return {
+            "id": "resp_1",
+            "model": body.get("model"),
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
+            "usage": usage,
+        }
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        early = self._common(request)
+        if early is not None:
+            return early
+        path = request.url.path
+        if path.endswith("/responses") and request.method == "POST":
+            out = self._response(json.loads(request.content))
+            if "__status__" in out:
+                return httpx.Response(out.pop("__status__"), json=out)
+            return httpx.Response(200, json=out)
+        if path.endswith("/files") and request.method == "POST":
+            fid = f"file-{len(self.files) + 1}"
+            self.files[fid] = request.content
+            return httpx.Response(200, json={"id": fid, "purpose": "batch"})
+        if path.endswith("/batches") and request.method == "POST":
+            body = json.loads(request.content)
+            bid = f"batch_{len(self.batches) + 1:03d}"
+            raw = self.files.get(body["input_file_id"], b"")
+            lines = [json.loads(line) for line in raw.decode().split(b"\n".decode()) if '"custom_id"' in line]
+            self.batches[bid] = {"lines": lines, "endpoint": body["endpoint"]}
+            return httpx.Response(200, json={"id": bid, "status": "validating"})
+        if "/batches/" in path and request.method == "GET":
+            bid = path.rsplit("/", 1)[-1]
+            if bid in self.missing_batches or bid not in self.batches:
+                return httpx.Response(404, json={"error": {"message": f"No batch found with id '{bid}'"}})
+            status = (
+                "cancelled" if bid in self.cancelled else "completed" if bid in self.ended else "in_progress"
+            )
+            out: dict[str, Any] = {"id": bid, "status": status}
+            if status in ("completed", "cancelled"):
+                out["output_file_id"] = f"{bid}-out"
+            return httpx.Response(200, json=out)
+        if "/files/" in path and path.endswith("/content"):
+            fid = path.split("/files/")[1].removesuffix("/content")
+            bid = fid.removesuffix("-out")
+            if bid in self.broken_results:
+                return httpx.Response(500, text="server error")
+            lines = []
+            for line in self.batches[bid]["lines"]:
+                cid = line["custom_id"]
+                if cid in self.fail_ids:
+                    lines.append(
+                        {
+                            "custom_id": cid,
+                            "response": {"status_code": 500, "body": {"error": {"message": "overloaded"}}},
+                            "error": None,
+                        }
+                    )
+                elif cid in self.expire_ids:
+                    continue  # an expired request has no line at all
+                else:
+                    lines.append(
+                        {
+                            "custom_id": cid,
+                            "response": {"status_code": 200, "body": self._response(line["body"])},
+                            "error": None,
+                        }
+                    )
+            return httpx.Response(200, text="\n".join(json.dumps(x) for x in lines) + "\n")
+        return httpx.Response(404, json={"error": {"message": "not found"}})
+
+
+class FakeChatServer(FakeHttpService):
+    """An OpenAI-compatible Chat Completions service (OpenRouter, Ollama, a gateway)."""
+
+    def __init__(self, *a: Any, rejects_schema: bool = False, **k: Any) -> None:
+        super().__init__(*a, **k)
+        self.rejects_schema = rejects_schema  # answers 400 to a json_schema response_format
+
+    def authorised(self, request: httpx.Request) -> bool:
+        return not self.key or super().authorised(request)
+
+    def _usage(self) -> dict[str, Any]:
+        if self.usage is None:
+            return {}
+        return {
+            "prompt_tokens": self.usage.get("input", 1000)
+            + self.usage.get("cached", 0),  # the total, cached included
+            "completion_tokens": self.usage.get("output", 100),
+            "prompt_tokens_details": {"cached_tokens": self.usage.get("cached", 0)},
+        }
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        early = self._common(request)
+        if early is not None:
+            return early
+        if not request.url.path.endswith("/chat/completions"):
+            return httpx.Response(404, json={"error": {"message": "not found"}})
+        body = json.loads(request.content)
+        if self.unknown_model:
+            return httpx.Response(404, json={"error": {"message": f"model {body.get('model')} not found"}})
+        fmt = (body.get("response_format") or {}).get("type")
+        if fmt == "json_schema" and self.rejects_schema:
+            return httpx.Response(
+                400, json={"error": {"message": "response_format json_schema is not supported by this model"}}
+            )
+        messages = body.get("messages") or []
+        user = next((m["content"] for m in messages if m.get("role") == "user"), "")
+        is_judgment = fmt in ("json_schema", "json_object") or "judgments" in user
+        text = self.judge.judgments(user) if is_judgment else self.judge.completion_text()
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-1",
+                "model": body.get("model"),
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": text}}],
+                "usage": self._usage(),
+            },
+        )
+
+
+class FakeGeminiServer(FakeHttpService):
+    """Gemini: generateContent and the batch API (batchGenerateContent, the operation)."""
+
+    def authorised(self, request: httpx.Request) -> bool:
+        return request.headers.get("x-goog-api-key") == self.key
+
+    def _usage(self) -> dict[str, Any]:
+        if self.usage is None:
+            return {}
+        return {
+            "promptTokenCount": self.usage.get("input", 1000) + self.usage.get("cached", 0),
+            "candidatesTokenCount": self.usage.get("output", 100),
+            "cachedContentTokenCount": self.usage.get("cached", 0),
+        }
+
+    def _generate(self, body: dict[str, Any]) -> dict[str, Any]:
+        config = body.get("generationConfig") or {}
+        user = "".join(p.get("text", "") for c in body.get("contents") or [] for p in c.get("parts") or [])
+        is_judgment = config.get("responseMimeType") == "application/json"
+        text = self.judge.judgments(user) if is_judgment else self.judge.completion_text()
+        return {
+            "candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": "STOP"}],
+            "usageMetadata": self._usage(),
+        }
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        early = self._common(request)
+        if early is not None:
+            return early
+        path = request.url.path
+        if ":generateContent" in path and request.method == "POST":
+            model = path.split("/models/")[1].split(":")[0]
+            if self.unknown_model:
+                return httpx.Response(
+                    404,
+                    json={
+                        "error": {
+                            "code": 404,
+                            "message": f"models/{model} is not found",
+                            "status": "NOT_FOUND",
+                        }
+                    },
+                )
+            return httpx.Response(200, json=self._generate(json.loads(request.content)))
+        if ":batchGenerateContent" in path and request.method == "POST":
+            body = json.loads(request.content)
+            name = f"batches/{len(self.batches) + 1:03d}"
+            self.batches[name] = {"requests": body["batch"]["input_config"]["requests"]["requests"]}
+            return httpx.Response(200, json={"name": name, "metadata": {"state": "BATCH_STATE_PENDING"}})
+        if "/batches/" in path and request.method == "GET":
+            name = path.split("/v1beta/")[-1] if "/v1beta/" in path else path.lstrip("/")
+            if name in self.missing_batches or name not in self.batches:
+                return httpx.Response(
+                    404, json={"error": {"code": 404, "message": "Batch not found", "status": "NOT_FOUND"}}
+                )
+            if name not in self.ended:
+                return httpx.Response(200, json={"name": name, "metadata": {"state": "BATCH_STATE_RUNNING"}})
+            if name in self.broken_results:
+                return httpx.Response(503, json={"error": {"message": "unavailable"}})
+            inlined = []
+            for item in self.batches[name]["requests"]:
+                cid = item["metadata"]["key"]
+                if cid in self.fail_ids:
+                    inlined.append({"metadata": {"key": cid}, "error": {"code": 13, "message": "overloaded"}})
+                elif cid in self.expire_ids:
+                    continue
+                else:
+                    inlined.append({"metadata": {"key": cid}, "response": self._generate(item["request"])})
+            return httpx.Response(
+                200,
+                json={
+                    "name": name,
+                    "done": True,
+                    "metadata": {"state": "BATCH_STATE_SUCCEEDED"},
+                    "response": {"inlinedResponses": {"inlinedResponses": inlined}},
+                },
+            )
+        return httpx.Response(404, json={"error": {"message": "not found"}})

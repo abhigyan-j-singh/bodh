@@ -31,6 +31,24 @@ class ModelError(BodhError):
     exit_code = 4
 
 
+class BudgetExceeded(ModelError):
+    """The daily budget is reached; judging pauses until midnight."""
+
+
+class ModelConfigError(ModelError):
+    """The API rejected the key, the permission or the model id. Retrying is pointless;
+    the run stops at once so the problem is visible instead of 27 identical tracebacks."""
+
+
+class BatchNotFound(ModelError):
+    """The API no longer knows the batch (deleted in the console, or submitted under another
+    key): it is closed as lost and its articles are pending again, nothing else stops."""
+
+
+class NoJudgments(ModelError):
+    """The model answered, but with nothing a judgment could be read from."""
+
+
 class LockedError(BodhError):
     """Another run holds the lock; the command refuses rather than run alongside it."""
 

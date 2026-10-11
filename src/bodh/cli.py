@@ -36,6 +36,7 @@ from .config import Config, Secrets, load_config, load_secrets
 from .errors import BodhError, ConfigError, LockedError
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
+from .providers.base import same_model
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
@@ -476,7 +477,7 @@ def _catch_up_preview(
     from .judge import Judge
 
     cfg = ctx.cfg
-    quick = judge != cfg.models.judge
+    quick = not same_model(judge, cfg.models.judge)
     rejudge = None if quick else Judge.rejudge_rule(cfg)
     pending = store.unscored_unread_count(
         ctx.conn,

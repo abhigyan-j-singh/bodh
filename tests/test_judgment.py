@@ -23,7 +23,7 @@ from bodh.judgment import (
     matches_topic,
     parse_judgments,
 )
-from bodh.llm import _mentions_cache_ttl, _mentions_structured_outputs
+from bodh.providers.anthropic import mentions_cache_ttl, mentions_structured_outputs
 
 
 def test_parser_tolerates_null_fields():
@@ -83,11 +83,11 @@ def test_article_block_out_of_range_published():
 
 
 def test_adapt_to_error_word_boundaries():
-    assert _mentions_cache_ttl("cache_control: ttl is not supported")
-    assert _mentions_cache_ttl("the TTL value")
-    assert not _mentions_cache_ttl("request throttled, try later")  # "throttled" contains "ttl"
-    assert _mentions_structured_outputs("output_config.format is invalid")
-    assert not _mentions_structured_outputs("the unstructured text was too long")
+    assert mentions_cache_ttl("cache_control: ttl is not supported")
+    assert mentions_cache_ttl("the TTL value")
+    assert not mentions_cache_ttl("request throttled, try later")  # "throttled" contains "ttl"
+    assert mentions_structured_outputs("output_config.format is invalid")
+    assert not mentions_structured_outputs("the unstructured text was too long")
 
 
 def test_prompt_home_flag_follows_the_config(cfg, conn):

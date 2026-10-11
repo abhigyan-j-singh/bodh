@@ -35,6 +35,10 @@ class FolderPolicy(Strict):
 
 
 class Models(Strict):
+    """The roles, each a `provider/model-id` string (`anthropic/claude-sonnet-5-5`, `openai/gpt-5`,
+    `gemini/gemini-2.5-pro`, `openrouter/qwen/qwen3-235b`, `openai-compatible/llama3.3`); a bare
+    model id means Anthropic, as before October 2026."""
+
     judge: str = "claude-sonnet-5-5"  # reads every article once
     reviewer: str = "claude-opus-5-5"  # re-reads close calls with the full text; can only save an article
     profiler: str = "claude-opus-5-5"  # rewrites the learned profile on Sundays
@@ -59,20 +63,35 @@ class Models(Strict):
             raise ValueError("models.cache_ttl must be '5m' or '1h'")
         return v
 
+    @field_validator("judge", "reviewer", "profiler")
+    @classmethod
+    def _model(cls, v: str) -> str:
+        from .providers.base import ModelRef
+
+        ModelRef.parse(v)  # a bad provider name or an empty model is refused at load
+        return v.strip()
+
     @field_validator("prices_per_mtok")
     @classmethod
     def _prices(cls, v: dict[str, list[float]]) -> dict[str, list[float]]:
+        from .providers.base import ModelRef
+
+        out: dict[str, list[float]] = {}
         for model, val in v.items():
             if len(val) not in (2, 3) or any(x < 0 for x in val):
                 raise ValueError(
                     f"models.prices_per_mtok.{model} must be [input, output] or [input, output, cache read], "
                     "USD per million tokens"
                 )
-        return v
+            out[ModelRef.parse(model).name] = val  # keyed as the database stores the model
+        return out
 
     def _entry(self, model: str) -> list[float] | None:
+        from .providers.base import model_name
+
+        name = model_name(model)
         for key, val in self.prices_per_mtok.items():
-            if model.startswith(key):
+            if name.startswith(key):
                 return val
         return None
 
@@ -163,11 +182,19 @@ class Review(Strict):
 class CatchUp(Strict):
     """One deliberate pass over everything pending, usually with the quick judge."""
 
-    model: str = "claude-haiku-5-5"  # the quick judge `bodh catch-up` uses by default
+    model: str = "claude-haiku-5-5"  # the quick judge `bodh catch-up` uses by default (provider/model-id)
     rejudge_at: float | None = Field(
         default=50.0, ge=0, le=100
     )  # what the quick judge rates at or above this,
     # the judge reads again; null turns it off
+
+    @field_validator("model")
+    @classmethod
+    def _model(cls, v: str) -> str:
+        from .providers.base import ModelRef
+
+        ModelRef.parse(v)
+        return v.strip()
 
 
 class Limits(Strict):
@@ -474,6 +501,11 @@ class Secrets(BaseModel):
     bazqux_email: SecretStr = SecretStr("")
     bazqux_password: SecretStr = SecretStr("")
     anthropic_api_key: SecretStr = SecretStr("")
+    openai_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
+    openrouter_api_key: SecretStr = SecretStr("")
+    openai_compatible_api_key: SecretStr = SecretStr("")
+    openai_compatible_base_url: SecretStr = SecretStr("")  # where a local or self-hosted service is
     healthcheck_url: SecretStr = SecretStr("")
 
     def value(self, name: str) -> str:
@@ -483,15 +515,21 @@ class Secrets(BaseModel):
         return bool(self.value(name))
 
     def values(self) -> list[str]:
-        """The non-empty values, for the log redactor; never for printing."""
-        return [
-            v
-            for v in (
-                self.value(n)
-                for n in ("bazqux_email", "bazqux_password", "anthropic_api_key", "healthcheck_url")
-            )
-            if v
-        ]
+        """The non-empty secret values, for the log redactor; never for printing. The base URL
+        of a local service is not one: a log line may name it."""
+        return [v for v in (self.value(n) for n in SECRET_FIELDS) if v]
+
+
+SECRET_FIELDS = (
+    "bazqux_email",
+    "bazqux_password",
+    "anthropic_api_key",
+    "openai_api_key",
+    "gemini_api_key",
+    "openrouter_api_key",
+    "openai_compatible_api_key",
+    "healthcheck_url",
+)
 
 
 # ConfigError lives in errors.py with the other exit codes; it is imported here for the callers that
@@ -668,8 +706,8 @@ def load_secrets(root: Path | None = None) -> Secrets:
     # the project's own .env wins over whatever the shell happens to export (a stale key in ~/.zshrc, say)
     load_dotenv(root / ".env", override=True)
     return Secrets(
-        bazqux_email=SecretStr(os.environ.get("BAZQUX_EMAIL", "")),
-        bazqux_password=SecretStr(os.environ.get("BAZQUX_PASSWORD", "")),
-        anthropic_api_key=SecretStr(os.environ.get("ANTHROPIC_API_KEY", "")),
-        healthcheck_url=SecretStr(os.environ.get("HEALTHCHECK_URL", "")),
+        **{
+            name: SecretStr(os.environ.get(name.upper(), ""))
+            for name in (*SECRET_FIELDS, "openai_compatible_base_url")
+        }
     )

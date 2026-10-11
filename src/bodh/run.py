@@ -17,6 +17,7 @@ from .heartbeat import Heartbeat
 from .judge import Judge, concept_context
 from .llm import LLM
 from .profiler import expansion_topics
+from .providers.base import same_model
 from .readers.bazqux import BazQuxClient, BazQuxError
 
 log = logging.getLogger(__name__)
@@ -492,7 +493,7 @@ def catch_up(
         cfg.limits.max_age_days = None
     if budget is not None:
         cfg.models.daily_budget_usd = max(cfg.models.daily_budget_usd, budget)
-    quick = bool(model) and model != cfg.models.judge
+    quick = bool(model) and not same_model(model, cfg.models.judge)
     if model:
         cfg.models.judge = model
     judge = ctx.judge()

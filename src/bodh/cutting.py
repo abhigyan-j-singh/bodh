@@ -197,7 +197,7 @@ def _review_group(row: sqlite3.Row, cfg: Config, judge: Judge) -> str:
         return "kept" if row["second_look_model"] == "failed" else "cut"
     if not has_more_to_read(row, cfg):
         return "cut"  # the first pass saw everything there was
-    return "held" if judge.batch_mode else "review"
+    return "held" if judge.review_batch_mode else "review"
 
 
 def _reserve_new_ground(

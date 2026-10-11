@@ -298,14 +298,17 @@ def test_the_example_about_is_recognised_and_refused(tmp_path, cfg, conn):
     example = (ROOT / "profile.example" / "about.md").read_text(encoding="utf-8")
     cfg.about_path.write_text(example, encoding="utf-8")
     assert cfg.about_is_example()
+    from fakes import FakeLLM
+
+    llm = FakeLLM(cfg, conn)
     with pytest.raises(ConfigError, match="still the worked example"):
-        Judge(cfg, None, conn)  # type: ignore[arg-type]
+        Judge(cfg, llm, conn)
     own = re.sub(r"<!--.*?-->", "", example, flags=re.S).replace(
         "Ines, a marine biologist", "Someone else, a geologist"
     )
     cfg.about_path.write_text(own, encoding="utf-8")
     assert not cfg.about_is_example() and "geologist" in cfg.read_about()
-    Judge(cfg, None, conn)  # type: ignore[arg-type]
+    Judge(cfg, llm, conn)
 
 
 def test_find_root_tries_the_default_home_last(tmp_path, monkeypatch):

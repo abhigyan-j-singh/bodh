@@ -39,9 +39,10 @@ def test_parse_compact_judgments_maps_codes_and_clamps():
 
 
 def test_judgment_schema_has_no_unsupported_constraints():
-    from bodh.llm import _output_format
+    from bodh.judgment import JudgmentBatchOut
+    from bodh.providers.anthropic import output_format
 
-    fmt = _output_format()
+    fmt = output_format(JudgmentBatchOut.model_json_schema())
     assert fmt["type"] == "json_schema"
     props = fmt["schema"]["$defs"]["JudgmentOut"]["properties"]
     assert set(props) == {"n", "s", "lesson", "concept", "kind", "flags", "dupe", "conf"}
@@ -90,7 +91,7 @@ def test_request_params_shapes(cfg, conn):
     p = llm.request_params("m", "SYS", "USER", ttl="1h")
     assert p["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert p["output_config"]["format"]["type"] == "json_schema" and p["messages"][0]["content"] == "USER"
-    llm._enable_plain_json("m")
+    assert llm.adapt_to_error("m", "output_config.format is not supported")  # the model rejected the schema
     p = llm.request_params("m", "SYS", "USER")
     assert "output_config" not in p and "JSON object" in p["messages"][0]["content"]
     assert p["system"][0]["cache_control"] == {"type": "ephemeral"}

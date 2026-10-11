@@ -206,6 +206,7 @@ class RecordingJudge:
     from ``answers`` were never examined."""
 
     batch_mode = False
+    review_batch_mode = False
 
     def __init__(self, answers=None):
         self.answers = dict(answers or {})

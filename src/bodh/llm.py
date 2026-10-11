@@ -1,145 +1,77 @@
-"""The model client: one place that talks to the Anthropic API. Requests, batches, retries,
-cost accounting against the daily budget, and the two fallbacks a model may force (plain
-JSON instead of structured outputs, the 5-minute cache instead of the 1-hour one)."""
+"""The model client the rest of the code talks to: one object that picks the provider a
+model string names, keeps the daily budget across providers, accounts every call's cost in
+the database, and turns a provider's answer into verdicts. Nothing else talks to a provider.
+The providers themselves live in `providers/`."""
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 import sqlite3
 import threading
 from typing import Any
 
 from . import store
 from .config import Config, Secrets
-from .errors import ModelError
+from .errors import BatchNotFound, BudgetExceeded, ModelConfigError, ModelError, NoJudgments
 from .judgment import PLAIN_JSON_INSTRUCTION, JudgmentBatchOut, Verdict, parse_judgments
+from .providers import make_provider
+from .providers.base import (
+    REQUIRED_SECRET,
+    Answer,
+    BatchResult,
+    Capabilities,
+    FlagStore,
+    ModelRef,
+    Provider,
+    Usage,
+)
 
 log = logging.getLogger(__name__)
 
-
 JudgeError = ModelError  # the name before October 2026
+__all__ = [
+    "LLM",
+    "BatchNotFound",
+    "BudgetExceeded",
+    "JudgeError",
+    "ModelConfigError",
+    "NoJudgments",
+]
 
 
-class BudgetExceeded(JudgeError):
-    pass
+def _output_schema() -> dict[str, Any]:
+    return JudgmentBatchOut.model_json_schema()
 
 
-class ModelConfigError(JudgeError):
-    """The API rejected the key, the permission or the model id. Retrying is pointless;
-    the run stops at once so the problem is visible instead of 27 identical tracebacks."""
-
-
-class BatchNotFound(JudgeError):
-    """The API no longer knows the batch (deleted in the console, or submitted under another
-    key): it is closed as lost and its articles are pending again, nothing else stops."""
-
-
-class NoJudgments(JudgeError):
-    """The model answered, but with nothing a judgment could be read from."""
-
-
-def _batch_classify(exc: Exception, secret: str = "") -> Exception:
-    import anthropic
-
-    if isinstance(exc, anthropic.NotFoundError):
-        return BatchNotFound(f"batch not found: {_without(str(exc), secret)}")
-    return _classify(exc, secret)
-
-
-def _classify(exc: Exception, secret: str = "") -> Exception:
-    """A rejected key, permission or model id becomes a ModelConfigError (exit 4); anything else
-    is passed through. The message never carries the key, whatever the API echoed."""
-    import anthropic
-
-    if isinstance(
-        exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError)
-    ):
-        return ModelConfigError(
-            f"model call rejected: {_without(str(exc), secret)}. "
-            "Check ANTHROPIC_API_KEY and the model ids in config.yaml"
-        )
-    return exc
-
-
-def _without(text: str, secret: str) -> str:
-    return text.replace(secret, "[the API key]") if secret else text
-
-
-_STRUCTURED_WORDS = re.compile(r"\b(output_config|output_format|structured|json_schema)\b", re.I)
-_TTL_WORDS = re.compile(r"\b(ttl|cache_control)\b", re.I)
-
-
-def _mentions_structured_outputs(text: str) -> bool:
-    return bool(_STRUCTURED_WORDS.search(text or ""))
-
-
-def _flagged_models(stored: str | None, legacy: str) -> set[str]:
-    """The models a provider flag names: a JSON list, or "*" for every model when the value is
-    the single flag the code wrote before October 2026."""
-    if not stored:
-        return set()
-    if stored == legacy:
-        return {"*"}
-    try:
-        models = json.loads(stored)
-    except ValueError:
-        return {"*"}
-    return {str(m) for m in models} if isinstance(models, list) else {"*"}
-
-
-def _mentions_cache_ttl(text: str) -> bool:
-    # whole words only: "throttled" contains "ttl" and used to disable the 1-hour cache for good
-    return bool(_TTL_WORDS.search(text or ""))
-
-
-def _output_format() -> dict[str, Any]:
-    """The structured-outputs format for a judgment batch, built the way the SDK's
-    ``messages.parse`` builds it (bounds moved into descriptions, no extra properties)."""
-    schema = JudgmentBatchOut.model_json_schema()
-    try:
-        from anthropic.lib._parse._transform import transform_schema
-
-        schema = transform_schema(schema)
-    except Exception:  # an SDK without that private helper: the plain schema is sent, and still accepted
-        log.debug("llm: anthropic.lib._parse._transform is not available; sending the plain schema")
-    return {"type": "json_schema", "schema": schema}
+def secret_field(provider: str) -> str:
+    """The `Secrets` field a provider needs set: its key, or its base URL for a local service."""
+    return REQUIRED_SECRET[provider].lower()
 
 
 class LLM:
-    """Anthropic client with cost accounting and a daily budget. Nothing else talks to the API."""
+    """Every provider behind one door, with cost accounting and a daily budget."""
 
     def __init__(self, cfg: Config, secrets: Secrets, conn: sqlite3.Connection) -> None:
-        if not secrets.is_set("anthropic_api_key"):
-            raise JudgeError("ANTHROPIC_API_KEY not configured")
-        import anthropic
-
         self.cfg = cfg
-        self._secret = secrets.value("anthropic_api_key")  # only so an error message can be scrubbed of it
+        self.secrets = secrets
         # worker threads account for their calls here, under the lock, on a connection of their
         # own: sqlite3 shares prepared statements per connection, so two threads running the
         # same query on one connection can hand each other empty results
         self._lock = threading.Lock()
         self.conn = self._private_connection(cfg, conn)
-        self._client = anthropic.Anthropic(
-            api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0
-        )
-        self._format = _output_format()
-        # once a model has rejected structured outputs, every later call to it asks for plain JSON
-        # instead; once it has rejected the 1-hour cache, it gets the default 5-minute cache. Both are
-        # remembered per model in the database ("1"/"5m" alone, from before October 2026: every model)
-        with self._lock:
-            self._plain_json_models = _flagged_models(store.kv_get(self.conn, store.PLAIN_JSON_KEY), "1")
-            self._short_ttl_models = _flagged_models(store.kv_get(self.conn, store.CACHE_TTL_KEY), "5m")
-
-    def plain_json(self, model: str) -> bool:
-        """Does this model get the plain-JSON instruction instead of structured outputs?"""
-        return "*" in self._plain_json_models or model in self._plain_json_models
-
-    def long_ttl_ok(self, model: str) -> bool:
-        """May this model's prompt prefix be cached for an hour?"""
-        return "*" not in self._short_ttl_models and model not in self._short_ttl_models
+        self._providers: dict[str, Provider] = {}
+        self._schema = _output_schema()
+        self._retries: int | None = None
+        for role, text in (
+            ("models.judge", cfg.models.judge),
+            ("models.reviewer", cfg.models.reviewer),
+            ("models.profiler", cfg.models.profiler),
+        ):
+            ref = ModelRef.parse(text)  # a bad provider name is a configuration error, found before any work
+            if not secrets.is_set(secret_field(ref.provider)):
+                raise ModelConfigError(
+                    f"{REQUIRED_SECRET[ref.provider]} not configured, and {role} is {text}"
+                )
 
     @staticmethod
     def _private_connection(cfg: Config, shared: sqlite3.Connection) -> sqlite3.Connection:
@@ -149,6 +81,55 @@ class LLM:
         except sqlite3.Error:
             pass
         return shared
+
+    # -- providers --------------------------------------------------------------
+
+    def _flags(self) -> FlagStore:
+        def get(key: str) -> str | None:
+            with self._lock:
+                return store.kv_get(self.conn, key)
+
+        def set_(key: str, value: str) -> None:
+            with self._lock:
+                store.kv_set(self.conn, key, value)
+
+        return FlagStore(get, set_)
+
+    def provider(self, model: str) -> Provider:
+        """The provider the model string names, made on first use (the key must be set)."""
+        ref = ModelRef.parse(model)
+        found = self._providers.get(ref.provider)
+        if found is None:
+            if not self.secrets.is_set(secret_field(ref.provider)):
+                raise ModelConfigError(f"{REQUIRED_SECRET[ref.provider]} not configured (needed for {model})")
+            found = make_provider(ref.provider, self.secrets, self._flags())
+            if self._retries is not None:
+                found.retries(self._retries)
+            self._providers[ref.provider] = found
+        return found
+
+    def capabilities(self, model: str) -> Capabilities:
+        return self.provider(model).capabilities(ModelRef.parse(model).model)
+
+    def plain_json(self, model: str) -> bool:
+        """Does this model get the plain-JSON instruction instead of structured outputs?"""
+        return not self.capabilities(model).structured_output
+
+    def long_ttl_ok(self, model: str) -> bool:
+        provider = self.provider(model)
+        check = getattr(provider, "long_ttl_ok", None)
+        return bool(check(ModelRef.parse(model).model)) if check else False
+
+    def adapt_to_error(self, model: str, message: str) -> bool:
+        """A rejected request shape is remembered for that model, so the next request to it is
+        different. Returns True when something changed (so a retry makes sense)."""
+        return self.provider(model).adapt_to_error(ModelRef.parse(model).model, message)
+
+    def retries(self, n: int) -> None:
+        """More patience with 429s and 5xx, for a deliberate catch-up through a backlog."""
+        self._retries = max(0, n)
+        for provider in self._providers.values():
+            provider.retries(self._retries)
 
     # -- budget ---------------------------------------------------------------
 
@@ -168,96 +149,72 @@ class LLM:
     # -- accounting -----------------------------------------------------------
 
     def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict[str, int], float]:
-        """(token counts, USD) for one response's usage, the batch discount applied if any."""
-        p_in, p_out = self.cfg.models.price(model)
-        creation = getattr(usage, "cache_creation", None)
-        write_1h = int(getattr(creation, "ephemeral_1h_input_tokens", 0) or 0)
-        write_5m = int(getattr(creation, "ephemeral_5m_input_tokens", 0) or 0)
-        write_total = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
-        if write_1h + write_5m == 0 and write_total:
-            write_5m = write_total if self.cfg.models.cache_ttl == "5m" else 0
-            write_1h = write_total - write_5m
-        u = {
-            "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-            "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        """(token counts, USD) for one answer's usage, the batch discount applied if any. An
+        SDK usage object of Anthropic's shape is read too, for the callers that still hold one."""
+        if usage is None:
+            u = Usage()
+        elif isinstance(usage, Usage):
+            u = usage
+        else:
+            from .providers.anthropic import usage_from
+
+            u = usage_from(usage)
+        name = ModelRef.parse(model).name
+        p_in, p_out = self.cfg.models.price(name)
+        p_read = self.cfg.models.cache_read_price(name)
+        write_1h, write_5m = u.cache_write_1h, u.cache_write_5m
+        unsplit = max(0, u.cache_write - write_1h - write_5m)  # an SDK that reports one total
+        if self.cfg.models.cache_ttl == "5m":
+            write_5m += unsplit
+        else:
+            write_1h += unsplit
+        counts = {
+            "input_tokens": u.input_tokens,
+            "output_tokens": u.output_tokens,
             "cache_write": write_1h + write_5m,
-            "cache_read": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+            "cache_read": u.cache_read,
         }
-        p_read = self.cfg.models.cache_read_price(model)
         usd = (
-            u["input_tokens"] * p_in
-            + u["output_tokens"] * p_out
+            u.input_tokens * p_in
+            + u.output_tokens * p_out
             + write_5m * p_in * 1.25
             + write_1h * p_in * 2.0
-            + u["cache_read"] * p_read
+            + u.cache_read * p_read
         ) / 1_000_000
-        return u, usd * discount
+        return counts, usd * discount
 
     def record(
         self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0
     ) -> float:
-        u, usd = self.cost(model, usage, discount)
+        counts, usd = self.cost(model, usage, discount)
         with self._lock:
-            store.record_cost(self.conn, run_id, model, purpose, u, usd)
+            store.record_cost(self.conn, run_id, ModelRef.parse(model).name, purpose, counts, usd)
         return usd
-
-    def _enable_plain_json(self, model: str) -> None:
-        if not self.plain_json(model):
-            log.warning("judge: %s rejected structured outputs; asking it for plain JSON from now on", model)
-            self._plain_json_models.add(model)
-            with self._lock:
-                store.kv_set(self.conn, store.PLAIN_JSON_KEY, json.dumps(sorted(self._plain_json_models)))
-
-    def _disable_long_ttl(self, model: str) -> None:
-        if self.long_ttl_ok(model):
-            log.warning(
-                "judge: %s rejected the 1-hour cache; using the 5-minute cache for it from now on", model
-            )
-            self._short_ttl_models.add(model)
-            with self._lock:
-                store.kv_set(self.conn, store.CACHE_TTL_KEY, json.dumps(sorted(self._short_ttl_models)))
-
-    def adapt_to_error(self, model: str, message: str) -> bool:
-        """A rejected request shape is remembered for that model, so the next request to it is
-        different. Returns True when something changed (so a retry makes sense)."""
-        if not self.plain_json(model) and _mentions_structured_outputs(message):
-            self._enable_plain_json(model)
-            return True
-        if self.long_ttl_ok(model) and _mentions_cache_ttl(message):
-            self._disable_long_ttl(model)
-            return True
-        return False
 
     # -- request shapes -------------------------------------------------------
 
-    def _system(self, model: str, system_text: str, ttl: str | None = None) -> list[dict[str, Any]]:
-        cache: dict[str, Any] = {"type": "ephemeral"}
-        if ttl == "1h" and self.long_ttl_ok(model):
-            cache["ttl"] = "1h"
-        return [{"type": "text", "text": system_text, "cache_control": cache}]
+    def _user(self, model: str, user_text: str) -> tuple[str, dict[str, Any] | None]:
+        """The user text and the schema to send: the plain-JSON instruction is appended when
+        the provider (or this model, after a rejection) does not enforce a schema."""
+        if self.capabilities(model).structured_output:
+            return user_text, self._schema
+        return user_text + PLAIN_JSON_INSTRUCTION, None
 
     def request_params(
         self, model: str, system_text: str, user_text: str, ttl: str | None = None
     ) -> dict[str, Any]:
-        """One judgment request, the same shape for a direct call and for a batch."""
-        if self.plain_json(model):
-            return {
-                "model": model,
-                "max_tokens": 8000,
-                "system": self._system(model, system_text, ttl),
-                "messages": [{"role": "user", "content": user_text + PLAIN_JSON_INSTRUCTION}],
-            }
-        return {
-            "model": model,
-            "max_tokens": 8000,
-            "system": self._system(model, system_text, ttl),
-            "messages": [{"role": "user", "content": user_text}],
-            "output_config": {"format": self._format},
-        }
+        """One judgment request in the provider's shape, the same for a direct call and for a batch."""
+        user, schema = self._user(model, user_text)
+        return self.provider(model).request(ModelRef.parse(model).model, system_text, user, schema, ttl)
 
     @staticmethod
     def message_text(message: Any) -> str:
-        return "".join(getattr(b, "text", "") for b in getattr(message, "content", []) or [])
+        """The text of an answer: an `Answer`, or an SDK message of Anthropic's shape."""
+        if isinstance(message, Answer):
+            return message.text
+        from .providers.anthropic import message_text
+
+        return message_text(message)
 
     # -- synchronous ----------------------------------------------------------
 
@@ -265,22 +222,11 @@ class LLM:
         self, model: str, system_text: str, user_text: str, run_id: int | None, purpose: str
     ) -> list[Verdict]:
         """One call, waited for. Returns validated verdicts; invalid ones are dropped."""
-        import anthropic
-
         self.ensure_budget()
-        try:
-            response = self._client.messages.create(**self.request_params(model, system_text, user_text))
-        except anthropic.BadRequestError as exc:
-            if not self.adapt_to_error(model, str(exc)):
-                raise _classify(exc, self._secret) from exc
-            try:
-                response = self._client.messages.create(**self.request_params(model, system_text, user_text))
-            except Exception as exc2:
-                raise _classify(exc2, self._secret) from exc2
-        except Exception as exc:
-            raise _classify(exc, self._secret) from exc
-        self.record(run_id, model, purpose, response.usage)
-        verdicts = parse_judgments(self.message_text(response))
+        user, schema = self._user(model, user_text)
+        answer = self.provider(model).judge(ModelRef.parse(model).model, system_text, user, schema, None)
+        self.record(run_id, model, purpose, answer.usage)
+        verdicts = parse_judgments(answer.text)
         if verdicts is None:
             raise NoJudgments(f"{model} returned no parsable judgments")
         return verdicts
@@ -296,45 +242,21 @@ class LLM:
     ) -> str:
         """Plain text completion (the weekly profile rewrite)."""
         self.ensure_budget()
-        try:
-            response = self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                system=system_text,
-                messages=[{"role": "user", "content": user_text}],
-            )
-        except Exception as exc:
-            raise _classify(exc, self._secret) from exc
-        self.record(run_id, model, purpose, response.usage)
-        return self.message_text(response).strip()
+        answer = self.provider(model).complete(
+            ModelRef.parse(model).model, system_text, user_text, max_tokens
+        )
+        self.record(run_id, model, purpose, answer.usage)
+        return answer.text.strip()
 
     # -- batches --------------------------------------------------------------
 
-    def submit_batch(self, requests: list[dict[str, Any]]) -> str:
-        """requests: [{"custom_id": ..., "params": ...}]. Returns the batch id."""
-        try:
-            # no automatic retry here: a create that timed out after the server accepted it would
-            # be retried into a second, paid batch nobody collects. A failed create is raised, its
-            # articles stay pending, and the next run submits them again.
-            no_retry = self._client.with_options(max_retries=0)
-            batch = no_retry.messages.batches.create(requests=requests)  # type: ignore[arg-type]  # the SDK's TypedDict; the dicts have its shape
-        except Exception as exc:
-            raise _classify(exc, self._secret) from exc
-        return batch.id
+    def submit_batch(self, model: str, requests: list[dict[str, Any]]) -> str:
+        """requests: [{"custom_id": ..., "params": ...}] for one model. Returns the batch id."""
+        return self.provider(model).submit_batch(ModelRef.parse(model).model, requests)
 
-    def batch_status(self, batch_id: str) -> str:
+    def batch_status(self, model: str, batch_id: str) -> str:
         """'in_progress', 'canceling' or 'ended'."""
-        try:
-            return self._client.messages.batches.retrieve(batch_id).processing_status
-        except Exception as exc:
-            raise _batch_classify(exc, self._secret) from exc
+        return self.provider(model).batch_status(ModelRef.parse(model).model, batch_id)
 
-    def retries(self, n: int) -> None:
-        """More patience with 429s and 5xx, for a deliberate catch-up through a backlog."""
-        self._client = self._client.with_options(max_retries=max(0, n))
-
-    def batch_results(self, batch_id: str) -> list[Any]:
-        try:
-            return list(self._client.messages.batches.results(batch_id))
-        except Exception as exc:
-            raise _batch_classify(exc, self._secret) from exc
+    def batch_results(self, model: str, batch_id: str) -> list[BatchResult]:
+        return self.provider(model).collect_batch(ModelRef.parse(model).model, batch_id)

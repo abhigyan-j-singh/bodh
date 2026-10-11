@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from . import html as ui
 from . import locks, store
 from .config import Config
+from .providers.base import model_name
 
 log = logging.getLogger(__name__)
 
@@ -179,10 +180,9 @@ def _counts(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         else 0
     )
     unread_scores = "SELECT COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id WHERE st.status = 'unread'"
-    stand_in = _count(conn, unread_scores + " AND s.model != ? AND s.model != 'dedup'", (cfg.models.judge,))
-    rejudge_rule = (
-        None if cfg.catch_up.rejudge_at is None else (cfg.models.judge, float(cfg.catch_up.rejudge_at))
-    )
+    judge_name = model_name(cfg.models.judge)
+    stand_in = _count(conn, unread_scores + " AND s.model != ? AND s.model != 'dedup'", (judge_name,))
+    rejudge_rule = None if cfg.catch_up.rejudge_at is None else (judge_name, float(cfg.catch_up.rejudge_at))
     rejudge = 0
     if rejudge_rule and stand_in:
         rejudge = (
