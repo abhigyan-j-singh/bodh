@@ -260,14 +260,14 @@ def _design_type() -> str:
     )
 
 
-def bars(rows: list[tuple[str, float, float]], first: str, second: str) -> str:
+def bars(rows: list[tuple[str, float, float]], first: str, second: str, scale: float = 1.0) -> str:
     """Two shares per row as horizontal bars in one hue and its lighter step, with a legend and
     direct labels at the bar ends: the calibration chart's form."""
     legend = f'<div class="legend"><span class="one"><i></i>{esc(first)}</span><span class="two"><i></i>{esc(second)}</span></div>'
     body = "".join(
         f'<span class="name">{esc(name)}</span><div class="pair">'
-        f'<div class="bar" style="width:{a:.0f}%"><span class="v">{a:.0f}%</span></div>'
-        f'<div class="bar second" style="width:{b:.0f}%"><span class="v">{b:.0f}%</span></div></div>'
+        f'<div class="bar" style="width:{min(100.0, a * scale):.1f}%"><span class="v">{a:.0f}%</span></div>'
+        f'<div class="bar second" style="width:{min(100.0, b * scale):.1f}%"><span class="v">{b:.0f}%</span></div></div>'
         for name, a, b in rows
     )
     return f'{legend}<div class="bars">{body}</div>'

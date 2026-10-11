@@ -163,7 +163,7 @@
   .list-row .meta a { color: var(--text-secondary); }
   .list-row .verdicts { grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--space-1); }
   @media (hover: hover) and (min-width: 768px) {
-    .list-row .verdicts { opacity: 0; transition: opacity var(--duration) var(--easing); }
+    .list-row .verdicts { position: absolute; right: 0; top: var(--space-3); opacity: 0; transition: opacity var(--duration) var(--easing); }
     .list-row:hover .verdicts, .list-row:focus-within .verdicts { opacity: 1; }
   }
   .list-more { margin-top: var(--space-3); }
