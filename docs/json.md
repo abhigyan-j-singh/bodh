@@ -4,7 +4,8 @@ Every command with `--json` prints one object on stdout and nothing else; errors
 stderr as one line with the exit code. The first field is always `schema`, an integer that
 changes only when a field is removed or its meaning changes (fields are added freely). This is
 schema **1**. The same shapes come back from the Python API (`bodh.api`), from the console's
-`/api/status` and from `dashboard/progress.json`, so a script reads one contract.
+`/api/status`, from `GET /api/dashboard` and from `dashboard/progress.json` and `data.json`, so a
+script reads one contract.
 
 Conventions: times are ISO 8601 strings in UTC (`2026-10-11T20:32:44+00:00`) unless the key
 says otherwise; money is USD as a number; an article id is the long BazQux form
@@ -176,6 +177,78 @@ Unread articles at `band` and above, best first, at most `--limit` (50).
 
 `group` is `band`, `cut`, `command`, `grade`, `level`, `steer` or `stream`; `writer` says who
 puts the tag on the article.
+
+## `GET /api/dashboard` and `dashboard/data.json`
+
+The dashboard document: every number the page shows and nothing it does not, one object the
+console serves live, the static export embeds in its page (`<script type="application/json"
+id="bodh-document">`) and writes beside it as `data.json`, and the Mac app reads. Numbers
+arrive as numbers, times as ISO strings (`as_of`) or as text already in the reader's zone
+(`as_of_text`, `age_text`, `started_text`), and every sentence the page prints (the state line,
+the leads, the attention, the calibration reading, the empty states) is composed here, so no
+renderer invents words. The full schema is `docs/dashboard.schema.json`, generated from the
+pydantic model by `scripts/gen_schema.py` (the suite fails when it is stale). Condensed:
+
+```json
+{"schema": 1, "as_of": "2026-10-11T15:56:00+00:00", "as_of_text": "16:56", "timezone": "Europe/Lisbon",
+ "state": {"running": false, "kind": null, "phase": "", "sentence": "Idle · next run in 22 min",
+           "progress_done": null, "progress_total": null, "rate_per_min": null, "eta_min": null,
+           "mode": "scoring-only", "mode_label": "Scoring only", "next_run_in_s": 1320.0,
+           "attention": null, "levers": ["run", "pause"]},
+ "today": {"unread": 130, "target": 40, "hero_text": "130 unread · target 40",
+           "lead": "38 judged, 12 cut, 7 read, $0.41 spent.",
+           "tiles": [{"key": "judged", "label": "Judged today", "value": 38.0, "text": "38", "delta": 12.0,
+                      "delta_text": "+12 vs yesterday", "direction": "up-good",
+                      "series": [20.0, 31.0, 28.0, 40.0, 22.0, 26.0, 38.0], "series_label": "judged, last seven days"}]},
+ "list": {"lead": "41 unread at 70 and above, best first.", "band": 70, "bands": [90, 70, 50],
+          "folders": ["Essays", "News"], "total": 41, "pending": 34,
+          "articles": [{"id": "tag:google.com,2005:reader/item/00000000a1b2c3d4", "title": "...",
+                        "url": "https://...", "reader_url": "https://bazqux.com/i/00000000a1b2c3d4",
+                        "score": 92.3, "band": 90, "lesson": "...", "concept": "...", "feed": "...",
+                        "folder": "Essays", "age_text": "2 h", "arrived_at": "2026-10-11T13:40:00+00:00",
+                        "judged_at": "2026-10-11T14:02:11+00:00"}],
+          "empty_text": "Nothing at 70 or above right now. 34 articles are waiting for the judge; the next run is in 22 min.",
+          "verdicts": ["great", "good", "meh", "bad", "basic", "heavy", "more", "less"]},
+ "verdicts": {"lead": "...", "grid": [{"band": 90, "label": "90 and up", "counts": {"great": 4, "good": 2, "meh": 0, "bad": 0}}],
+              "grid_sentence": "...", "disagreements": [{"id": "...", "title": "...", "url": "...", "grade": "bad", "score": 85.0, "band": 70, "concept": "..."}],
+              "disagreements_empty": "...", "calibration": [{"band": 90, "label": "90 and up", "n": 120, "read_share": 0.41, "star_share": 0.05}],
+              "calibration_sentence": "...", "calibration_empty": "...",
+              "near_misses": [{"id": "...", "title": "...", "url": "...", "score": 34.0, "band": 30, "lesson": "...", "concept": "...", "cut_mode": "autocut"}],
+              "near_misses_empty": "..."},
+ "learning": {"lead": "...", "concepts": [{"concept": "...", "count": 7, "items": [{"title": "...", "url": "...", "lesson": "..."}], "more": 2}],
+              "concepts_more": 0, "concepts_empty": "...", "cloud": [{"concept": "...", "count": 9, "frontier": false}], "cloud_empty": "...",
+              "profile": {"version": 12, "date_text": "Sun 5 Oct", "text": "...", "diff": [{"kind": "add", "text": "..."}], "diff_empty": "..."}},
+ "feeds": {"lead": "...", "days": 30, "empty_text": "...",
+           "rows": [{"feed": "...", "folder": "News", "articles": 212, "judged": 210, "mean_score": 41.2, "mean_band": 30,
+                     "cut_share": 0.61, "read_share": 0.04, "star_share": 0.0, "proposal": "unsubscribe: ..."}]},
+ "money": {"lead": "...", "days": [{"day": "2026-10-11", "label": "Sat 11 Oct", "usd": 0.41}], "budget_usd": 8.0,
+           "chart_title": "Spend is under the budget every day this month.", "per_1000": 0.98, "per_1000_text": "$0.98",
+           "cache_hit": 0.71, "cache_hit_text": "71%", "month_usd": 28.62, "month_text": "$28.62", "empty_text": "..."},
+ "machinery": {"lead": "...", "batches": [{"id": "msgbatch_...", "purpose": "judge", "articles": 400, "age_text": "12 min"}], "batches_empty": "...",
+               "runs": [{"id": 2880, "kind": "run", "started_text": "16:30", "started_at": "2026-10-11T15:30:00+00:00", "ok": true, "summary": "judged 30"}],
+               "runs_empty": "...", "log": ["..."]},
+ "footer": {"version": "1.0.0", "data_dir": "/Users/you/bodh/data", "docs_url": "https://...", "repo_url": "https://...", "exported_text": null}}
+```
+
+`state.levers` names the levers the page may show (`run`, `pause`, `stop`); `state.attention`
+is the one banner (`key`, `level` of `warning`, `critical` or `good`, `word`, `text`, an optional
+link, `dismissable`) or null. `list.verdicts`, `machinery.log` and `footer.data_dir` are empty
+or null in the export (`?mode=export`), which also lists only the bands its rows cover. A share
+is a fraction (`0.41`), a band the lower bound of its range (`90`), a tile's `direction` one of
+`up-good`, `down-good`, `up-bad`, `down-bad` or empty.
+
+The console's live routes beside it: `GET /api/tick` is one tick, `{"schema": 1, "generation": N,
+"as_of": ..., "state": {...}}`, with `today` while a run is in progress and `child` (`running`,
+`args`, `code`, `elapsed`, `output`) while the console runs a command of its own; `generation`
+moves whenever the page should refetch. `GET /api/events` streams the same object as server-sent
+`tick` events, every two seconds while a run is in progress and at least every fifteen. `GET
+/list?band=70&offset=50` returns `{"rows": "<li>…", "total": N, "offset": 50, "count": 50}`, the
+reading list's next page rendered as the page renders rows. `GET /api/plan?action=prune&keep=40`
+returns `{"ok": true, "sentence": "Cut 50 of 130 judged unread articles, keeping the 40 best? …",
+"button": "Cut 50"}` for `prune`, `undo`, `clear_old`, `catch_up` and `autocut_on`. `POST
+/api/mark` with `{"id": ..., "kind": "great"}` (and the `X-Bodh: console` header, like
+`/api/action`) records a verdict in process and answers `{"ok": true, "message": "recorded great
+for: …"}`.
 
 ## Reading it from Python
 

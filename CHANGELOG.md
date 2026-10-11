@@ -147,6 +147,24 @@ of the aliases go away in the release after 1.0.0.
 
 ### Added
 
+- The dashboard is one page, in three forms: the console's `/` with the levers (Run now, Stop,
+  Pause, the other actions folded away, a verdict menu on every row with a key per grade, a
+  confirmation with the numbers before anything that writes to BazQux), the static export
+  `dashboard/index.html` (the same page without the levers, the document embedded, "Exported
+  16:56; open the console for live data"), and `/?mode=app` for a window that supplies its own
+  chrome. Six sections answer the reader's questions in order: what happened today, what to
+  read, is it judging well for you, what it is learning, your feeds, what it costs and how it
+  runs. Every number comes from one JSON document, `GET /api/dashboard` (`docs/json.md`), that
+  the export writes beside itself as `data.json`. Live: `/api/events` streams ticks (the state
+  line, the meter and today's tiles move every two seconds while a run is in progress; the
+  page refetches itself and swaps what changed, node by node, when a run ends, an action runs,
+  a verdict is recorded or `config.yaml` changes), with polling every 30 s as the fallback;
+  the "updated 12 s ago" stamp turns to the warning colour after two missed heartbeats. The
+  page works without JavaScript (the script adds the live layer, the filters, the tooltips and
+  the verdict menus), honours Reduce Motion, light and dark, 390 px, and makes no request to any
+  host but the console's own. The design system (`bodh/web/tokens.py`, validated by numbers;
+  `docs/design.md`; the living style guide at `/design`) is the only place a colour, a size or a
+  distance is defined.
 - The commands in seven groups named by when they are used (set up, every run, look, cut,
   teach, control, housekeeping): `bodh --help` lists them in that order as plain text, every
   command's help ends with examples, shell completion is on (`bodh --install-completion`),
@@ -249,6 +267,10 @@ of the aliases go away in the release after 1.0.0.
 
 ### Removed
 
+- The three old HTML renderers: the console's inline page with its polling script, the old
+  `dashboard.py` page and CSS, and the progress section of the old export with its script
+  (`html.py` with them). `dashboard/progress.json` is still written by every run and by
+  `bodh dashboard`; `data.json` now holds the dashboard document instead of five fields.
 - `laptop-install.sh`; its steps are the README's install section.
 - The `replay` command (see `contrib/replay_archive.py`).
 - The `teacher.v1` prompt: it carried one person's rules and the current parser could not read

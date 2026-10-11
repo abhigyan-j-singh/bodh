@@ -66,12 +66,32 @@ chevron-down, warning, check, close, circle (`src/bodh/web/icons.py`). Decorativ
 
 ## States
 
-Loading (a quiet skeleton on first paint only), refreshing (the previous render held at
-reduced opacity, no layout jump), stale (the "updated … ago" stamp turns to the warning colour
-after two missed cycles and says the engine is not answering), empty (a sentence that says
-what will appear and what causes it), error (the engine's own sentence and the one action
-that helps), offline (the static export marks its time and that it is a snapshot). Each is on
-the `/design` page and in the visual tests' screenshots.
+Loading (the server renders every panel, so the first paint is the page; no skeleton),
+refreshing (the previous render is held and nodes are swapped in place; a changed number
+carries a wash that fades, off under Reduce Motion), stale (the "updated … ago" stamp turns to
+the warning colour after two missed heartbeats and the state line says the console is not
+answering and how old the numbers are; the render stays at full opacity, it is still true),
+empty (a sentence that says what will appear and what causes it, per part), error (the
+engine's own sentence in the notice line and the one action that helps), offline (the static
+export marks its time and that it is a snapshot). Each is on the `/design` page and in the
+visual tests' screenshots.
+
+## The live layer
+
+`src/bodh/web/dashboard.js`, under 400 lines, no build step, no dependency, runs in the
+console and the app (the export is a snapshot and carries none). It adds the `js` class so
+the filters, the verdict menus and the levers appear; without it the page is complete and
+still. The ticks: `/api/events` streams a `tick` (the state and today's tiles while a run is
+in progress, a heartbeat between), applied in place with `textContent`; when the tick's
+`generation` differs from the page's, the page fetches itself again and morphs `main` node by
+node (attributes, then text), keeping what is its own: the open `details`, the filters'
+`aria-current`, the sort order, the grades given this session (rows are matched by article).
+Polling every 30 s is the fallback, said in the footer. The verdict menu is built per row from
+the row's `data-verdicts` words; the keys 1 to 8 and r act on the focused row. The levers post
+to `/api/action`; the ones that write to BazQux ask first in a `dialog` whose sentence and
+button come from `/api/plan` (the numbers, the mode, the reversibility, the time). Tooltips
+are one node, values first, from `data-tip`, on hover and on focus; the spend chart snaps to
+the nearest day. The hovered mark takes a stroke in the text colour, never a status colour.
 
 ## Accessibility
 

@@ -72,12 +72,22 @@ def test_pending_query_under_100ms_at_50k(world):
     assert len(rows) == n > 0
 
 
-def test_dashboard_render_under_1s_at_50k(world):
+def test_dashboard_document_under_250ms_and_export_under_1s_at_50k(world):
+    from bodh.web import document, panels
+
     cfg, conn = world
+    document.build(cfg, conn)  # once cold, for the page cache
+    t0 = time.perf_counter()
+    doc = document.build(cfg, conn)
+    _budget("dashboard document", time.perf_counter() - t0, 0.25)
+    t0 = time.perf_counter()
+    page = panels.render(doc, "console")
+    _budget("dashboard page render", time.perf_counter() - t0, 0.05)
+    assert len(page.encode("utf-8")) < 200_000, f"the console page is {len(page) / 1000:.0f} KB"
     t0 = time.perf_counter()
     path = dashboard.render(cfg, conn)
-    _budget("dashboard render", time.perf_counter() - t0, 1.0)
-    assert path.exists() and (path.parent / "progress.json").exists()
+    _budget("dashboard export", time.perf_counter() - t0, 1.0)
+    assert path.exists() and path.stat().st_size < 200_000 and (path.parent / "data.json").exists()
     t0 = time.perf_counter()
     progress.render_text(progress.snapshot(conn, cfg))
     _budget("progress snapshot and text", time.perf_counter() - t0, 0.5)

@@ -5,7 +5,7 @@ page, the static export and the Mac app's web view are this render with three fl
 from __future__ import annotations
 
 from . import icons
-from .document import DashboardDocument, Verdicts, pct, usd
+from .document import Article, DashboardDocument, Verdicts, pct, usd
 from .templates import (
     band_chip,
     banner,
@@ -35,15 +35,19 @@ SECTIONS = (
 )
 
 
-def render(doc: DashboardDocument, mode: str = "console", theme: str | None = None) -> str:
-    """The whole page. `console`: levers, verdict menus, the log, the live script; `export`:
+def render(
+    doc: DashboardDocument, mode: str = "console", theme: str | None = None, generation: int | None = None
+) -> str:
+    """The whole page. `console`: levers, verdict menus, the log, the live layer; `export`:
     none of those, the document embedded, the snapshot stamp; `app`: the console without
-    the page chrome the Mac window supplies."""
+    the page chrome the Mac window supplies. `generation` is the console's change counter,
+    stamped so the page knows whether a tick means a refetch."""
+    chrome = mode != "app"
     body = [
-        '<a class="skip" href="#main">Skip to the content</a>',
+        '<a class="skip" href="#main">Skip to the content</a>' if chrome else "",
         '<div class="frame">',
-        header(doc, mode),
-        nav(),
+        header(doc, mode) if chrome else "",
+        nav() if chrome else "",
         '<main id="main">',
         state(doc, mode),
         today(doc),
@@ -52,13 +56,14 @@ def render(doc: DashboardDocument, mode: str = "console", theme: str | None = No
         learning(doc),
         feeds(doc),
         money(doc, mode),
-        footer(doc, mode),
+        footer(doc, mode) if chrome else "",
         "</main></div>",
     ]
     if mode == "export":
         embedded = doc.to_json().replace("</", "<\\/")
         body.append(f'<script type="application/json" id="bodh-document">{embedded}</script>')
-    return page("bodh", "\n".join(body), mode=mode, theme=theme)
+    head = f'<meta name="bodh-generation" content="{generation}">\n' if generation is not None else ""
+    return page("bodh", "\n".join(part for part in body if part), mode=mode, theme=theme, extra_head=head)
 
 
 def header(doc: DashboardDocument, mode: str) -> str:
@@ -86,14 +91,21 @@ def state(doc: DashboardDocument, mode: str) -> str:
     if st.running and st.progress_total:
         bar = meter(st.progress_done or 0, st.progress_total, st.phase or "progress")
     levers = ""
-    if mode != "export" and st.levers:
-        parts = []
-        if "run" in st.levers:
-            parts.append(button("Run now", "run", "primary", 'data-action="run"'))
-        if "stop" in st.levers:
-            parts.append(button("Stop", "stop", "", 'data-action="stop"'))
-        if "pause" in st.levers:
-            parts.append(button("Pause", "pause", "", 'data-action="schedule_pause"'))
+    if mode != "export":
+        # every lever is in the page, hidden when the state does not offer it, so a tick can
+        # show Stop when a run starts without a refetch
+        parts = [
+            button(
+                "Run now", "run", "primary", 'data-action="run"' + ("" if "run" in st.levers else " hidden")
+            ),
+            button("Stop", "stop", "", 'data-action="stop"' + ("" if "stop" in st.levers else " hidden")),
+            button(
+                "Pause",
+                "pause",
+                "",
+                'data-action="schedule_pause"' + ("" if "pause" in st.levers else " hidden"),
+            ),
+        ]
         levers = f'<div class="levers js-only">{"".join(parts)}</div>'
     attention = ""
     if st.attention is not None:
@@ -103,10 +115,64 @@ def state(doc: DashboardDocument, mode: str) -> str:
             '<div class="banner', f'<div data-key="{esc(a.key)}" class="banner', 1
         )
     mode_chip = chip(st.mode_label, "accent")
+    more = _more_actions(doc) if mode != "export" else ""
     return (
         f'<section class="section state-section" id="state" aria-label="State" style="padding-top: var(--space-3)">'
         f'<div class="state"><span class="line" id="state-line">{esc(st.sentence)}</span>{mode_chip}{levers}</div>'
-        f'<div id="state-meter">{bar}</div><div id="attention">{attention}</div></section>'
+        f'<div id="state-meter">{bar}</div><div id="attention">{attention}</div>{more}</section>'
+    )
+
+
+def _more_actions(doc: DashboardDocument) -> str:
+    """The console's other levers, folded away: each button names its action and carries the
+    action the script posts; the ones that write to BazQux confirm first, with the numbers."""
+    cutting = doc.state.mode == "autocut"
+    keep, days = doc.today.target, 14
+
+    def act(label: str, action: str, confirm: bool = False, kind: str = "") -> str:
+        extra = ' data-confirm="1"' if confirm else ""
+        return button(label, None, kind, f'data-action="{action}"{extra}')
+
+    groups = [
+        (
+            "Run",
+            act("Run, scoring only", "run_shadow")
+            + act("Run with a sync", "run_sync")
+            + act("Resume the schedule", "schedule_resume"),
+        ),
+        (
+            "Cut",
+            (
+                act("Stop cutting", "autocut_off")
+                if cutting
+                else act("Cut from the next run on", "autocut_on", True)
+            )
+            + f'<label>keep <input type="number" min="0" step="1" value="{keep}" data-param="keep" aria-label="articles to keep"></label>'
+            + act("Prune: what would go", "prune_dry")
+            + act("Prune", "prune", True)
+            + act("Undo the last cut", "undo", True)
+            + f'<label>older than <input type="number" min="1" step="1" value="{days}" data-param="days" aria-label="days"> days</label>'
+            + act("Clear old: what would go", "clear_old_dry")
+            + act("Clear old", "clear_old", True),
+        ),
+        (
+            "Judge",
+            '<label><input type="checkbox" data-param="all_ages"> all ages</label>'
+            + act("Catch up", "catch_up", True),
+        ),
+        (
+            "Housekeeping",
+            act("Rewrite the profile", "weekly")
+            + act("Feed report", "report")
+            + act("Doctor", "doctor")
+            + act("Write the export", "dashboard"),
+        ),
+    ]
+    rows = "".join(f'<div class="group"><span>{esc(name)}</span>{inner}</div>' for name, inner in groups)
+    return (
+        '<p class="notice" id="notice" role="status" aria-live="polite"></p>'
+        f'<details class="more js-only"><summary>{icons.icon("chevron")}More actions</summary><div class="actions">{rows}</div></details>'
+        '<pre class="log output" id="output" hidden></pre>'
     )
 
 
@@ -151,20 +217,47 @@ def article_list(doc: DashboardDocument, mode: str) -> str:
             a.reader_url,
             verdict_words,
             a.id,
-        ).replace(
-            '<li class="list-row"',
-            f'<li class="list-row" data-score="{a.score:g}" data-folder="{esc(a.folder or "")}" data-judged="{esc(a.judged_at or "")}"',
-            1,
-        )
+        ).replace('<li class="list-row"', f'<li class="list-row" {row_attrs(a)}', 1)
         for a in lst.articles
     )
     inner = filters + (f'<ul class="list" id="list-rows">{rows}</ul>' if rows else empty(lst.empty_text))
     if lst.total > len(lst.articles):
-        inner += f'<p class="list-more secondary">Showing {len(lst.articles)} of {lst.total:,}; the rest are in BazQux under the band tags.</p>'
+        rest = (
+            '<button type="button" class="button quiet js-only" data-action="list_more">Show 50 more</button>'
+            '<span class="nojs-only">The rest are in BazQux under the band tags.</span>'
+            if mode != "export"
+            else "The rest are in BazQux under the band tags."
+        )
+        inner += f'<p class="list-more secondary"><span id="list-count">Showing {len(lst.articles)} of {lst.total:,}.</span> {rest}</p>'
     return section("list", "What to read", lst.lead, inner)
 
 
+def row_attrs(a: Article) -> str:
+    """The data the script filters and sorts rows by."""
+    return f'data-score="{a.score:g}" data-folder="{esc(a.folder or "")}" data-arrived="{esc(a.arrived_at or "")}"'
+
+
+def list_rows_html(doc_rows: list[Article], verdicts: tuple[str, ...]) -> str:
+    """Rows for the console's `/list`: the same markup as the page, appended by the script."""
+    return "".join(
+        list_item(
+            a.score,
+            a.band,
+            a.title,
+            a.url,
+            a.lesson,
+            [a.concept, a.feed, a.age_text],
+            a.reader_url,
+            verdicts,
+            a.id,
+        ).replace('<li class="list-row"', f'<li class="list-row" {row_attrs(a)}', 1)
+        for a in doc_rows
+    )
+
+
 def _grid_part(v: Verdicts) -> str:
+    if not any(n for r in v.grid for n in r.counts.values()):
+        return f"<h3>Your grades</h3>{empty(v.grid_sentence)}"
     grid = grades_grid(
         [(r.label, [r.counts[g] for g in ("great", "good", "meh", "bad")]) for r in v.grid],
         ("great", "good", "meh", "bad"),
@@ -196,8 +289,17 @@ def _disagreements_part(v: Verdicts) -> str:
 
 
 def _calibration_part(v: Verdicts) -> str:
+    if not any(r.n for r in v.calibration):
+        return f"<h3>How often each band gets read</h3>{empty(v.calibration_empty)}"
     top_share = max((r.read_share or 0 for r in v.calibration), default=0) or 1
     rows = [(r.label, 100 * (r.read_share or 0), 100 * (r.star_share or 0)) for r in v.calibration]
+    tips = [
+        (
+            f"{pct(r.read_share)} read of {r.n:,} at {r.label}",
+            f"{pct(r.star_share)} starred of {r.n:,} at {r.label}",
+        )
+        for r in v.calibration
+    ]
     twin = table(
         [("Band", "text"), ("Waited a day", "num"), ("Read", "num"), ("Starred", "num")],
         [[esc(r.label), f"{r.n:,}", esc(pct(r.read_share)), esc(pct(r.star_share))] for r in v.calibration],
@@ -206,7 +308,7 @@ def _calibration_part(v: Verdicts) -> str:
     )
     return (
         '<h3>How often each band gets read</h3><figure><div class="chart" data-chart="calibration">'
-        f"{bars(rows, 'read', 'starred', 1 / top_share)}</div><figcaption>{esc(v.calibration_sentence)}"
+        f"{bars(rows, 'read', 'starred', 1 / top_share, tips)}</div><figcaption>{esc(v.calibration_sentence)}"
         f"<details><summary>{icons.icon('chevron')}Show as table</summary>{twin}</details></figcaption></figure>"
     )
 
@@ -254,7 +356,11 @@ def learning(doc: DashboardDocument) -> str:
     concepts_part = (
         (
             f'<div class="concepts">{concepts}</div>'
-            + (f'<p class="muted small">and {le.concepts_more} more concepts</p>' if le.concepts_more else "")
+            + (
+                f'<p class="muted small">and {le.concepts_more} more {"concept" if le.concepts_more == 1 else "concepts"}</p>'
+                if le.concepts_more
+                else ""
+            )
         )
         if le.concepts
         else empty(le.concepts_empty)
@@ -386,7 +492,7 @@ def _columns(m: object) -> str:
             label = f'<text x="{x + bar_w / 2:.1f}" y="{y - 4:.1f}" text-anchor="middle">${d.usd:.2f}</text>'
         cols.append(
             f'<g class="col-group"><rect class="col" tabindex="0" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{max(0.0, top + inner_h - y):.1f}" rx="2" '
-            f'data-label="{esc(d.label)}" data-value="{esc(usd(d.usd))}"><title>{esc(d.label)}: {esc(usd(d.usd))}</title></rect>{label}</g>'
+            f'data-tip="{esc(usd(d.usd))} · {esc(d.label)}"><title>{esc(usd(d.usd))} · {esc(d.label)}</title></rect>{label}</g>'
         )
     axis_labels = "".join(
         f'<text x="{left + i * step + step / 2:.1f}" y="{h - 6}" text-anchor="middle">{esc(days[i].label.split()[1] + " " + days[i].label.split()[2])}</text>'
@@ -444,7 +550,7 @@ def machinery(doc: DashboardDocument, mode: str) -> str:
         else empty(mc.runs_empty)
     )
     log = ""
-    if mode == "console":
+    if mode != "export":
         lines = "\n".join(esc(line) for line in mc.log) or "(the log is empty)"
         log = f'<h3 style="margin-top: var(--space-5)">The log</h3><pre class="log" id="log">{lines}</pre><p class="js-only"><button type="button" class="button quiet" data-action="log_more">Show 200 lines</button></p>'
     return (

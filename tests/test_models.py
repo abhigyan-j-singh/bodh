@@ -423,10 +423,6 @@ def test_dashboard_by_model_needs_two_models_with_enough_judgments(cfg, conn, mo
     assert by["test"]["liked"] == 1 and by["test"]["disliked"] == 0
     assert by["claude-sonnet-5-5"]["n"] == 3 and by["claude-sonnet-5-5"]["read_share"] == 0
     assert dashboard.by_model(conn, min_n=4) == []  # neither reaches the floor
-    assert "By the model that judged" not in dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    monkeypatch.setattr(dashboard, "BY_MODEL_MIN_N", 2)
-    html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    assert "By the model that judged" in html and "claude-sonnet-5-5" in html and "great+good" in html
 
 
 def test_doctor_names_the_key_each_role_needs(tmp_path, monkeypatch):

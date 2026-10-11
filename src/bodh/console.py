@@ -1,13 +1,15 @@
-"""The console: one page with the whole state of the system and the levers, served on the
-Mac (`bodh console`, kept alive by launchd) and reachable from the phone over Tailscale.
-Status refreshes every 3 seconds; actions start the same commands you would type (`bodh
-run`, `prune`, `undo`, `catch-up` …) as child processes and stream their output; Stop
-interrupts whatever run holds the lock. No framework, one file."""
+"""The console: the dashboard page with the levers, served on the Mac (`bodh console`, kept
+alive by launchd) and reachable from the phone over Tailscale. The page is the document
+rendered by `web.panels`; `/api/events` streams ticks (the state and today's tiles every two
+seconds while a run is in progress, a heartbeat between) and the page refetches itself when
+the console's generation moves. Actions start the same commands you would type (`bodh run`,
+`prune`, `undo`, `catch-up` …) as child processes and stream their output; a verdict is
+recorded in process through the API; Stop interrupts whatever run holds the lock. No
+framework, one file."""
 
 from __future__ import annotations
 
 import contextlib
-import html
 import json
 import logging
 import mimetypes
@@ -18,14 +20,16 @@ import sys
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import html as ui
 from . import jobs, locks, logs, progress
 from .config import Config, load_config
+from .errors import BodhError
+from .web import document, panels
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ class Child:
     def __init__(self) -> None:
         self.proc: subprocess.Popen[str] | None = None
         self.args: list[str] = []
+        self.shown: list[str] = []  # the arguments after `bodh`, as the page names the command
         self.started = 0.0
         self.ended = 0.0
         self.code: int | None = None
@@ -62,7 +67,7 @@ class Child:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, args: list[str], cwd: Path, env: dict[str, Any]) -> None:
+    def start(self, args: list[str], cwd: Path, env: dict[str, Any], shown: list[str] | None = None) -> None:
         with self.lock:
             if self.alive():
                 raise RuntimeError("a command is already running")
@@ -76,6 +81,7 @@ class Child:
                 bufsize=1,
             )
             self.args, self.started, self.ended, self.code = args, time.time(), 0.0, None
+            self.shown = list(shown) if shown is not None else args[1:]
             self.output.clear()
             threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
 
@@ -108,7 +114,7 @@ class Child:
         alive = self.alive()
         return {
             "running": alive,
-            "args": self.args[1:] if self.args else [],
+            "args": list(self.shown),
             "started": self.started,
             "elapsed": (time.time() - self.started)
             if alive
@@ -118,8 +124,12 @@ class Child:
         }
 
 
-STATUS_CACHE_SECONDS = 2.0  # one page polls every 3 s; several tabs (or the phone) share one query
+STATUS_CACHE_SECONDS = 2.0  # `/api/status`, for scripts and the Shortcut; several callers share one query
 JOBS_CACHE_SECONDS = 10.0  # four `launchctl print` subprocesses per status were the dearest part
+TICK_CACHE_SECONDS = 1.0  # several pages open (the Mac, the phone) share one tick
+TICK_RUNNING_S = 2.0  # progress every two seconds while a run is in progress
+TICK_IDLE_S = 5.0  # between runs the tick only watches for a change
+HEARTBEAT_S = 15.0  # the page counts a heartbeat as contact; two missed ones mark it stale
 
 
 class Console:
@@ -141,6 +151,71 @@ class Console:
         self._status_cache: tuple[float, dict[str, Any]] | None = None
         self._jobs_cache: tuple[float, dict[str, Any]] | None = None
         self._config_mtime: float | None = None
+        self.cache = document.Cache()
+        self.generation = 1  # moves when the page must refetch: a run, an action, a verdict, a reload
+        self._tick_cache: tuple[float, dict[str, Any]] | None = None
+        self._seen: dict[str, Any] = {}  # what the last tick saw: running, the attention, the child
+        self.changed = threading.Condition()  # wakes the event streams when the generation moves
+
+    # -- the page and its document ---------------------------------------------
+    def page(self, mode: str = "console", theme: str | None = None) -> str:
+        self._reload_config()
+        with self.db_lock:
+            doc = self.cache.get(self.cfg, self.conn, mode)
+        return panels.render(doc, mode, theme, generation=self.generation)
+
+    def document_json(self, mode: str = "console") -> str:
+        self._reload_config()
+        with self.db_lock:
+            return self.cache.get(self.cfg, self.conn, mode).to_json()
+
+    def list_rows(self, band: int, offset: int) -> dict[str, Any]:
+        """One more page of the list, rendered as the page renders rows."""
+        self._reload_config()
+        with self.db_lock:
+            rows, total = document.list_rows(self.cfg, self.conn, datetime.now(timezone.utc), band, offset)
+        verdicts = (*document.GRADES, "basic", "heavy", "more", "less")
+        return {
+            "rows": panels.list_rows_html(rows, verdicts),
+            "total": total,
+            "offset": offset,
+            "count": len(rows),
+        }
+
+    def bump(self) -> None:
+        """The page must refetch: the next tick says so, at once, and the document is rebuilt."""
+        self.generation += 1
+        self.cache.invalidate()
+        self._tick_cache = None
+        with self.changed:
+            self.changed.notify_all()
+
+    def tick(self) -> dict[str, Any]:
+        """The live object the events stream and `/api/tick` carry: the generation, the state,
+        today's tiles while a run is in progress, the child's output. A change the console did
+        not make itself (a run starting or ending, the attention changing) is noticed here."""
+        self._reload_config()
+        now = time.monotonic()
+        with self.db_lock:
+            if self._tick_cache is not None and now - self._tick_cache[0] < TICK_CACHE_SECONDS:
+                return self._tick_cache[1]
+            live = document.live(self.cfg, self.conn)
+            self._notice(live)
+            out: dict[str, Any] = {"schema": 1, "generation": self.generation, **live}
+            child = self.child.state()
+            if child["args"]:
+                out["child"] = {**child, "output": child["output"][-80:]}
+            self._tick_cache = (now, out)
+            return out
+
+    def _notice(self, live: dict[str, Any]) -> None:
+        state = live["state"]
+        attention = state["attention"]["key"] if state.get("attention") else None
+        seen = {"running": state["running"], "attention": attention, "child_ended": self.child.ended}
+        if self._seen and seen != self._seen:
+            self.generation += 1
+            self.cache.invalidate()
+        self._seen = seen
 
     # -- data -----------------------------------------------------------------
 
@@ -162,9 +237,10 @@ class Console:
         return self._jobs_cache[1]
 
     def forget(self) -> None:
-        """After an action: the next status is fresh."""
+        """After an action: the next status, tick and page are fresh."""
         self._status_cache = None
         self._jobs_cache = None
+        self.bump()
 
     def host_allowed(self, host_header: str | None) -> bool:
         """The page is served on 127.0.0.1 and reached from the phone through tailscale serve;
@@ -229,13 +305,39 @@ class Console:
         args = list(args) + _extra_args(action, params)
         return self._start_command(args) if background else self._run_command(args)
 
+    def mark(self, article_id: str, verdict: str) -> dict[str, Any]:
+        """A verdict from the page, recorded in process the way `bodh mark` records it."""
+        from .api import App
+
+        with self.db_lock:
+            app = App(cfg=self.cfg, conn=self.conn, log_to_file=False)
+            try:
+                message = app.mark(article_id, verdict)
+            except BodhError as exc:
+                return {"ok": False, "message": str(exc)}
+        self.bump()
+        return {"ok": True, "message": message}
+
+    def plan(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        """The confirmation for an action that writes to BazQux: the numbers, the mode, the
+        reversibility and the cost of time, from the API; the button names the action."""
+        from .api import App
+
+        try:
+            with self.db_lock:
+                app = App(cfg=self.cfg, conn=self.conn, log_to_file=False)
+                sentence, label = _plan_words(app, self.cfg, action, params)
+        except BodhError as exc:
+            return {"ok": False, "message": str(exc)}
+        return {"ok": True, "sentence": sentence, "button": label}
+
     def _start_command(self, args: list[str]) -> dict[str, Any]:
         """A long command (a run, a catch-up) as a child whose output streams into the page."""
         if self.child.alive():
             return {"ok": False, "message": "a command is already running; stop it first"}
         if locks.running_process(self.cfg.root / self.cfg.data_dir):
             return {"ok": False, "message": "a run holds the lock (started elsewhere); stop it or wait"}
-        self.child.start(self.command + args, self.cfg.root, self.env)
+        self.child.start(self.command + args, self.cfg.root, self.env, shown=args)
         return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
 
     def _run_command(self, args: list[str]) -> dict[str, Any]:
@@ -325,25 +427,69 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, b'{"error":"forbidden: unexpected Host"}')
             return
         url = urlsplit(self.path)
+        query = parse_qs(url.query)
         if url.path in ("/", "/index.html"):
-            page = PAGE.replace("__ROOT__", html.escape(str(console.cfg.root))).replace(
-                "__KEEP__", str(console.cfg.prune.keep)
+            mode = "app" if query.get("mode", [""])[0] == "app" else "console"
+            self._send(
+                200,
+                console.page(mode, query.get("theme", [None])[0]).encode("utf-8"),
+                "text/html; charset=utf-8",
             )
-            self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif url.path == "/design":
             from .web.templates import design_page
 
             self._send(200, design_page().encode("utf-8"), "text/html; charset=utf-8")
+        elif url.path == "/api/dashboard":
+            mode = "export" if query.get("mode", [""])[0] == "export" else "console"
+            self._send(200, console.document_json(mode).encode("utf-8"))
+        elif url.path == "/api/tick":
+            self._send(200, json.dumps(console.tick(), default=str).encode("utf-8"))
+        elif url.path == "/api/events":
+            self._events()
+        elif url.path == "/list":
+            band = int(query.get("band", [str(document.LIST_BAND)])[0])
+            offset = max(0, int(query.get("offset", ["0"])[0]))
+            self._send(200, json.dumps(console.list_rows(band, offset)).encode("utf-8"))
+        elif url.path == "/api/plan":
+            params = {k: v[0] for k, v in query.items()}
+            self._send(
+                200, json.dumps(console.plan(params.get("action", ""), params), default=str).encode("utf-8")
+            )
         elif url.path == "/api/status":
             self._send(200, _status_body(console))
         elif url.path == "/api/log":
-            n = int(parse_qs(url.query).get("n", ["120"])[0])
+            n = int(query.get("n", ["120"])[0])
             lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
             self._send(200, json.dumps({"lines": lines}).encode("utf-8"))
         elif url.path.startswith("/dashboard/"):
             self._static(url.path[len("/dashboard/") :] or "index.html")
         else:
             self._send(404, b'{"error":"not found"}')
+
+    def _events(self) -> None:
+        """Server-sent events: a `tick` whenever it changes, and at least every heartbeat; two
+        seconds apart while a run is in progress, five between. Ends when the page goes."""
+        console = self.console
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        last_sent, last_payload = 0.0, ""
+        try:
+            while True:
+                tick = console.tick()
+                payload = json.dumps(tick, default=str)
+                now = time.monotonic()
+                if payload != last_payload or now - last_sent >= HEARTBEAT_S:
+                    self.wfile.write(f"event: tick\ndata: {payload}\n\n".encode())
+                    self.wfile.flush()
+                    last_sent, last_payload = now, payload
+                busy = tick["state"]["running"] or console.child.alive()
+                with console.changed:
+                    console.changed.wait(TICK_RUNNING_S if busy else TICK_IDLE_S)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def _static(self, rel: str) -> None:
         base = (self.console.cfg.root / self.console.cfg.dashboard_dir).resolve()
@@ -368,15 +514,19 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             payload = {}
-        if urlsplit(self.path).path != "/api/action":
+        path = urlsplit(self.path).path
+        if path not in ("/api/action", "/api/mark"):
             self._send(404, b'{"ok":false,"message":"not found"}')
             return
         try:
-            result = console.run_action(str(payload.get("action", "")), payload)
+            if path == "/api/mark":
+                result = console.mark(str(payload.get("id", "")), str(payload.get("kind", "")))
+            else:
+                result = console.run_action(str(payload.get("action", "")), payload)
+                console.forget()
         except Exception as exc:  # the page gets the reason as a message; the log keeps the traceback
             log.exception("console: action failed")
             result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
-        console.forget()
         self._send(200, json.dumps(result, default=str).encode("utf-8"))
 
 
@@ -426,132 +576,53 @@ def _extra_args(action: str, params: dict[str, Any]) -> list[str]:
     return out
 
 
-CONSOLE_CSS = """
-.state{display:flex;align-items:center;gap:10px;font-size:17px;margin:10px 0}.state .dot{width:12px;height:12px;border-radius:6px}
-.actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
-button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--panel-line);background:var(--panel);color:var(--fg);cursor:pointer}
-button:hover{filter:brightness(0.95)}button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
-button.danger{background:var(--bg);border-color:var(--bad);color:var(--bad)}button:disabled{opacity:.45;cursor:default}
-input,select{font:inherit;padding:6px 8px;border:1px solid var(--panel-line);border-radius:6px;width:90px;background:var(--bg);color:var(--fg)}
-pre{max-height:260px;overflow:auto;margin:6px 0}iframe{width:100%;height:1500px;border:1px solid var(--rule);border-radius:8px;background:#fff}
-.msg{margin:6px 0;font-size:14px}
-"""
-
-# the page: the shell and the shared style from html.py, the levers, and the script that keeps it live
-PAGE_BODY = r"""<h1>bodh console</h1>
-<div class='muted'>__ROOT__ · <span id='clock'></span></div>
-
-<div class='state'><span id='dot' class='dot'></span><span id='state'>loading…</span></div>
-<div id='msg' class='msg'></div>
-
-<div class='actions'>
-  <button class='primary' onclick="act('run')" id='b-run'>Run now</button>
-  <button onclick="act('run_shadow')">Run (scoring-only)</button>
-  <button onclick="act('run_sync')">Run (sync)</button>
-  <button class='danger' onclick="act('stop')" id='b-stop'>Stop</button>
-  <button onclick="act('schedule_pause')">Pause schedule</button>
-  <button onclick="act('schedule_resume')">Resume schedule</button>
-  <button onclick="confirmAct('autocut_on','Turn autocut on? From the next run, articles under their folder\'s cut-off are marked read in BazQux (the review and the safety limits apply).')">Autocut on</button>
-  <button onclick="act('autocut_off')">Autocut off</button>
-</div>
-<div class='actions'>
-  keep <input id='keep' type='number' value='__KEEP__'>
-  <button onclick="act('prune_dry')">Prune: dry run</button>
-  <button class='danger' onclick="confirmAct('prune','Prune to the number kept? Everything else that is scored and unread is marked read in BazQux. Undo reverses it.')">Prune</button>
-  <button class='danger' onclick="confirmAct('undo','Undo the last cut? Its articles are marked unread again.')">Undo last cut</button>
-  older than <input id='days' type='number' value='14'>
-  <button onclick="act('clear_old_dry')">Clear old: dry run</button>
-  <button class='danger' onclick="confirmAct('clear_old','Mark everything older than that many days read? Stars and protected articles are exempt. Undo reverses it.')">Clear old</button>
-</div>
-<div class='actions'>
-  model <select id='model'><option value=''>quick judge (config)</option><option value='claude-haiku-5-5'>claude-haiku-5-5 (fastest)</option><option value='claude-sonnet-5-5'>claude-sonnet-5-5</option></select>
-  workers <input id='workers' type='number' value='8'>
-  <label><input id='allages' type='checkbox' style='width:auto'> all ages</label>
-  <button onclick="confirmAct('catch_up','Judge everything pending now, synchronously, with the chosen model?')">Catch-up</button>
-  <button onclick="act('weekly')">Weekly rewrite</button>
-  <button onclick="act('report')">Feed report</button>
-  <button onclick="act('doctor')">Doctor</button>
-  <button onclick="act('dashboard')">Re-render dashboard</button>
-</div>
-
-<div class='kpis' id='kpis'></div>
-
-<h2>Command output <span class='muted' id='cmd'></span></h2>
-<pre id='out'>(nothing started from here yet)</pre>
-
-<h2>Schedule (launchd)</h2>
-<table><tr><th>Job</th><th>State</th><th>Last exit</th><th>Where</th></tr><tbody id='jobs'></tbody></table>
-
-<h2>Last runs</h2>
-<table><tr><th>Started</th><th>Kind</th><th>OK</th><th>Summary</th></tr><tbody id='runs'></tbody></table>
-
-<h2>Log</h2>
-<pre id='log'></pre>
-
-<h2>Dashboard</h2>
-<iframe src='/dashboard/index.html' id='dash'></iframe>
-
-"""
-
-# the script, in one string: polling, the buttons, the output stream
-PAGE_SCRIPT = r"""<script>
-var fails = 0, lastChildRunning = null;
-function n(x){ return x==null ? '–' : Number(x).toLocaleString('en-US'); }
-function esc(s){ return String(s==null?'':s).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
-function mins(s){ s = Number(s||0); return s < 90 ? Math.round(s)+' s' : (s/60).toFixed(1)+' min'; }
-function msg(t, bad){ var el = document.getElementById('msg'); el.textContent = t; el.className = 'msg ' + (bad ? 'bad' : 'ok'); }
-async function act(action, extra){
-  var p = Object.assign({action: action, keep: document.getElementById('keep').value, days: document.getElementById('days').value,
-    model: document.getElementById('model').value, workers: document.getElementById('workers').value,
-    all_ages: document.getElementById('allages').checked}, extra || {});
-  msg('working: ' + action + ' …');
-  try {
-    var r = await fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json','X-Bodh':'console'}, body: JSON.stringify(p)});
-    var d = await r.json();
-    msg(d.message || (d.ok ? 'done' : 'failed'), !d.ok);
-    if (d.output !== undefined) { document.getElementById('cmd').textContent = '· ' + action; document.getElementById('out').textContent = d.output || '(no output)'; }
-    refresh();
-  } catch (e) { msg('request failed: ' + e, true); }
-}
-function confirmAct(action, text){ if (confirm(text)) act(action); }
-function apply(d){
-  if (d.error) { msg('status error: ' + d.error, true); return; }
-  var r = d.running, c = d.child, dot = document.getElementById('dot'), st = document.getElementById('state');
-  var running = !!r || (c && c.running);
-  dot.className = 'dot' + (running ? ' on' : '');
-  if (r) st.innerHTML = '<b>' + esc(r.kind) + ' running</b> for ' + mins(r.elapsed) + (r.phase ? ' · ' + esc(r.phase) : '') + ' · ' + Math.round(d.rate_per_min||0) + ' judged/min';
-  else if (c && c.running) st.innerHTML = '<b>bodh ' + esc(c.args.join(' ')) + '</b> running for ' + mins(c.elapsed);
-  else st.innerHTML = 'idle · <b>' + esc(d.mode) + ' mode</b>' + (d.next_run_in != null ? ' · next scheduled run in ' + mins(d.next_run_in) : ' · schedule ' + esc(d.jobs.run.state));
-  document.getElementById('b-stop').disabled = !running;
-  var p = d.pile, s = d.spend, cfg = d.config, cp = d.cuts_pending;
-  var k = [['unread', n(p.unread)], ['judged', n(p.judged)], ['with the model', n(p.inflight)], ['pending', n(p.pending)],
-           ['await re-judge', n(p.rejudge)], ['keep / cut-off', cfg.keep + ' / ' + cfg.cutoff],
-           ['spend today', '$' + Number(s.today).toFixed(2) + ' <small>of $' + cfg.budget + '</small>'], ['7 days', '$' + Number(s.week).toFixed(2)],
-           ['per 1,000', s.per_1000 == null ? '–' : '$' + Number(s.per_1000).toFixed(2)], ['cache hits', s.cache_hit == null ? '–' : Math.round(s.cache_hit*100) + '%'],
-           ['judged today', n(d.today.judged)], ['cut today', n(d.today.cut)]];
-  if (cp.untagged || cp.unmarked) k.push(['cuts to write', n(cp.untagged) + ' tag · ' + n(cp.unmarked) + ' read']);
-  document.getElementById('kpis').innerHTML = k.map(function(x){ return '<div class="kpi"><small>' + x[0] + '</small><b>' + x[1] + '</b></div>'; }).join('');
-  var jb = ''; ['run','weekly','report','console'].forEach(function(name){ var j = d.jobs[name];
-    var cls = !j.installed ? 'muted' : (j.state === 'running' ? 'ok' : (j.last_exit ? 'bad' : ''));
-    jb += '<tr><td>' + name + ' <span class="muted">' + esc(j.label) + '</span></td><td class="' + cls + '">' + esc(j.state) + '</td><td>' + (j.last_exit == null ? '–' : j.last_exit) + '</td><td class="muted">' + esc(j.plist || '') + '</td></tr>'; });
-  document.getElementById('jobs').innerHTML = jb;
-  var rb = ''; (d.runs || []).slice(0, 12).forEach(function(r){
-    var ok = r.ok ? '<span class="ok">yes</span>' : (r.finished_at ? '<span class="bad">no</span>' : '<span class="warn">…</span>');
-    rb += '<tr><td>' + esc((r.started_at||'').slice(0,16)) + '</td><td>' + esc(r.kind) + '</td><td>' + ok + '</td><td>' + esc(r.summary || r.error || '') + '</td></tr>'; });
-  document.getElementById('runs').innerHTML = rb;
-  if (c && (c.running || c.output.length)) { document.getElementById('cmd').textContent = '· bodh ' + c.args.join(' ') + (c.running ? ' (running)' : ' (exit ' + c.code + ')');
-    var out = document.getElementById('out'); var txt = c.output.join('\n'); if (out.textContent !== txt) { out.textContent = txt || '(no output yet)'; out.scrollTop = out.scrollHeight; } }
-  if (lastChildRunning && c && !c.running) { document.getElementById('dash').contentWindow.location.reload(); }
-  lastChildRunning = c && c.running;
-  var lg = document.getElementById('log'); var lt = (d.log || []).join('\n'); if (lg.textContent !== lt) { lg.textContent = lt || '(no log yet)'; lg.scrollTop = lg.scrollHeight; }
-}
-async function refresh(){
-  try { var r = await fetch('/api/status', {cache:'no-store'}); apply(await r.json()); fails = 0; }
-  catch (e) { if (++fails > 3) msg('cannot reach the console', true); }
-}
-setInterval(refresh, 3000); refresh();
-setInterval(function(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
-</script>
-"""
-
-PAGE = ui.page("bodh console", PAGE_BODY + PAGE_SCRIPT, css_extra=CONSOLE_CSS)
+def _plan_words(app: Any, cfg: Config, action: str, params: dict[str, Any]) -> tuple[str, str]:
+    """(the sentence, the button) for one confirmable action."""
+    if action == "prune":
+        keep = int(params.get("keep") or cfg.prune.keep)
+        plan = app.prune_plan(keep=keep)
+        return (
+            f"Cut {plan.cut:,} of {plan.unread_scored:,} judged unread articles, keeping the {keep:,} best? "
+            "They are marked read in BazQux; Undo reverses it; it takes about a minute.",
+            f"Cut {plan.cut:,}",
+        )
+    if action == "undo":
+        row = app.conn.execute(
+            "SELECT r.id, (SELECT COUNT(*) FROM state WHERE cut_run_id = r.id) AS n FROM runs r "
+            "WHERE r.kind IN ('run','prune','clear-old','bankruptcy') AND r.id IN (SELECT DISTINCT cut_run_id FROM state WHERE cut_run_id IS NOT NULL) "
+            "ORDER BY r.id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            raise BodhError("nothing to undo: no run has cut anything")
+        return (
+            f"Undo run {row['id']} and mark its {row['n']:,} articles unread again in BazQux? It takes a few seconds.",
+            f"Undo run {row['id']}",
+        )
+    if action == "clear_old":
+        days = int(params.get("days") or 14)
+        n = app.clear_old_count(days)
+        return (
+            f"Mark {n:,} unread articles older than {days} days read in BazQux? Starred and protected "
+            "articles are exempt; Undo reverses it; it takes about a minute.",
+            f"Mark {n:,} read",
+        )
+    if action == "catch_up":
+        all_ages = str(params.get("all_ages", "")).lower() in ("true", "1", "on")
+        plan = app.catch_up_plan(all_ages=all_ages)
+        left = (
+            f"{document.usd(plan.budget_left)} of today's budget is left"
+            if plan.budget_left > 0
+            else "today's budget is spent"
+        )
+        return (
+            f"Judge the {plan.pending:,} waiting articles now with {plan.judge}? About {document.usd(plan.estimate_usd)}; {left}. "
+            "It runs until done or the budget is reached.",
+            f"Judge {plan.pending:,}",
+        )
+    if action == "autocut_on":
+        return (
+            f"Cut from the next run on? Articles under their folder's cut-off ({cfg.autocut.cutoff:g} unless a folder says "
+            "otherwise) are marked read in BazQux, within the safety limits; Undo reverses each run's cut.",
+            "Cut from the next run",
+        )
+    raise BodhError(f"{action} needs no confirmation")

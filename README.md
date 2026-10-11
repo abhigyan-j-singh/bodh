@@ -243,15 +243,23 @@ by launchd. Open `http://127.0.0.1:8766` on the Mac. For the iPhone, publish it 
 tailscale serve --bg 8766         # then https://<your-mac>.<tailnet>.ts.net
 ```
 
-The page shows the state of the system (idle or what is running and its phase, the mode, the next
-scheduled run), the launchd jobs, the unread list, spend, today's counts, the last runs, the log, and the
-dashboard underneath, refreshed every three seconds. The buttons start the same commands you would
-type, as child processes whose output streams into the page; the ones that change BazQux ask first.
-Stop interrupts whatever holds the run lock, started from the page or not. The server listens on
-127.0.0.1 only, answers only to a Host of 127.0.0.1, localhost or a `*.ts.net` name (a page that
-rebinds a DNS name to this machine gets nothing), and accepts actions only from its own page;
-Tailscale adds the identity check on the tailnet. From the terminal the same levers are `bodh
-status`, `stop`, `schedule`, `autocut`, `safety`.
+The page is the dashboard with the levers on top: the state line (idle and the next run, or
+"Judging 240 of 1,200 · 90 a minute · about 11 min left" with a meter), the mode as a chip, Run
+now, Stop and Pause, one attention banner when something needs you, and under "More actions" the
+rest (scoring-only and sync runs, the schedule, cutting on or off, prune, undo, clear old, catch-up,
+the weekly rewrite, the feed report, doctor, the export). Then the six sections of the dashboard
+(below). The buttons start the same commands you would type, as child processes whose output
+streams into the page; the ones that change BazQux show the numbers and ask first ("Cut 50 of 130
+judged unread articles, keeping the 40 best? They are marked read in BazQux; Undo reverses it").
+Every row of the reading list has a verdict menu (great, good, meh, bad, basic, heavy, more, less;
+the keys 1 to 8 on a focused row) and every near miss a Rescue. Stop interrupts whatever holds
+the run lock, started from the page or not. The page updates itself: progress every two seconds
+while a run is in progress, a refetch when a run ends or an action runs, polling every 30 s when
+events are unavailable (it says so in the footer); after two missed heartbeats the "updated 12 s
+ago" stamp turns amber. The server listens on 127.0.0.1 only, answers only to a Host of 127.0.0.1,
+localhost or a `*.ts.net` name (a page that rebinds a DNS name to this machine gets nothing), and
+accepts actions only from its own page; Tailscale adds the identity check on the tailnet. From the
+terminal the same levers are `bodh status`, `stop`, `schedule`, `autocut`, `safety`.
 
 The installer waits up to 15 s for the page to answer and, if it does not, prints the job's state and
 the last lines of `~/Library/Logs/bodh/console.err.log` and `data/console.log`, where the server writes
@@ -276,18 +284,24 @@ tailscale serve --bg --set-path / "$(pwd)/dashboard"
 tailscale serve status            # shows the https URL, open it on the Mac or the iPhone
 ```
 
-The progress section is live: the page polls `progress.json` every 4 seconds, which every run (and
-`bodh catch-up`) rewrites as it goes, so the bars, the rate, the ETA, the phase ("judging 400 of 1,200"),
-the folder table and the batches move while you watch; the dot pulses while a run holds the
-lock. The log stays out of this page and of `progress.json` (both may be published); the console
-and `bodh progress` show it. The polling needs the page served over http (`tailscale serve`, or `python3 -m http.server 8765`
-in the `dashboard` folder); opened as a file it shows the numbers as of the last render.
+The export is the console's page without the levers, a snapshot stamped with its time ("Exported
+16:56; open the console for live data"), with the document it was rendered from embedded in it and
+written beside it as `data.json`; `progress.json` (`docs/json.md`) is rewritten there by every run
+as it goes. The log stays out of the export (it may be published); the console and `bodh progress`
+show it. On the Mac and on the phone over Tailscale the console (above) is the live version of the
+same page.
 
-Sections: progress (judged, with the model, pending, by folder; batches; cost per 1,000), flow, calibration
-(read rate per score band; the check on the judge), near misses (the best of what was cut, rescue by
-marking unread), feeds (volume, mean score, cut, read, star, rescue rates), learnings (the week's
-lessons by concept), map (concepts read in 90 days and the frontier), the learned profile (current text and
-its diff), health (runs, spend, heartbeat). The same progress numbers in the terminal: `bodh progress`.
+Six sections, each the question it answers: **What happened today** (unread now against the target;
+judged, cut, read and spend today, each against yesterday with a seven-day sparkline), **What to
+read** (the unread articles at 70 and above, best first, with the lesson, the concept, the feed, the
+age and a link to BazQux; band, folder and sort filters), **Is it judging well for you** (your grades
+against the judge's bands, where you disagree most, how often each band gets read and starred, the
+near misses: the best of what was cut this week), **What it is learning** (this week's lessons by
+concept, the concept map with its frontier, the learned profile and its Sunday diff), **Your feeds**
+(the last 30 days: articles, mean score, cut, read and starred shares, the report's proposals),
+**What it costs and how it runs** (spend per day against the budget, cost per 1,000 judged, cache
+hits, the batches with the model, the last twenty runs). Every number is in `GET /api/dashboard`.
+The same progress numbers in the terminal: `bodh progress`.
 
 ## Tags in BazQux
 

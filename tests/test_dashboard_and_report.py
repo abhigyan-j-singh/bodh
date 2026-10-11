@@ -14,7 +14,8 @@ def test_dashboard_and_weekly_note_render(conn, cfg):
     store.finish_run(conn, run_id, True, summary="ok")
     path = dashboard.render(cfg, conn)
     html = path.read_text(encoding="utf-8")
-    assert "Near misses" in html and "Calibration" in html and "Article 9" in html
+    assert "Near misses" in html and "How often each band gets read" in html and "Article 9" in html
+    assert 'data-mode="export"' in html and 'id="bodh-document"' in html
     note = dashboard.weekly_note(cfg, conn, {"reason": "kept", "diff": ""})
     assert note is not None and "Learnings this week" in note.read_text(encoding="utf-8")
     rep = report.render(cfg, conn)
@@ -45,7 +46,7 @@ def test_verdicts_panel_and_disagreements(conn, cfg):
     dis = dashboard.disagreements(conn)
     assert {r["id"] for r in dis} == {ids[1], ids[2]}
     html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    assert "Your verdicts" in html and "disagree most" in html and "Article 2" in html
+    assert "Your grades" in html and "disagree most" in html and "Article 2" in html
 
 
 def test_proposal_thresholds(conn, cfg):
@@ -93,7 +94,7 @@ def test_links_only_http(conn, cfg):
     store.add_feedback(conn, ids[0], "read")
     store.add_feedback(conn, ids[1], "read")
     html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    assert "javascript:" not in html and "href='https://ok.test/a'" in html and "href='#'" in html
+    assert "javascript:" not in html and 'href="https://ok.test/a"' in html and 'href="#"' in html
 
 
 def test_write_live_unique_tmp(conn, cfg):

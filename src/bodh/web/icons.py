@@ -1,5 +1,6 @@
 """The inline icon set: 16 px SVG paths, stroke 1.5, currentColor, so an icon takes the text
-colour of where it sits. Decorative icons are hidden from the accessibility tree; an icon that
+colour of where it sits. The paths live once in a sprite at the top of the body; each use is
+a small `<use>`. Decorative icons are hidden from the accessibility tree; an icon that
 carries meaning gets a label."""
 
 from __future__ import annotations
@@ -23,13 +24,19 @@ _PATHS = {
 
 def icon(name: str, label: str | None = None) -> str:
     """One icon. With `label`, a screen reader reads it; without, it is decorative."""
-    path = _PATHS[name]
+    assert name in _PATHS, name
     aria = f' role="img" aria-label="{escape(label, quote=True)}"' if label else ' aria-hidden="true"'
-    return (
-        f'<svg class="icon icon-{name}" width="16" height="16" viewBox="0 0 16 16" fill="none" '
-        f'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"{aria}>'
-        f"{path}</svg>"
+    return f'<svg class="icon icon-{name}" width="16" height="16"{aria}><use href="#icon-{name}"/></svg>'
+
+
+def sprite() -> str:
+    """Every path once, hidden, for the `<use>` references: the first thing in the body."""
+    symbols = "".join(
+        f'<symbol id="icon-{name}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
+        f'stroke-linecap="round" stroke-linejoin="round">{path}</symbol>'
+        for name, path in _PATHS.items()
     )
+    return f'<svg hidden aria-hidden="true">{symbols}</svg>'
 
 
 NAMES = tuple(_PATHS)

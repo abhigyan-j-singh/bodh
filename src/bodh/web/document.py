@@ -102,6 +102,7 @@ class Article(Strict):
     feed: str
     folder: str | None = None
     age_text: str
+    arrived_at: str | None = None  # when BazQux fetched it: the "newest" sort
     judged_at: str | None = None
 
 
@@ -160,6 +161,7 @@ class Verdicts(Strict):
     disagreements_empty: str
     calibration: list[CalibrationRow]
     calibration_sentence: str
+    calibration_empty: str
     near_misses: list[NearMiss]
     near_misses_empty: str
 
@@ -310,6 +312,10 @@ def json_schema() -> dict[str, Any]:
 # -- words for numbers and times -----------------------------------------------------------
 
 
+def plural(count: float, one: str, many: str) -> str:
+    return one if count == 1 else many
+
+
 def n(value: float) -> str:
     return f"{value:,.0f}"
 
@@ -373,6 +379,13 @@ def clock_text(iso: str | None, now: datetime) -> str:
     if days == 1:
         return "yesterday " + local.strftime("%H:%M")
     return local.strftime("%a %-d %b %H:%M")
+
+
+def safe_url(url: Any) -> str:
+    """An article's link as the page may carry it: http(s) or nothing. The document is the
+    page's data, so what a feed put in a URL field is sanitised here, once."""
+    text = str(url or "")
+    return text if text.startswith(("http://", "https://")) else ""
 
 
 def _parse(iso: str | None) -> datetime | None:
@@ -617,42 +630,64 @@ def _count(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> 
     return int(conn.execute(sql, params).fetchone()[0])
 
 
-def _list(cfg: Config, conn: sqlite3.Connection, now: datetime, state: State, mode: str) -> ReadingList:
+def list_rows(
+    cfg: Config,
+    conn: sqlite3.Connection,
+    now: datetime,
+    band: int = LIST_BAND,
+    offset: int = 0,
+    limit: int = LIST_CAP,
+    folder: str | None = None,
+) -> tuple[list[Article], int]:
+    """The unread articles at `band` and above, best first, one page of them and the count of
+    all of them: the list panel, and the console's `/list` for the page's band filter and
+    its "Show 50 more"."""
+    where = "st.status = 'unread' AND s.score >= ? AND s.model != 'dedup'"
+    params: list[Any] = [band]
+    if folder:
+        where += " AND a.folder = ?"
+        params.append(folder)
     rows = conn.execute(
-        """SELECT a.id, a.title, a.url, a.feed_title, a.folder, a.crawled_msec, s.score, s.lesson, s.concept, s.scored_at
+        f"""SELECT a.id, a.title, a.url, a.feed_title, a.folder, a.crawled_msec, s.score, s.lesson, s.concept, s.scored_at
            FROM state st JOIN scores s ON s.article_id = st.article_id JOIN articles a ON a.id = st.article_id
-           WHERE st.status = 'unread' AND s.score >= ? AND s.model != 'dedup'
-           ORDER BY s.score DESC, a.crawled_msec DESC LIMIT ?""",
-        (LIST_BAND, LIST_CAP + 1),
+           WHERE {where} ORDER BY s.score DESC, a.crawled_msec DESC LIMIT ? OFFSET ?""",
+        (*params, limit, offset),
     ).fetchall()
     total = _count(
         conn,
-        "SELECT COUNT(*) FROM state st JOIN scores s ON s.article_id = st.article_id WHERE st.status = 'unread' AND s.score >= ? AND s.model != 'dedup'",
-        (LIST_BAND,),
+        f"SELECT COUNT(*) FROM state st JOIN scores s ON s.article_id = st.article_id JOIN articles a ON a.id = st.article_id WHERE {where}",
+        tuple(params),
     )
+    return [_article(cfg, r, now) for r in rows], total
+
+
+def _list(cfg: Config, conn: sqlite3.Connection, now: datetime, state: State, mode: str) -> ReadingList:
+    articles, total = list_rows(cfg, conn, now, LIST_BAND, 0, LIST_CAP)
     pending = store.unscored_unread_count(
         conn, cfg.judge.prompt_version, cfg.limits.max_age_days, cfg.unjudged_folders(), exclude_inflight=True
     )
-    articles = [_article(cfg, r, now) for r in rows[:LIST_CAP]]
-    folders = sorted({*cfg.folders, *(str(r["folder"]) for r in rows if r["folder"])})
-    waiting = f" {n(pending)} articles are waiting for the judge" if pending else ""
-    next_in = (
-        f"; the next run is in {minutes_text(state.next_run_in_s)}" if state.next_run_in_s is not None else ""
-    )
-    empty_text = (
-        f"Nothing at {LIST_BAND} or above right now.{waiting}{next_in}."
-        if (waiting or next_in)
-        else f"Nothing at {LIST_BAND} or above right now. The next run submits what arrives to the judge; scores arrive within the hour."
+    folders = sorted({*cfg.folders, *(a.folder for a in articles if a.folder)})
+    parts = []
+    if pending:
+        parts.append(f"{n(pending)} {plural(pending, 'article is', 'articles are')} waiting for the judge")
+    if state.next_run_in_s is not None:
+        parts.append(f"the next run is in {minutes_text(state.next_run_in_s)}")
+    empty_text = f"Nothing at {LIST_BAND} or above right now. " + (
+        "; ".join(parts) + "."
+        if parts
+        else "The next run submits what arrives to the judge; scores arrive within the hour."
     )
     lead = (
         f"{n(total)} unread at {LIST_BAND} and above, best first."
         if total
-        else "Nothing to read at 70 or above yet."
+        else f"Nothing to read at {LIST_BAND} or above yet."
     )
+    # the export has no server to ask: only the bands its rows already cover
+    lowest = LIST_BAND if mode == "export" else 50
     return ReadingList(
         lead=lead,
         band=LIST_BAND,
-        bands=[b for b in sorted(cfg.tags.bands, reverse=True) if b >= 50],
+        bands=[b for b in sorted(cfg.tags.bands, reverse=True) if b >= lowest],
         folders=folders,
         articles=articles,
         total=total,
@@ -671,7 +706,7 @@ def _article(cfg: Config, r: sqlite3.Row, now: datetime) -> Article:
     return Article(
         id=str(r["id"]),
         title=str(r["title"] or "(untitled)"),
-        url=str(r["url"] or ""),
+        url=safe_url(r["url"]),
         reader_url=_reader_url(str(r["id"])),
         score=float(r["score"]),
         band=band_of(cfg, float(r["score"])),
@@ -680,6 +715,7 @@ def _article(cfg: Config, r: sqlite3.Row, now: datetime) -> Article:
         feed=str(r["feed_title"] or ""),
         folder=r["folder"],
         age_text=age_text(crawled, now),
+        arrived_at=crawled,
         judged_at=r["scored_at"],
     )
 
@@ -724,7 +760,7 @@ def _disagreements(cfg: Config, conn: sqlite3.Connection, since: str) -> list[Di
         Disagreement(
             id=str(r["id"]),
             title=str(r["title"] or ""),
-            url=str(r["url"] or ""),
+            url=safe_url(r["url"]),
             grade=str(r["kind"]),
             score=float(r["score"]),
             band=band_of(cfg, float(r["score"])),
@@ -745,7 +781,7 @@ def _near_misses(cfg: Config, conn: sqlite3.Connection) -> list[NearMiss]:
         NearMiss(
             id=str(r["id"]),
             title=str(r["title"] or ""),
-            url=str(r["url"] or ""),
+            url=safe_url(r["url"]),
             score=float(r["score"]),
             band=band_of(cfg, float(r["score"])),
             lesson=str(r["lesson"] or ""),
@@ -768,7 +804,8 @@ def _verdicts(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Verdicts:
     calibration = _calibration(cfg, conn)
     near = _near_misses(cfg, conn)
     lead = (
-        f"{total} verdicts in the last 30 days; {len(dis)} disagreements; {len(near)} near misses this week."
+        f"{total} {plural(total, 'verdict', 'verdicts')} in the last 30 days; {len(dis)} {plural(len(dis), 'disagreement', 'disagreements')}; "
+        f"{len(near)} {plural(len(near), 'near miss', 'near misses')} this week."
         if total
         else "Your grades, where you and the judge disagree, how often each band gets read, and the best of what was cut."
     )
@@ -780,6 +817,7 @@ def _verdicts(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Verdicts:
         disagreements_empty="No disagreements in the last 30 days: nothing you graded great or good scored under 50, nothing you graded bad or meh scored 70 or more.",
         calibration=calibration,
         calibration_sentence=_calibration_sentence(calibration),
+        calibration_empty="Nothing has waited a day yet. Once judged articles sit unread for a day, how often each band gets read and starred shows here; a judge that fits you reads high and ignores low.",
         near_misses=near,
         near_misses_empty="Nothing was cut in the last seven days."
         if cfg.autocut.enabled
@@ -860,7 +898,7 @@ def _learning(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Learning:
             concept=c,
             count=len(items),
             items=[
-                Learned(title=str(r["title"] or ""), url=str(r["url"] or ""), lesson=str(r["lesson"]))
+                Learned(title=str(r["title"] or ""), url=safe_url(r["url"]), lesson=str(r["lesson"]))
                 for r in items[:LINES_PER_CONCEPT]
             ],
             more=max(0, len(items) - LINES_PER_CONCEPT),
@@ -875,7 +913,7 @@ def _learning(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Learning:
         CloudItem(concept=c, count=k, frontier=True) for c, k in frontier
     ]
     lead = (
-        f"{len(seen)} articles read or liked this week across {len(grouped)} concepts."
+        f"{len(seen)} {plural(len(seen), 'article', 'articles')} read or liked this week across {len(grouped)} {plural(len(grouped), 'concept', 'concepts')}."
         if seen
         else "Nothing read yet this week. What you read and star in BazQux appears here by concept, with its lesson."
     )
@@ -965,7 +1003,7 @@ def _feeds(cfg: Config, conn: sqlite3.Connection) -> Feeds:
         for r in rows
     ]
     lead = (
-        f"{len(out)} feeds with articles in the last {days} days, most active first."
+        f"{len(out)} {plural(len(out), 'feed', 'feeds')} with articles in the last {days} days, most active first."
         if out
         else "No articles in the last 30 days yet."
     )
@@ -1072,12 +1110,12 @@ def _machinery(cfg: Config, conn: sqlite3.Connection, now: datetime, mode: str) 
         for r in store.last_runs(conn, RUNS_CAP)
     ]
     log_lines: list[str] = []
-    if mode == "console":
+    if mode != "export":
         from .. import logs, progress
 
         log_lines = progress.log_tail(logs.log_file(cfg.root / cfg.data_dir), 10)
     lead = (
-        f"{len(batches)} batch{'es' if len(batches) != 1 else ''} with the model, {len(runs)} recent runs."
+        f"{len(batches)} {plural(len(batches), 'batch', 'batches')} with the model, {len(runs)} recent {plural(len(runs), 'run', 'runs')}."
         if batches
         else f"No batch with the model; {len(runs)} recent runs."
         if runs
@@ -1127,6 +1165,19 @@ def build(
             else None,
         ),
     )
+
+
+def live(
+    cfg: Config, conn: sqlite3.Connection, now: datetime | None = None, with_today: bool = False
+) -> dict[str, Any]:
+    """The slices a progress tick carries: the state (cheap, every tick) and, while a run is
+    in progress, today's tiles, so the page moves without rebuilding the document."""
+    now = now or datetime.now(timezone.utc)
+    state = _state(cfg, conn, now, "console")
+    out: dict[str, Any] = {"as_of": now.isoformat(), "state": state.model_dump()}
+    if with_today or state.running:
+        out["today"] = _today(cfg, conn, now, ZoneInfo(cfg.timezone)).model_dump()
+    return out
 
 
 class Cache:

@@ -145,7 +145,7 @@ def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
     st = _get(base + "/api/status")
     assert st["mode"] == "scoring-only" and st["child"]["running"] is False and st["pile"]["unread"] == 1
     page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
-    assert "bodh console" in page and "/api/action" in page
+    assert 'data-mode="console"' in page and "/api/action" in page and 'data-action="run"' in page
     assert urllib.request.urlopen(base + "/dashboard/index.html", timeout=10).read() == b"<p>dash</p>"
     # a POST without our header is refused (another site's page cannot drive the console)
     code, _ = _post(base + "/api/action", {"action": "undo"}, header=False)
@@ -167,7 +167,7 @@ def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
         time.sleep(0.1)
     assert st["child"]["code"] == 0 and any("judged 3" in line for line in st["child"]["output"])
     # stop interrupts a background command
-    panel.child.start([*panel.command, "sleepy"], cfg.root, panel.env)
+    panel.child.start([*panel.command, "sleepy"], cfg.root, panel.env, shown=["sleepy"])
     time.sleep(0.3)
     code, res = _post(base + "/api/action", {"action": "stop"})
     assert res["ok"] and res["message"] == "stopped"
@@ -426,7 +426,7 @@ def test_console_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
     )
     # the page carries the configured target as the prune default
     page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
-    assert "id='keep' type='number' value='33'" in page
+    assert 'value="33" data-param="keep"' in page
     # status is served from a short cache; an action refreshes it
     first = _get(base + "/api/status")["now"]
     assert _get(base + "/api/status")["now"] == first

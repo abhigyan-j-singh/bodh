@@ -215,8 +215,6 @@ def test_progress_views_render(conn, cfg):
     assert folders["Comics"]["scored"] is False
     text = progress.render_text(snap, width=120)
     assert "judged" in text and "msgbatch_abc" in text and "Comics" in text and "in progress" in text
-    html = progress.render_html(snap)
-    assert "class='prog'" in html and "msgbatch_abc" in html
 
 
 def test_fake_client_tracks_read_state():
@@ -244,10 +242,6 @@ def test_live_file_and_activity(conn, cfg):
         assert snap["running"] and snap["phase"] == "judging" and snap["run_started"]
         text = progress.render_text(snap)
         assert "RUN IN PROGRESS" in text and "judging" in text and "Last 3 h" in text
-        html = progress.render_html(snap)
-        assert (
-            "dot on" in html and "progress.json" in html and "p-spark" in html and "run in progress" in html
-        )
     assert ids and progress.log_tail(cfg.root / "nope.log") == []
 
 

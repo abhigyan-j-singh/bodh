@@ -42,7 +42,7 @@ def test_live_file_never_carries_env_values(conn, cfg, tmp_path, monkeypatch):
         page = dashboard.render(cfg, conn).read_text(encoding="utf-8")
         for secret in (email, "0123abcd-secret-uuid", "abc123token"):
             assert secret not in live.read_text(encoding="utf-8") and secret not in page
-        assert "p-log" not in page
+        assert 'id="log"' not in page  # the export carries no log
     finally:
         _reset_logging()
 

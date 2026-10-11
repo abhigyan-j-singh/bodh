@@ -67,7 +67,9 @@ def test_the_style_guide_shows_every_token_and_component():
     ):
         assert part in page, part
     assert "<style>" in page and "<script>" in page
-    assert 'src="http' not in page and "<link" not in page  # no request to any host; links out are content
+    assert (
+        'src="http' not in page and page.count("<link") == 1 and 'href="data:image/svg+xml' in page
+    )  # no request to any host
     assert 'lang="en"' in page and '<meta name="viewport"' in page and "Skip to the content" in page
 
 
@@ -97,7 +99,11 @@ def test_the_helpers_escape_and_the_sparkline_is_labelled():
     chip = templates.band_chip(92.4, 90)
     assert ">92<" in chip and "band-90" in chip
     grid = templates.grades_grid([("90 and up", [10, 0, 2, 0])], ("great", "good", "meh", "bad"), "c")
-    assert 'class="cell w5">10<' in grid and 'class="cell">0<' in grid and 'class="cell w1">2<' in grid
+    assert (
+        'class="cell w5" data-tip="10 great in 90 and up">10<' in grid
+        and 'class="cell" data-tip="0 good' in grid
+    )
+    assert 'class="cell w1" data-tip="2 meh in 90 and up">2<' in grid
     assert icons.icon("warning", "Warning").count("aria-label") == 1 and 'aria-hidden="true"' in icons.icon(
         "run"
     )

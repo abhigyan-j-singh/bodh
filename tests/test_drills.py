@@ -229,9 +229,7 @@ def test_corrupt_progress_json_still_renders(cfg, conn):
     out.mkdir(parents=True, exist_ok=True)
     (out / "progress.json").write_text('{"unread": 12, "folders": [{"fol', encoding="utf-8")
     dashboard.render(cfg, conn)
-    assert (out / "index.html").exists() and "progress.json" in (out / "index.html").read_text(
-        encoding="utf-8"
-    )
+    assert (out / "index.html").exists() and (out / "data.json").exists()
     snap = progress.snapshot(conn, cfg)
     assert snap["unread"] == 0 and "RUN IN PROGRESS" not in progress.render_text(snap)
     path = progress.write_live(cfg, conn, min_interval=0.0)

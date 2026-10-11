@@ -16,6 +16,11 @@ HERE = Path(__file__).resolve().parent
 STYLESHEET = HERE / "dashboard.css"
 SCRIPT = HERE / "dashboard.js"
 MODES = ("console", "export", "app")
+# the tab's mark: a dot in the accent, inline so the page makes no request for it
+FAVICON = "data:image/svg+xml," + (
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Ccircle cx='8' cy='8' r='6' fill='%23047460'/%3E%3C/svg%3E"
+)
 
 
 def esc(value: Any) -> str:
@@ -38,7 +43,8 @@ def script() -> str:
 
 def page(title: str, body: str, mode: str = "export", theme: str | None = None, extra_head: str = "") -> str:
     """The document: tokens and stylesheet inline (no request to any host), the body, and in
-    the console and the app the script. `theme` stamps `data-theme` for the Mac app."""
+    the console and the app the script; the export is a snapshot and carries none. `theme`
+    stamps `data-theme` for the Mac app."""
     assert mode in MODES
     stamp = f' data-theme="{esc(theme)}"' if theme in ("light", "dark") else ""
     live = f"<script>{script()}</script>" if mode in ("console", "app") else ""
@@ -48,8 +54,9 @@ def page(title: str, body: str, mode: str = "export", theme: str | None = None, 
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<meta name="color-scheme" content="light dark">\n'
         f"<title>{esc(title)}</title>\n"
+        f'<link rel="icon" href="{FAVICON}">\n'
         f"<style>{stylesheet()}</style>\n{extra_head}</head>\n"
-        f'<body class="mode-{mode}">\n{body}\n{live}</body>\n</html>\n'
+        f'<body class="mode-{mode}">\n{icons.sprite()}\n{body}\n{live}</body>\n</html>\n'
     )
 
 
@@ -133,10 +140,10 @@ def grades_grid(rows: list[tuple[str, list[int]]], grades: tuple[str, ...], capt
     body = []
     for band, counts in rows:
         cells = []
-        for n in counts:
+        for grade, n in zip(grades, counts, strict=True):
             step = 0 if not n or not top else max(1, min(5, round(5 * n / top)))
             cls = f"cell w{step}" if step else "cell"
-            cells.append(f'<td class="{cls}">{n:,}</td>')
+            cells.append(f'<td class="{cls}" data-tip="{n:,} {esc(grade)} in {esc(band)}">{n:,}</td>')
         body.append(f'<tr><th scope="row">{esc(band)}</th>{"".join(cells)}</tr>')
     return (
         f'<table class="grid-table"><caption>{esc(caption)}</caption><thead><tr>{head}</tr></thead>'
@@ -260,17 +267,29 @@ def _design_type() -> str:
     )
 
 
-def bars(rows: list[tuple[str, float, float]], first: str, second: str, scale: float = 1.0) -> str:
+def bars(
+    rows: list[tuple[str, float, float]],
+    first: str,
+    second: str,
+    scale: float = 1.0,
+    tips: list[tuple[str, str]] | None = None,
+) -> str:
     """Two shares per row as horizontal bars in one hue and its lighter step, with a legend and
-    direct labels at the bar ends: the calibration chart's form."""
+    direct labels at the bar ends: the calibration chart's form. `tips`, one pair per row, is
+    the hover readout of each bar (the value with its base)."""
     legend = f'<div class="legend"><span class="one"><i></i>{esc(first)}</span><span class="two"><i></i>{esc(second)}</span></div>'
+    tips = tips or [("", "")] * len(rows)
     body = "".join(
         f'<span class="name">{esc(name)}</span><div class="pair">'
-        f'<div class="bar" style="width:{min(100.0, a * scale):.1f}%"><span class="v">{a:.0f}%</span></div>'
-        f'<div class="bar second" style="width:{min(100.0, b * scale):.1f}%"><span class="v">{b:.0f}%</span></div></div>'
-        for name, a, b in rows
+        f'<div class="bar" style="width:{min(100.0, a * scale):.1f}%"{_tip(ta)}><span class="v">{a:.0f}%</span></div>'
+        f'<div class="bar second" style="width:{min(100.0, b * scale):.1f}%"{_tip(tb)}><span class="v">{b:.0f}%</span></div></div>'
+        for (name, a, b), (ta, tb) in zip(rows, tips, strict=True)
     )
     return f'{legend}<div class="bars">{body}</div>'
+
+
+def _tip(text: str) -> str:
+    return f' data-tip="{esc(text)}" tabindex="0"' if text else ""
 
 
 def list_item(
@@ -285,25 +304,18 @@ def list_item(
     article_id: str = "",
 ) -> str:
     """One row of the list: the band chip, the title as the link, the lesson, the meta line
-    (concept, feed, age), a quiet link to the reader, and in the console the verdict buttons."""
+    (concept, feed, age), a quiet link to the reader. `verdicts` names the words of the row's
+    verdict menu; the script builds the buttons (they do nothing without it), so the page
+    carries the words once per row and not eight buttons."""
     parts = [f"<span>{esc(m)}</span>" for m in meta if m]
     if reader_url:
         parts.append(f'<a href="{href(reader_url)}">{icons.icon("link")}BazQux</a>')
     meta_html = "<span>·</span>".join(parts)
-    buttons = (
-        '<div class="verdicts">'
-        + "".join(
-            f'<button type="button" class="button quiet small" data-verdict="{esc(v)}" data-id="{esc(article_id)}">{esc(v)}</button>'
-            for v in verdicts
-        )
-        + "</div>"
-        if verdicts
-        else ""
-    )
+    menu = f' data-verdicts="{esc(" ".join(verdicts))}"' if verdicts else ""
     return (
-        f'<li class="list-row" data-id="{esc(article_id)}">{band_chip(score, band)}'
+        f'<li class="list-row" data-id="{esc(article_id)}"{menu}>{band_chip(score, band)}'
         f'<div class="title"><a href="{href(url)}">{esc(title)}</a></div>'
-        f'<div class="lesson">{esc(lesson)}</div><div class="meta">{meta_html}</div>{buttons}</li>'
+        f'<div class="lesson">{esc(lesson)}</div><div class="meta">{meta_html}</div></li>'
     )
 
 
