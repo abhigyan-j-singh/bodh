@@ -1,7 +1,7 @@
 """A small, hardened client for BazQux Reader's Google Reader-compatible API.
 
-Everything the system does to BazQux goes through here. Rules learned from
-FeedBrain and from BazQux's own API notes (github.com/bazqux/bazqux-api):
+Everything the system does to BazQux goes through here. Rules learned the hard way
+and from BazQux's own API notes (github.com/bazqux/bazqux-api):
 
 - find unread items by paginating ``stream/items/ids`` with ``c``; never ``ot=``
 - contents are a POST of ``i=`` ids with a ``T`` token, 100-250 per request

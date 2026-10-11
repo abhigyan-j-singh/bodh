@@ -1,18 +1,31 @@
-"""Replay: run the teacher over FeedBrain's archive offline, before anything touches
-the live account. A stratified sample by default (random rows are proportional to
-feed volume), plus every archived article you starred, so the eval gate can be
-checked: no starred article may fall below the automatic floor."""
+"""Replay the teacher over an archive from an earlier filtering tool, offline, before anything
+touches the live account. Not part of the package: it depends on another project's database.
+
+The archive expected: a SQLite file with a table `articles` holding `id`, `feed`, `title`,
+`url`, `summary` (HTML), `fetched_at`, `decision` ("keep" or "junk") and `quality`; optionally
+a `golden.jsonl` with lines `{"article_id": ..., "judgment": "star"}` naming the articles
+you starred. A stratified sample by default (random rows are proportional to feed volume),
+plus every starred article, so the eval gate can be checked: no starred article may fall
+below the automatic floor.
+
+    cd <your viveka folder>
+    .venv/bin/python contrib/replay_feedfilter.py --archive /path/to/archive.db [--golden golden.jsonl] [--sample 500]
+
+Costs about a dollar for 500 articles. Touches nothing in BazQux.
+"""
 
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-from . import store
-from .config import Config
-from .teacher import LLM, Teacher, compose, concept_context
+from viveka import store
+from viveka.config import Config, load_config, load_secrets
+from viveka.teacher import LLM, Teacher, compose, concept_context
 
 ARCHIVE_QUERY = """
 SELECT id, feed, title, url, summary, fetched_at, decision, quality AS old_quality
@@ -108,3 +121,35 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     report["path"] = str(out)
     return report
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="judge a sample of an archive offline and check the eval gate")
+    ap.add_argument("--archive", required=True, type=Path)
+    ap.add_argument("--golden", type=Path, default=None)
+    ap.add_argument("--sample", type=int, default=500)
+    ap.add_argument("--workers", type=int, default=None)
+    args = ap.parse_args()
+    if not args.archive.exists():
+        sys.exit(f"archive not found: {args.archive}")
+    cfg = load_config()
+    secrets = load_secrets(cfg.root)
+    conn = store.connect(cfg.db_path)
+    llm = LLM(cfg, secrets, conn)
+    rep = replay(cfg, llm, conn, args.archive, args.golden, sample=args.sample, workers=args.workers or cfg.scoring.workers)
+    if rep["would_cut_share"] is None:
+        print("nothing scored")
+    else:
+        print(f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); floor {rep['floor']}; "
+              f"would cut {rep['would_cut_share']:.0%}")
+    print(f"bands: {rep['bands']}")
+    print(f"starred checked {rep['starred_checked']}; below floor: {len(rep['starred_below_floor'])} "
+          f"-> gate {'PASSED' if rep['gate_passed'] else 'FAILED'}")
+    for t in rep["starred_below_floor"][:10]:
+        print(f"   below floor: {t[:80]}")
+    print(f"archive kept, now below floor: {rep['old_keep_now_below_floor']}; archive junked, now 70+: {rep['old_junk_now_above_70']}")
+    print(f"full report: {rep['path']}")
+
+
+if __name__ == "__main__":
+    main()

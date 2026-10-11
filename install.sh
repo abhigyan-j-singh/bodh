@@ -23,15 +23,8 @@ if [ ! -d .venv ]; then "$PY" -m venv .venv; fi
 
 [ -f config.yaml ] || { cp config.example.yaml config.yaml; echo "created config.yaml (shadow mode on; edit folders, target, floor)"; }
 if [ ! -f .env ]; then
-  if [ -f ../.env ] && grep -q '^BAZQUX_EMAIL=' ../.env; then
-    # reuse FeedBrain's credentials, nothing else
-    { grep -E '^(BAZQUX_EMAIL|BAZQUX_PASSWORD|ANTHROPIC_API_KEY)=' ../.env; echo 'HEALTHCHECK_URL='; } > .env
-    chmod 600 .env
-    echo "created .env from FeedBrain's credentials (HEALTHCHECK_URL left empty; add one from healthchecks.io when ready)"
-  else
-    cp .env.example .env; chmod 600 .env
-    echo "created .env: fill in BAZQUX_EMAIL, BAZQUX_PASSWORD, ANTHROPIC_API_KEY, HEALTHCHECK_URL"
-  fi
+  cp .env.example .env; chmod 600 .env
+  echo "created .env: fill in BAZQUX_EMAIL, BAZQUX_PASSWORD, ANTHROPIC_API_KEY and, when you have one, HEALTHCHECK_URL"
 fi
 mkdir -p data dashboard
 mkdir -p "$HOME/Library/Logs/viveka" 2>/dev/null || true

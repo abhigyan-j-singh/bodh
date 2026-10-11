@@ -14,7 +14,6 @@
     viveka enforce on|off       flip the automatic floor
     viveka want "x" | meh "x"   nudge the learner model now
     viveka weekly | report      Sunday's learner rewrite and note; the monthly feed report
-    viveka replay --archive DB  judge FeedBrain's archive offline before anything goes live
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
 import typer
@@ -711,30 +709,6 @@ def dashboard_cmd(verbose: bool = VERBOSE) -> None:
     """Regenerate the dashboard now."""
     ctx = _ctx(verbose)
     typer.echo(str(dashboard.render(ctx.cfg, ctx.conn)))
-
-
-@app.command()
-def replay(archive: Path = typer.Option(..., "--archive", help="FeedBrain's feedfilter.db"),
-           golden: Path | None = typer.Option(None, "--golden", help="FeedBrain's evals/golden.jsonl"),
-           sample: int = typer.Option(500, "--sample"), workers: int | None = typer.Option(None, "--workers"),
-           verbose: bool = VERBOSE) -> None:
-    """Judge a sample of FeedBrain's archive offline and check the eval gate. Touches nothing live."""
-    from . import replay as replaymod
-
-    ctx = _ctx(verbose)
-    if not archive.exists():
-        _fail(f"archive not found: {archive}")
-    rep = replaymod.replay(ctx.cfg, ctx.llm, ctx.conn, archive, golden, sample=sample,
-                           workers=workers or ctx.cfg.scoring.workers)
-    typer.echo(f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); floor {rep['floor']}; "
-               f"would cut {rep['would_cut_share']:.0%}" if rep["would_cut_share"] is not None else "nothing scored")
-    typer.echo(f"bands: {rep['bands']}")
-    typer.echo(f"starred checked {rep['starred_checked']}; below floor: {len(rep['starred_below_floor'])} "
-               f"→ gate {'PASSED' if rep['gate_passed'] else 'FAILED'}")
-    for t in rep["starred_below_floor"][:10]:
-        typer.echo(f"   below floor: {t[:80]}")
-    typer.echo(f"FeedBrain kept, now below floor: {rep['old_keep_now_below_floor']}; FeedBrain junked, now 70+: {rep['old_junk_now_above_70']}")
-    typer.echo(f"full report: {rep['path']}")
 
 
 def triage_alias() -> None:

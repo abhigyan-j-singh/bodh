@@ -1,4 +1,4 @@
-"""BazQux / Google Reader item ID normalization (carried over from FeedBrain).
+"""BazQux / Google Reader item ID normalization.
 
 Two representations of the same 64-bit id:
   - long form:  ``tag:google.com,2005:reader/item/<16-char zero-padded hex>``
