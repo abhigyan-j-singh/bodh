@@ -141,9 +141,12 @@ class Panel:
         if action in ("schedule_pause", "schedule_resume", "schedule_kick"):
             return {"ok": True, "message": control.schedule(action.split("_", 1)[1], params.get("job", "run"))}
         if action in ("enforce_on", "enforce_off"):
-            msg = control.set_enforce(self.cfg.root, action == "enforce_on")
-            self.cfg.cut.enforce = action == "enforce_on"
-            return {"ok": True, "message": msg}
+            # the file is the truth: the page shows what the next run will read, never a wish
+            ok, msg = control.set_enforce(self.cfg.root, action == "enforce_on")
+            if ok:
+                self._config_mtime = None
+                self._reload_config()
+            return {"ok": ok, "message": msg}
         if action not in ACTIONS:
             return {"ok": False, "message": f"unknown action {action}"}
         args, background = ACTIONS[action]

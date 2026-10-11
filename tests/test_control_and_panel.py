@@ -72,11 +72,14 @@ def test_status_text_and_enforce_flip(conn, cfg):
     assert st["jobs"]["run"]["installed"] is False and st["runs"][0]["summary"] == "unread 2 · judged 2"
     text = control.render_status_text(st)
     assert "idle" in text and "shadow" in text and "unread 2" in text
-    assert "now true" in control.set_enforce(cfg.root, True)
+    ok, msg = control.set_enforce(cfg.root, True)
+    assert ok and "now true" in msg
     assert "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
-    assert "shadow" in control.set_enforce(cfg.root, False)
+    ok, msg = control.set_enforce(cfg.root, False)
+    assert ok and "shadow" in msg
     (cfg.root / "config.yaml").write_text("cut:\n  target_unread: 40\n", encoding="utf-8")
-    assert "no `enforce:`" in control.set_enforce(cfg.root, True)
+    ok, msg = control.set_enforce(cfg.root, True)
+    assert ok and "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     # launchd is not here: states say so instead of failing
     j = control.job_state("com.antriksh.triage")
     assert j["installed"] is False and j["state"] == "not installed"
@@ -217,3 +220,51 @@ def test_installer_covers_every_job():
         assert label in labels, f"{label} is not installed by install-launchd.sh"
         assert (root / "launchd" / f"{label}.plist").exists()
     assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")]).returncode == 0
+
+
+def test_set_enforce_every_yaml_spelling(cfg):
+    """Whatever spelling the file uses, the key under `cut:` is the one edited, comments stay,
+    a missing key is added under `cut:`, and an `enforce:` elsewhere is left alone."""
+    from triage.config import load_config
+
+    path = cfg.root / "config.yaml"
+    for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
+        path.write_text(f"timezone: UTC\ncut:\n  target_unread: 40\n  enforce: {spelling}\n  default_floor: 35\n"
+                        "other:\n  enforce: true\n", encoding="utf-8")
+        for on in (False, True):
+            ok, msg = control.set_enforce(cfg.root, on)
+            assert ok, (spelling, on, msg)
+            text = path.read_text(encoding="utf-8")
+            loaded = load_config(cfg.root)
+            assert loaded.cut.enforce is on and loaded.cut.target_unread == 40 and loaded.cut.default_floor == 35
+            assert "other:\n  enforce: true" in text and "timezone: UTC" in text
+            if "comment" in spelling:
+                assert "# a comment" in text
+    # no enforce line under cut: added there, nothing else moves
+    path.write_text("cut:\n  target_unread: 40\n  folders:\n    Comics: { protected: true }\nother:\n  enforce: true\n",
+                    encoding="utf-8")
+    ok, _ = control.set_enforce(cfg.root, True)
+    assert ok and path.read_text(encoding="utf-8").startswith("cut:\n  enforce: true\n  target_unread: 40\n")
+    assert load_config(cfg.root).cut.folders["Comics"].protected
+    # no cut section at all: one is appended
+    path.write_text("timezone: UTC\n", encoding="utf-8")
+    ok, _ = control.set_enforce(cfg.root, True)
+    assert ok and load_config(cfg.root).cut.enforce is True
+    assert path.read_text(encoding="utf-8") == "timezone: UTC\n\ncut:\n  enforce: true\n"
+    # a shape the line editor cannot handle is refused, and the file is untouched
+    path.write_text("cut: { enforce: false, target_unread: 40 }\n", encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    ok, msg = control.set_enforce(cfg.root, True)
+    assert not ok and "by hand" in msg and path.read_text(encoding="utf-8") == before
+
+
+def test_panel_enforce_lever_fails_closed(conn, cfg, tmp_path):
+    """When the file cannot be edited the page keeps showing the file's truth, not the wish."""
+    (cfg.root / "config.yaml").write_text("cut: { enforce: false }\n", encoding="utf-8")
+    cfg.cut.enforce = False
+    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    res = panel.run_action("enforce_on", {})
+    assert not res["ok"] and panel.cfg.cut.enforce is False
+    (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
+    res = panel.run_action("enforce_on", {})
+    assert res["ok"] and panel.cfg.cut.enforce is True

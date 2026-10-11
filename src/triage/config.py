@@ -86,7 +86,7 @@ class Scoring(BaseModel):
 
 
 class Cut(BaseModel):
-    enforce: bool = True            # false = shadow mode: score and tag, cut nothing
+    enforce: bool = False           # false = shadow mode: score and tag, cut nothing; the safe default
     target_unread: int = 40
     default_floor: int = 35
     max_cuts_per_run: int = 500
@@ -200,24 +200,35 @@ class Secrets(BaseModel):
     healthcheck_url: str = ""
 
 
+class ConfigError(Exception):
+    """No usable config.yaml: nothing runs, nothing is created."""
+
+
 def find_root(start: Path | None = None) -> Path:
-    """The project root: the first ancestor holding config.yaml, else cwd."""
+    """The project root: TRIAGE_HOME, else the first ancestor of the working directory that
+    holds config.yaml. Never a guess: a run in a folder with no config.yaml must not invent
+    one with default folders and floors and start cutting."""
     env_root = os.environ.get("TRIAGE_HOME")
     if env_root:
-        return Path(env_root).expanduser().resolve()
+        root = Path(env_root).expanduser().resolve()
+        if not (root / "config.yaml").exists():
+            raise ConfigError(f"TRIAGE_HOME is {root} but it holds no config.yaml")
+        return root
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
         if (candidate / "config.yaml").exists():
             return candidate
-    return here
+    raise ConfigError(f"no config.yaml in {here} or above it; run from the triage folder, or set TRIAGE_HOME")
 
 
 def load_config(root: Path | None = None) -> Config:
     root = root or find_root()
     path = root / "config.yaml"
-    raw: dict[str, Any] = {}
-    if path.exists():
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not path.exists():
+        raise ConfigError(f"no config.yaml in {root}")
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path} must hold a mapping of sections, not {type(raw).__name__}")
     cfg = Config(**raw)
     cfg.root = root
     (cfg.root / cfg.data_dir).mkdir(parents=True, exist_ok=True)

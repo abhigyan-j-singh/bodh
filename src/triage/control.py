@@ -5,6 +5,7 @@ the control room (`triage panel`)."""
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -16,6 +17,8 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
+
+import yaml
 
 from . import ops, progress, store
 from .config import Config
@@ -189,16 +192,86 @@ def halt(cfg: Config) -> list[str]:
 
 # -- config levers --------------------------------------------------------------
 
-def set_enforce(root: Path, on: bool) -> str:
-    """Flip `cut.enforce` in config.yaml in place, keeping every other line as it is."""
+def set_enforce(root: Path, on: bool) -> tuple[bool, str]:
+    """Flip `cut.enforce` in config.yaml in place, keeping every other line (and every
+    comment) as it is. The key is found under the `cut:` section whatever its spelling
+    (true, True, yes, "false" …), added there when missing, and the result is read back:
+    the edit counts only if the loaded configuration differs in that one value and nothing
+    else. Returns (ok, message)."""
     path = root / "config.yaml"
-    text = path.read_text(encoding="utf-8")
-    new, n = re.subn(r"^(\s*enforce:\s*)(true|false)", lambda m: f"{m.group(1)}{'true' if on else 'false'}", text,
-                     count=1, flags=re.M)
-    if n == 0:
-        return "config.yaml has no `enforce:` line under cut"
-    path.write_text(new, encoding="utf-8")
-    return f"cut.enforce is now {'true: the floor cuts from the next run' if on else 'false: shadow mode, nothing is cut'}"
+    try:
+        text = path.read_text(encoding="utf-8")
+        before = yaml.safe_load(text) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"config.yaml could not be read: {exc}"
+    if not isinstance(before, dict):
+        return False, "config.yaml does not hold a mapping of sections; edit it by hand"
+    new_text = _edit_cut_enforce(text, on)
+    try:
+        after = yaml.safe_load(new_text) or {}
+    except yaml.YAMLError as exc:
+        return False, f"the edit would break config.yaml ({exc}); edit it by hand"
+    expected = copy.deepcopy(before)
+    expected.setdefault("cut", {})
+    if not isinstance(expected["cut"], dict):
+        return False, "the `cut:` section is not a mapping; edit config.yaml by hand"
+    expected["cut"]["enforce"] = on
+    if after != expected:
+        return False, "could not find a place for cut.enforce in config.yaml; edit it by hand"
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"config.yaml could not be written: {exc}"
+    return True, f"cut.enforce is now {'true: the floor cuts from the next run' if on else 'false: shadow mode, nothing is cut'}"
+
+
+_SECTION_RE = re.compile(r"^(\w[\w-]*):\s*(#.*)?$")                      # a top-level `name:` line
+_ENFORCE_RE = re.compile(r"^(?P<indent>\s+)(?P<key>['\"]?enforce['\"]?:)(?P<rest>.*)$")
+
+
+def _edit_cut_enforce(text: str, on: bool) -> str:
+    """The text of config.yaml with cut.enforce set, by lines: the `enforce:` line directly
+    under `cut:` is rewritten (its trailing comment kept), inserted after `cut:` when there is
+    none, or a `cut:` section is appended when there is none."""
+    value = "true" if on else "false"
+    lines = text.splitlines(keepends=True)
+    cut_at = None
+    for i, line in enumerate(lines):
+        m = _SECTION_RE.match(line.rstrip("\n"))
+        if m and m.group(1) == "cut":
+            cut_at = i
+            break
+        if line.startswith("cut:"):
+            return text  # `cut: { ... }` on one line: not a shape to edit blind; the caller's check refuses
+    if cut_at is None:
+        tail = "" if not text or text.endswith("\n") else "\n"
+        return text + f"{tail}\ncut:\n  enforce: {value}\n"
+    end = len(lines)
+    for i in range(cut_at + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped and not stripped.startswith("#") and not lines[i][0].isspace():
+            end = i  # the next top-level key
+            break
+    child_indent = None
+    for i in range(cut_at + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(lines[i]) - len(lines[i].lstrip())
+        if child_indent is None:
+            child_indent = indent
+        m = _ENFORCE_RE.match(lines[i].rstrip("\n"))
+        if m and indent == child_indent:
+            rest = m.group("rest")
+            comment = ""
+            hash_at = rest.find(" #")
+            if hash_at >= 0:
+                comment = rest[hash_at:]
+            lines[i] = f"{m.group('indent')}enforce: {value}{comment}\n"
+            return "".join(lines)
+    indent = " " * (child_indent if child_indent else 2)
+    lines.insert(cut_at + 1, f"{indent}enforce: {value}\n")
+    return "".join(lines)
 
 
 # -- the whole picture ------------------------------------------------------------

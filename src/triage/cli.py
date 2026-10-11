@@ -26,16 +26,30 @@ from pathlib import Path
 import typer
 
 from . import __version__, dashboard, learner, pipeline, report, store
-from .config import load_config, load_secrets
+from .config import Config, ConfigError, load_config, load_secrets
 from .ids import normalize_item_id
 from .ops import AlreadyRunning, RunTimeout, run_lock, setup_logging, time_limit
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
 
+EXIT_CONFIG = 2  # no usable config.yaml
+
+
+def _config() -> Config:
+    """config.yaml, or a one-line refusal: every command but `version` needs it."""
+    try:
+        return load_config()
+    except ConfigError as exc:
+        _fail(str(exc), EXIT_CONFIG)
+        raise  # unreachable; keeps the type checker honest
+    except Exception as exc:  # noqa: BLE001 — a config that does not parse or validate
+        _fail(f"config.yaml does not load: {exc}", EXIT_CONFIG)
+        raise
+
 
 def _ctx(verbose: bool = False) -> pipeline.Context:
-    cfg = load_config()
+    cfg = _config()
     setup_logging(cfg.root / cfg.data_dir, verbose)
     secrets = load_secrets(cfg.root)
     conn = store.connect(cfg.db_path)
@@ -55,11 +69,7 @@ def version() -> None:
 @app.command()
 def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models.")) -> None:
     """Connectivity and configuration checks. Run after every update."""
-    try:
-        cfg = load_config()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"config.yaml does not parse: {exc}")
-        return
+    cfg = _config()
     secrets = load_secrets(cfg.root)
     typer.echo(f"root: {cfg.root}")
     typer.echo(f"models: teacher={cfg.models.teacher} second_look={cfg.models.second_look} learner={cfg.models.learner}"
@@ -170,7 +180,7 @@ def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --e
 
     from . import progress as progressmod
 
-    cfg = load_config()
+    cfg = _config()
     conn = store.connect(cfg.db_path)
     while True:
         text = progressmod.render_text(progressmod.snapshot(conn, cfg))
@@ -351,7 +361,7 @@ def stop() -> None:
     """Stop the run, prune or blast in progress (the same as Ctrl-C in its terminal)."""
     from .ops import stop_process
 
-    cfg = load_config()
+    cfg = _config()
     typer.echo(stop_process(cfg.root / cfg.data_dir))
 
 
@@ -380,7 +390,7 @@ def halt() -> None:
     triage process including the control room. `triage schedule resume` brings the jobs back."""
     from . import control
 
-    cfg = load_config()
+    cfg = _config()
     for line in control.halt(cfg):
         typer.echo(line)
 
@@ -415,8 +425,11 @@ def enforce(state: str = typer.Argument(..., help="on or off")) -> None:
 
     if state not in ("on", "off"):
         _fail("say on or off")
-    cfg = load_config()
-    typer.echo(control.set_enforce(cfg.root, state == "on"))
+    cfg = _config()
+    ok, msg = control.set_enforce(cfg.root, state == "on")
+    if not ok:
+        _fail(msg)
+    typer.echo(msg)
 
 
 @app.command()
