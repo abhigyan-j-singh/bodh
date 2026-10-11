@@ -12,7 +12,7 @@ from typing import Any
 
 from . import cut as cutmod
 from . import dashboard, feedback, progress, store
-from .bazqux import BazQuxClient
+from .bazqux import BazQuxClient, BazQuxError
 from .config import Config, Secrets
 from .learner import expansion_topics
 from .ops import Heartbeat
@@ -100,12 +100,17 @@ def folder_map(client: BazQuxClient) -> dict[str, str | None]:
     return {s.stream_id: (s.folders[0] if s.folders else None) for s in client.subscriptions()}
 
 
-def protected_ids(ctx: Context) -> set[str]:
-    """Members of the Must read smart stream and of protected folders."""
-    ids: set[str] = set(ctx.client.label_ids(ctx.cfg.cut.must_read_stream, unread_only=True))
-    for name, policy in ctx.cfg.cut.folders.items():
-        if policy.protected:
-            ids |= set(ctx.client.label_ids(name, unread_only=True))
+def protected_ids(ctx: Context) -> set[str] | None:
+    """Members of the Must read smart stream and of protected folders, or None when BazQux
+    could not say: nothing may then be cut on that answer, and no protection is withdrawn."""
+    try:
+        ids: set[str] = set(ctx.client.label_ids(ctx.cfg.cut.must_read_stream, unread_only=True, strict=True))
+        for name, policy in ctx.cfg.cut.folders.items():
+            if policy.protected:
+                ids |= set(ctx.client.label_ids(name, unread_only=True, strict=True))
+    except BazQuxError as exc:
+        log.warning("bazqux: could not read the protected streams (%s); nothing is cut this run", exc)
+        return None
     return ids
 
 
@@ -136,13 +141,17 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
     return done
 
 
-def refresh_protection(ctx: Context, protected: set[str], starred: set[str]) -> None:
+def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[str]) -> None:
+    """Mark the unread articles BazQux says are protected (and those in protected folders),
+    and clear the rest. With no answer from BazQux (``protected`` is None) a protection is
+    never withdrawn: the flags from the last good answer stand."""
     rows = ctx.conn.execute("SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
                             "WHERE st.status = 'unread'").fetchall()
-    prot = [r["id"] for r in rows if r["id"] in protected or ctx.cfg.cut.is_protected(r["folder"])]
-    unprot = [r["id"] for r in rows if r["id"] not in set(prot)]
+    prot = {r["id"] for r in rows
+            if (protected is not None and r["id"] in protected) or ctx.cfg.cut.is_protected(r["folder"])}
     store.set_flags(ctx.conn, prot, protected=1)
-    store.set_flags(ctx.conn, unprot, protected=0)
+    if protected is not None:
+        store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in prot], protected=0)
     store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] in starred], starred=1)
 
 
@@ -169,6 +178,9 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
         res.unread_upstream = len(unread_now)
         starred = set(ctx.client.starred_ids())
         protected = protected_ids(ctx)
+        if protected is None and enforce:
+            enforce = False
+            res.notes.append("could not read the Must read stream; nothing cut this run")
 
         res.feedback = feedback.collect(ctx.client, conn, cfg, unread_now, starred)
         phase("fetching new articles")
@@ -418,7 +430,10 @@ def undo_last(ctx: Context) -> tuple[int | None, int]:
 def bankruptcy(ctx: Context, older_than_days: int, dry_run: bool) -> tuple[int, int]:
     run_id = store.begin_run(ctx.conn, "bankruptcy")
     try:
-        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected_ids(ctx),
+        protected = protected_ids(ctx)
+        if protected is None:
+            raise BazQuxError("could not read the Must read stream; bankruptcy refused rather than cut a protected article")
+        candidates, done = cutmod.bankruptcy(ctx.client, ctx.conn, ctx.cfg, older_than_days, protected,
                                              run_id, dry_run=dry_run)
         store.finish_run(ctx.conn, run_id, True, cut_prune=done,
                          summary=f"bankruptcy: {candidates} older than {older_than_days}d, {done} marked read")

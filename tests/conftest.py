@@ -110,8 +110,13 @@ class FakeClient:
     def starred_ids(self):
         return list(self.starred)
 
-    def label_ids(self, name: str, unread_only: bool = False):
-        return list(self.labels.get(name, []))
+    def label_ids(self, name: str, unread_only: bool = False, strict: bool = False):
+        value = self.labels.get(name, [])
+        if isinstance(value, Exception):  # a label BazQux cannot serve right now
+            if strict:
+                raise value
+            return []
+        return list(value)
 
     def tag(self, ids, name):
         self.tagged.append((name, list(ids)))

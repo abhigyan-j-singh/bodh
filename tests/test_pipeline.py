@@ -540,3 +540,31 @@ def test_tripped_breaker_blocks_later_floors_and_shows_in_status(cfg, conn):
     assert cut.reset_breaker(conn)
     res = pipeline.run(ctx, enforce=True)   # nothing newly scored: the share test does not apply; the floor cuts
     assert res.cut_floor == 4
+
+
+def test_must_read_protection_survives_label_failure(cfg, conn):
+    """A failed read of the Must read stream used to clear every protection and let the floor
+    cut a protected article while the run reported ok."""
+    import pytest
+
+    from triage.bazqux import BazQuxError
+
+    cfg.cut.exploration_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk one", "junk two"])
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 1 and client.read[0] == [items[1].id]
+    assert store.article(conn, items[0].id)["protected"] == 1
+    # the stream cannot be read on the next run: the protection stands and nothing is cut
+    client.labels[cfg.cut.must_read_stream] = BazQuxError("HTTP 500 from stream/items/ids")
+    res = pipeline.run(ctx, enforce=True)
+    assert res.ok and res.cut_floor == 0 and len(client.read) == 1
+    assert store.article(conn, items[0].id)["protected"] == 1
+    assert "could not read the Must read stream" in " ".join(res.notes)
+    with pytest.raises(BazQuxError):
+        pipeline.bankruptcy(ctx, 0, dry_run=False)
+    assert len(client.read) == 1 and not store.last_runs(conn, 1)[0]["ok"]
+    # the stream answers again: the article is still protected, and is not cut
+    client.labels[cfg.cut.must_read_stream] = [items[0].id]
+    res = pipeline.run(ctx, enforce=True)
+    assert res.cut_floor == 0 and store.article(conn, items[0].id)["protected"] == 1

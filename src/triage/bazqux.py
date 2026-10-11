@@ -246,11 +246,15 @@ class BazQuxClient:
     def starred_ids(self) -> list[str]:
         return [r.id for r in self.item_refs(STARRED)]
 
-    def label_ids(self, name: str, unread_only: bool = False) -> list[str]:
+    def label_ids(self, name: str, unread_only: bool = False, strict: bool = False) -> list[str]:
+        """The items carrying a tag, folder or smart stream. A label BazQux cannot serve reads
+        as empty (a tag nobody has used yet is the usual case), unless ``strict``: a caller
+        whose decision depends on the answer (which articles are protected) gets the error."""
         try:
             return [r.id for r in self.item_refs(label(name), exclude=READ if unread_only else None)]
         except BazQuxError as exc:
-            # a label that does not exist yet (no article tagged) is not an error
+            if strict:
+                raise
             log.info("bazqux: label %r unavailable (%s); treating as empty", name, exc)
             return []
 
