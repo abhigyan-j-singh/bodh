@@ -314,7 +314,7 @@ class LLM:
     """Anthropic client with cost accounting and a daily budget. Nothing else talks to the API."""
 
     def __init__(self, cfg: Config, secrets: Secrets, conn: sqlite3.Connection) -> None:
-        if not secrets.anthropic_api_key:
+        if not secrets.is_set("anthropic_api_key"):
             raise TeacherError("ANTHROPIC_API_KEY not configured")
         import anthropic
 
@@ -324,7 +324,7 @@ class LLM:
         # same query on one connection can hand each other empty results
         self._lock = threading.Lock()
         self.conn = self._private_connection(cfg, conn)
-        self._client = anthropic.Anthropic(api_key=secrets.anthropic_api_key, max_retries=2, timeout=180.0)
+        self._client = anthropic.Anthropic(api_key=secrets.value("anthropic_api_key"), max_retries=2, timeout=180.0)
         self._format = _output_format()
         # once a model has rejected structured outputs, every later call asks for plain JSON instead;
         # once the API has rejected the 1-hour cache, the default 5-minute cache is used instead

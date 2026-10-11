@@ -90,9 +90,9 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
             typer.echo(f"prompt {name}: ok")
         except Exception as exc:  # noqa: BLE001
             typer.echo(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
-    typer.echo(f"bazqux credentials: {'set' if secrets.bazqux_email and secrets.bazqux_password else 'MISSING'}")
-    typer.echo(f"anthropic key: {'set' if secrets.anthropic_api_key else 'MISSING'}")
-    hb = "set" if secrets.healthcheck_url else "not set (no dead-man's switch)"
+    typer.echo(f"bazqux credentials: {'set' if secrets.is_set('bazqux_email') and secrets.is_set('bazqux_password') else 'MISSING'}")
+    typer.echo(f"anthropic key: {'set' if secrets.is_set('anthropic_api_key') else 'MISSING'}")
+    hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
     conn = store.connect(cfg.db_path)
     typer.echo(f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles)")
@@ -231,9 +231,9 @@ def blast(workers: int = typer.Option(8, "--workers", help="Model calls in fligh
     if pending == 0:
         typer.echo("nothing pending" + ("" if all_ages else " within the scoring window (--all-ages for the rest)"))
         return
-    p_in, p_out = cfg.models.price(judge)
-    if p_in == 0 and p_out == 0:
+    if not cfg.models.has_price(judge):
         _fail(f"no price for {judge} in models.prices_per_mtok; add it to config.yaml first")
+    p_in, p_out = cfg.models.price(judge)
     est = pending * (450 * p_in + 65 * p_out) / 1_000_000 * 1.1   # synchronous, prefix cached
     left = cfg.models.daily_budget_usd - store.spent_since(ctx.conn, store.local_midnight_iso(cfg.timezone))
     need = max(cfg.models.daily_budget_usd, cfg.models.daily_budget_usd - left + est + 1)

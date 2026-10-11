@@ -49,3 +49,55 @@ def test_example_matches_defaults():
     example["cut"].pop("folders")
     default["cut"].pop("folders")
     assert example == default
+
+
+def test_config_rejects_typos_bounds_and_timezone():
+    import pydantic
+
+    for raw in (
+        {"cut": {"targe_unread": 40}},                 # a typo used to load as the default
+        {"cut": {"max_cuts_per_run": -1}},             # cut all but one
+        {"cut": {"target_unread": -1}},                # cut everything
+        {"cut": {"default_floor": 101}},
+        {"cut": {"concept_cap": 1.5}},
+        {"cut": {"folders": {"X": {"auto_cut_below": 200}}}},
+        {"timezone": "Mars/Olympus"},                  # loaded, then every run failed in budget_left
+        {"tags": {"buckets": {}}},
+        {"tags": {"cut": "wrong"}},                    # two tags with one name
+        {"tags": {"great": ""}},
+        {"models": {"batch_discount": 2}},
+        {"models": {"prices_per_mtok": {"m": [1.0]}}},
+        {"scoring": {"batch_size": 0}},
+        {"scoring": {"rejudge_min_score": 120}},
+        {"breakers": {"max_cut_share": 1.2}},
+        {"nonsense": {}},
+    ):
+        with pytest.raises(pydantic.ValidationError):
+            Config(**raw)
+    assert Config(timezone="UTC").timezone == "UTC"
+    assert Config(scoring={"max_age_days": None}).scoring.max_age_days is None
+
+
+def test_secrets_never_appear_in_repr_or_str():
+    from triage.config import Secrets
+
+    s = Secrets(bazqux_email="student@example.com", bazqux_password="hunter2", anthropic_api_key="sk-ant-xyz",
+                healthcheck_url="https://hc-ping.com/uuid-secret")
+    for text in (repr(s), str(s), f"{s!r}", repr(s.bazqux_password), str(s.model_dump())):
+        for secret in ("student@example.com", "hunter2", "sk-ant-xyz", "uuid-secret"):
+            assert secret not in text
+    assert s.value("bazqux_password") == "hunter2" and s.is_set("anthropic_api_key") and not Secrets().is_set("bazqux_email")
+    assert sorted(s.values()) == sorted(["student@example.com", "hunter2", "sk-ant-xyz", "https://hc-ping.com/uuid-secret"])
+
+
+def test_unknown_model_warns_once(caplog):
+    import logging
+
+    from triage.config import Models, _warned_models
+
+    _warned_models.discard("brand-new-model")
+    m = Models()
+    with caplog.at_level(logging.WARNING):
+        m.price("brand-new-model")
+        m.price("brand-new-model")
+    assert caplog.text.count("no price for 'brand-new-model'") == 1

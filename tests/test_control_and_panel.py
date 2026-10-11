@@ -226,22 +226,26 @@ def test_set_enforce_every_yaml_spelling(cfg):
     """Whatever spelling the file uses, the key under `cut:` is the one edited, comments stay,
     a missing key is added under `cut:`, and an `enforce:` elsewhere is left alone."""
     from triage.config import load_config
+    from triage.control import _edit_cut_enforce
 
     path = cfg.root / "config.yaml"
     for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
-        path.write_text(f"timezone: UTC\ncut:\n  target_unread: 40\n  enforce: {spelling}\n  default_floor: 35\n"
-                        "other:\n  enforce: true\n", encoding="utf-8")
+        path.write_text(f"timezone: UTC\n# enforce: not this one\ncut:\n  target_unread: 40\n  enforce: {spelling}\n"
+                        "  default_floor: 35\nbreakers:\n  lowered_floor: 25\n", encoding="utf-8")
         for on in (False, True):
             ok, msg = control.set_enforce(cfg.root, on)
             assert ok, (spelling, on, msg)
             text = path.read_text(encoding="utf-8")
             loaded = load_config(cfg.root)
             assert loaded.cut.enforce is on and loaded.cut.target_unread == 40 and loaded.cut.default_floor == 35
-            assert "other:\n  enforce: true" in text and "timezone: UTC" in text
+            assert "# enforce: not this one" in text and "timezone: UTC" in text and "lowered_floor: 25" in text
             if "comment" in spelling:
                 assert "# a comment" in text
+    # an enforce key under another section is never the one edited (text level: the loader forbids it)
+    text = "other:\n  enforce: true\ncut:\n  target_unread: 40\n"
+    assert _edit_cut_enforce(text, False) == "other:\n  enforce: true\ncut:\n  enforce: false\n  target_unread: 40\n"
     # no enforce line under cut: added there, nothing else moves
-    path.write_text("cut:\n  target_unread: 40\n  folders:\n    Comics: { protected: true }\nother:\n  enforce: true\n",
+    path.write_text("cut:\n  target_unread: 40\n  folders:\n    Comics: { protected: true }\nbreakers:\n  lowered_floor: 25\n",
                     encoding="utf-8")
     ok, _ = control.set_enforce(cfg.root, True)
     assert ok and path.read_text(encoding="utf-8").startswith("cut:\n  enforce: true\n  target_unread: 40\n")

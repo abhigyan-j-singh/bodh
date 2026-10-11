@@ -77,12 +77,12 @@ class Context:
         self.conn = conn
         self._client: BazQuxClient | None = None
         self._llm: LLM | None = None
-        self.heartbeat = Heartbeat(secrets.healthcheck_url)
+        self.heartbeat = Heartbeat(secrets.value("healthcheck_url"))
 
     @property
     def client(self) -> BazQuxClient:
         if self._client is None:
-            self._client = BazQuxClient(self.secrets.bazqux_email, self.secrets.bazqux_password)
+            self._client = BazQuxClient(self.secrets.value("bazqux_email"), self.secrets.value("bazqux_password"))
         return self._client
 
     @property

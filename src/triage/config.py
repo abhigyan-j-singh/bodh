@@ -3,30 +3,40 @@ a run refuses to do anything with a broken config."""
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+log = logging.getLogger(__name__)
 
 
-class FolderPolicy(BaseModel):
+class Strict(BaseModel):
+    """Every section: a key that is not known is a typo, and a typo must not load as a default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FolderPolicy(Strict):
     protected: bool = False
-    auto_cut_below: int | None = None
+    auto_cut_below: int | None = Field(default=None, ge=0, le=100)
     score: bool = True              # false: never sent to the teacher, never cut (comics, say)
 
 
-class Models(BaseModel):
+class Models(Strict):
     teacher: str = "claude-sonnet-5-5"
     second_look: str = "claude-opus-5-5"
     learner: str = "claude-opus-5-5"
     batch: bool = True              # Message Batches API: half price; judgments arrive on the next run
-    batch_discount: float = 0.5
+    batch_discount: float = Field(default=0.5, ge=0.0, le=1.0)
     cache_ttl: str = "1h"           # "5m" or "1h": how long the teacher's cached prefix stays warm between runs
-    daily_budget_usd: float = 8.0
-    est_usd_per_article: float = 0.001   # the budget check before a batch is submitted, before its usage is known
+    daily_budget_usd: float = Field(default=8.0, ge=0.0)
+    est_usd_per_article: float = Field(default=0.001, ge=0.0)   # the budget check before a batch is submitted
     prices_per_mtok: dict[str, list[float]] = Field(
         default_factory=lambda: {
             "claude-sonnet-5-5": [2.0, 10.0, 0.10],
@@ -43,38 +53,70 @@ class Models(BaseModel):
             raise ValueError("models.cache_ttl must be '5m' or '1h'")
         return v
 
+    @field_validator("prices_per_mtok")
+    @classmethod
+    def _prices(cls, v: dict[str, list[float]]) -> dict[str, list[float]]:
+        for model, val in v.items():
+            if len(val) not in (2, 3) or any(x < 0 for x in val):
+                raise ValueError(f"models.prices_per_mtok.{model} must be [input, output] or [input, output, cache read], "
+                                 "USD per million tokens")
+        return v
+
+    def _entry(self, model: str) -> list[float] | None:
+        for key, val in self.prices_per_mtok.items():
+            if model.startswith(key):
+                return val
+        return None
+
+    def has_price(self, model: str) -> bool:
+        return self._entry(model) is not None
+
+    def _priced_as(self, model: str) -> list[float]:
+        """The price list for a model; an unknown model is charged as the most expensive known
+        one, so a renamed or new model never slips past the daily budget at $0."""
+        entry = self._entry(model)
+        if entry is not None:
+            return entry
+        if not self.prices_per_mtok:
+            return [0.0, 0.0, 0.0]
+        dearest = max(self.prices_per_mtok.values(), key=lambda val: (val[0], val[1]))
+        if model not in _warned_models:
+            _warned_models.add(model)
+            log.warning("models: no price for %r in models.prices_per_mtok; charging it as the most expensive known "
+                        "model (%s) until one is added", model, dearest)
+        return dearest
+
     def price(self, model: str) -> tuple[float, float]:
         """(input, output) USD per million tokens."""
-        for key, val in self.prices_per_mtok.items():
-            if model.startswith(key) and len(val) >= 2:
-                return float(val[0]), float(val[1])
-        return 0.0, 0.0
+        val = self._priced_as(model)
+        return float(val[0]), float(val[1])
 
     def cache_read_price(self, model: str) -> float:
         """USD per million cached input tokens read; the third list entry, else a tenth of input.
         Cache writes follow the published multipliers: 1.25x input (5 minutes), 2x (1 hour)."""
-        for key, val in self.prices_per_mtok.items():
-            if model.startswith(key) and len(val) >= 2:
-                return float(val[2]) if len(val) >= 3 else float(val[0]) * 0.1
-        return 0.0
+        val = self._priced_as(model)
+        return float(val[2]) if len(val) >= 3 else float(val[0]) * 0.1
 
 
-class Scoring(BaseModel):
+_warned_models: set[str] = set()
+
+
+class Scoring(Strict):
     prompt_version: str = "teacher.v2"
     weights: dict[str, float] = Field(
         default_factory=lambda: {"quality": 0.30, "learning": 0.30, "fit": 0.15, "breadth": 0.15, "relevance": 0.10}
     )
-    expansion_bonus: int = 10
-    batch_size: int = 20             # articles per teacher call
-    workers: int = 4                 # synchronous runs: teacher calls and second looks in flight at once
-    max_per_run: int = 400           # synchronous runs: a backlog drains at this rate per run
-    batch_max_per_run: int = 1200    # batch runs: articles submitted per run
-    max_age_days: int | None = 14    # older unread articles are never scored; `triage bankruptcy` is for them
-    rejudge_min_score: float | None = 50.0   # an article judged by another model (a blast with a faster one, say)
-                                             # scoring at least this is judged again by the teacher
-    opening_chars: int = 1200
-    second_look_window: int = 10
-    second_look_chars: int = 6000
+    expansion_bonus: int = Field(default=10, ge=0, le=100)
+    batch_size: int = Field(default=20, ge=1, le=100)        # articles per teacher call
+    workers: int = Field(default=4, ge=1, le=64)             # synchronous runs: calls in flight at once
+    max_per_run: int = Field(default=400, ge=0)              # synchronous runs: a backlog drains at this rate per run
+    batch_max_per_run: int = Field(default=1200, ge=0)       # batch runs: articles submitted per run
+    max_age_days: int | None = Field(default=14, ge=0)       # older unread articles are never scored
+    rejudge_min_score: float | None = Field(default=50.0, ge=0, le=100)  # another model's judgment at or above
+                                                                         # this is judged again by the teacher
+    opening_chars: int = Field(default=1200, ge=100)
+    second_look_window: int = Field(default=10, ge=0, le=100)
+    second_look_chars: int = Field(default=6000, ge=100)
 
     @field_validator("weights")
     @classmethod
@@ -85,14 +127,14 @@ class Scoring(BaseModel):
         return v
 
 
-class Cut(BaseModel):
+class Cut(Strict):
     enforce: bool = False           # false = shadow mode: score and tag, cut nothing; the safe default
-    target_unread: int = 40
-    default_floor: int = 35
-    max_cuts_per_run: int = 500
-    concept_cap: float = 0.25
-    exploration_share: float = 0.20
-    must_read_stream: str = "Must read"
+    target_unread: int = Field(default=40, ge=0)
+    default_floor: int = Field(default=35, ge=0, le=100)
+    max_cuts_per_run: int = Field(default=500, ge=0)
+    concept_cap: float = Field(default=0.25, ge=0.0, le=1.0)
+    exploration_share: float = Field(default=0.20, ge=0.0, le=1.0)
+    must_read_stream: str = Field(default="Must read", min_length=1)
     folders: dict[str, FolderPolicy] = Field(default_factory=dict)
 
     def floor_for(self, folder: str | None) -> int | None:
@@ -113,7 +155,7 @@ class Cut(BaseModel):
         return [name for name, policy in self.folders.items() if not policy.score]
 
 
-class Tags(BaseModel):
+class Tags(Strict):
     buckets: dict[int, str] = Field(
         default_factory=lambda: {90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0"}
     )
@@ -131,6 +173,18 @@ class Tags(BaseModel):
     more: str = "more"               # more of this article's concept, from the next run
     less: str = "less"               # less of it
 
+    @model_validator(mode="after")
+    def _distinct(self) -> Tags:
+        if not self.buckets:
+            raise ValueError("tags.buckets must name at least one bucket")
+        names = [*self.buckets.values(), self.cut, self.wrong, self.prune, *self.verdict_tags().values()]
+        if any(not n or not n.strip() for n in names):
+            raise ValueError("every tag name must be non-empty")
+        if len(set(names)) != len(names):
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            raise ValueError(f"tag names must be distinct; used more than once: {dupes}")
+        return self
+
     def verdict_tags(self) -> dict[str, str]:
         """feedback kind -> tag name, for the tags that carry an opinion."""
         return {k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")}
@@ -142,19 +196,19 @@ class Tags(BaseModel):
         return self.buckets[min(self.buckets)]
 
 
-class Breakers(BaseModel):
-    max_cut_share: float = 0.95
-    min_new_for_breaker: int = 50
-    rescue_rate_week: float = 0.05
-    lowered_floor: int = 25
-    bulk_dismiss_threshold: int = 30
+class Breakers(Strict):
+    max_cut_share: float = Field(default=0.95, ge=0.0, le=1.0)
+    min_new_for_breaker: int = Field(default=50, ge=1)
+    rescue_rate_week: float = Field(default=0.05, ge=0.0, le=1.0)
+    lowered_floor: int = Field(default=25, ge=0, le=100)
+    bulk_dismiss_threshold: int = Field(default=30, ge=1)
 
 
-class Feedback(BaseModel):
-    concept_window_days: int = 90
+class Feedback(Strict):
+    concept_window_days: int = Field(default=90, ge=1)
 
 
-class Config(BaseModel):
+class Config(Strict):
     timezone: str = "Asia/Kolkata"
     data_dir: Path = Path("./data")
     profile_dir: Path = Path("./profile")
@@ -169,6 +223,15 @@ class Config(BaseModel):
 
     # populated by load_config
     root: Path = Path(".")
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (KeyError, ValueError, OSError) as exc:  # ZoneInfoNotFoundError is a KeyError
+            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Asia/Kolkata' say)") from exc
+        return v
 
     @property
     def db_path(self) -> Path:
@@ -194,15 +257,24 @@ class Config(BaseModel):
 
 
 class Secrets(BaseModel):
-    bazqux_email: str = ""
-    bazqux_password: str = ""
-    anthropic_api_key: str = ""
-    healthcheck_url: str = ""
+    """The values from .env. SecretStr: a repr, a str, an assertion message or a log line with
+    %r in it shows '**********', never the value; code that needs one asks for it by name."""
+
+    bazqux_email: SecretStr = SecretStr("")
+    bazqux_password: SecretStr = SecretStr("")
+    anthropic_api_key: SecretStr = SecretStr("")
+    healthcheck_url: SecretStr = SecretStr("")
+
+    def value(self, name: str) -> str:
+        return getattr(self, name).get_secret_value()
+
+    def is_set(self, name: str) -> bool:
+        return bool(self.value(name))
 
     def values(self) -> list[str]:
         """The non-empty values, for the log redactor; never for printing."""
-        return [v for v in (self.bazqux_email, self.bazqux_password, self.anthropic_api_key, self.healthcheck_url)
-                if v]
+        return [v for v in (self.value(n) for n in ("bazqux_email", "bazqux_password", "anthropic_api_key",
+                                                    "healthcheck_url")) if v]
 
 
 class ConfigError(Exception):

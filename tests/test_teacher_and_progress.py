@@ -73,7 +73,12 @@ def test_cost_accounting_with_cache_tiers_and_batch_discount(cfg, conn):
     # an older SDK without the breakdown: the total write is priced by the configured ttl
     _, usd1h = llm._cost("claude-sonnet-5-5", U(cache_creation_input_tokens=1_000_000))
     assert abs(usd1h - 4.0) < 1e-6
-    assert cfg.models.price("claude-opus-5-5") == (4.0, 20.0) and cfg.models.price("nope") == (0.0, 0.0)
+    assert cfg.models.price("claude-opus-5-5") == (4.0, 20.0)
+    # an unknown model is never free: it is charged as the dearest known one until a price is added
+    assert not cfg.models.has_price("nope") and cfg.models.price("nope") == (4.0, 20.0)
+    assert cfg.models.cache_read_price("nope") == 0.2
+    _, unknown = llm._cost("nope", U(input_tokens=1_000_000))
+    assert abs(unknown - 4.0) < 1e-6
     assert cfg.models.cache_read_price("claude-haiku-5-5") == 0.01
     cfg.models.prices_per_mtok["old-style"] = [2.0, 10.0]
     assert abs(cfg.models.cache_read_price("old-style") - 0.2) < 1e-9
