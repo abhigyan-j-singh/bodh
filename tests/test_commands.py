@@ -676,7 +676,14 @@ def test_upgrade_channel_detection(monkeypatch):
     assert upgrade.channel("/opt/homebrew/Cellar/bodh/1.0.0/libexec/bin/python").name == "brew"
     assert upgrade.channel("/x/python", frozen=True).command is None
     here = upgrade.channel(sys.executable)
-    assert here.name == "checkout" and here.command[:3] == ["git", "-C", str(upgrade.PACKAGE_DIR.parents[1])]
+    if (upgrade.PACKAGE_DIR.parents[1] / ".git").exists():  # a checkout; an exported tree reads as pip
+        assert here.name == "checkout" and here.command[:3] == [
+            "git",
+            "-C",
+            str(upgrade.PACKAGE_DIR.parents[1]),
+        ]
+    else:
+        assert here.name == "pip"
     monkeypatch.setattr(upgrade, "PACKAGE_DIR", Path("/usr/lib/python3/site-packages/bodh"))
     assert upgrade.channel("/usr/bin/python3").command == [
         "/usr/bin/python3",
