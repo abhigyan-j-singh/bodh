@@ -20,7 +20,6 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -173,7 +172,7 @@ class Console:
         """One more page of the list, rendered as the page renders rows."""
         self._reload_config()
         with self.db_lock:
-            rows, total = document.list_rows(self.cfg, self.conn, datetime.now(timezone.utc), band, offset)
+            rows, total = document.list_rows(self.cfg, self.conn, document.local_now(self.cfg), band, offset)
         verdicts = (*document.GRADES, "basic", "heavy", "more", "less")
         return {
             "rows": panels.list_rows_html(rows, verdicts),

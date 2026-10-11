@@ -1,7 +1,7 @@
 # The checks a change must pass: `make check` runs the lot; CI runs the same, plus `coverage`,
 # `perf` on Linux and `audit`.
 PY ?= .venv/bin
-.PHONY: check lint format types test coverage perf audit install
+.PHONY: check lint format types test coverage perf browser audit install
 
 check: lint types test
 
@@ -25,6 +25,9 @@ coverage:  # the whole package, then the gate CI applies: 85% on the core module
 
 perf:  # the 50,000-article timings (a fixture is built in a temporary folder; ten seconds)
 	BODH_PERF=1 $(PY)/pytest -q tests/test_perf.py -s
+
+browser:  # the page in Chromium: the visual baselines, the keyboard order, the live layer (needs playwright)
+	BODH_BROWSER=1 $(PY)/pytest -q tests/visual
 
 audit:
 	$(PY)/pip-audit --progress-spinner off

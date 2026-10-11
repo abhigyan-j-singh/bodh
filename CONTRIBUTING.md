@@ -12,9 +12,16 @@ python -m pip install -e ".[dev]"
 make check        # ruff, ruff format --check, mypy --strict, the suite (what CI runs on every push)
 make coverage     # the suite with coverage, and the gate: 85% on store, cutting, feedback, judgment, run, config
 make perf         # the 50,000-article timings (BODH_PERF=1); CI runs them on Linux
+make browser      # the page in Chromium (BODH_BROWSER=1): screenshots against tests/visual/baseline, keyboard order, the live layer
 make audit        # pip-audit over the installed dependencies
 pre-commit install
 ```
+
+The browser tests need Playwright (`pip install -e ".[browser]"` then `playwright install
+chromium`, or `BODH_CHROMIUM=/path/to/chrome` to use one already installed). A change to the
+page is reviewed with its screenshots: `BODH_VISUAL_UPDATE=1 make browser` rewrites the
+baselines, and the diff of `tests/visual/baseline/` goes in the pull request. `python
+scripts/screenshots.py` regenerates `docs/images/` for the README from the same fixture.
 
 A change is ready when `make check` is green on Python 3.10 and 3.13, the new behaviour has a
 test, and `CHANGELOG.md` says what a user would notice. No test may use the network, the wall

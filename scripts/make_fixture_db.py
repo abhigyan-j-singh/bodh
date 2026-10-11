@@ -82,16 +82,17 @@ def _band(score: float) -> str:
     return BANDS[0]
 
 
-def build(path: Path, n: int = 50_000, seed: int = 7) -> Path:
-    """Write the fixture to `path` (replaced if it exists). Returns the path."""
+def build(path: Path, n: int = 50_000, seed: int = 7, now: datetime | None = None) -> Path:
+    """Write the fixture to `path` (replaced if it exists). Returns the path. `now` fixes the
+    clock everything is dated from, so the visual tests' screenshots are the same every day."""
     if path.exists():
         path.unlink()
     rng = random.Random(seed)
     conn = store.connect(path)
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     concepts = [f"{rng.choice(WORDS)} {rng.choice(WORDS)}" for _ in range(300)]
     runs: list[tuple] = []
-    for i in range(60 * 48):  # a run every thirty minutes for sixty days
+    for i in reversed(range(60 * 48)):  # a run every thirty minutes for sixty days, oldest first
         at = now - timedelta(minutes=30 * i)
         runs.append(
             (

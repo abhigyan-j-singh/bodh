@@ -82,7 +82,8 @@
   /* -- state ----------------------------------------------------------------------------- */
   .state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
   .state .line { font-size: var(--size-17); }
-  .notice { min-height: var(--space-4); margin-top: var(--space-2); color: var(--text-secondary); max-width: var(--column-prose); }
+  .notice { margin-top: var(--space-2); color: var(--text-secondary); max-width: var(--column-prose); }
+  .notice:empty { display: none; }
   .notice.failed { color: var(--critical); }
   .more { margin-top: var(--space-2); }
   .more .actions { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) 0 var(--space-1); }

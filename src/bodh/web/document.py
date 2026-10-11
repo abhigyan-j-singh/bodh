@@ -509,7 +509,7 @@ def _attention(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Attentio
             key="safety",
             level="critical",
             word="The safety limit tripped",
-            text=f"Run {tripped} would have cut nearly everything newly judged; autocut cuts nothing until `bodh safety reset`.",
+            text=f"Run {tripped} would have cut nearly everything newly judged; autocut cuts nothing until you run bodh safety reset.",
         )
     if last and not last["ok"] and last.get("error") and last["kind"] in ("run", "weekly", "catch-up"):
         error = str(last["error"])
@@ -608,18 +608,21 @@ def _today(cfg: Config, conn: sqlite3.Connection, now: datetime, tz: ZoneInfo) -
 def _tile(key: str, label: str, series: list[float], up: str, down: str, money: bool = False) -> Tile:
     value, before = series[-1], series[-2]
     delta = value - before
-    if money:
-        text, dtext = usd(value), (f"{'+' if delta >= 0 else '−'}{usd(abs(delta))} vs yesterday")
-    else:
-        text, dtext = n(value), (f"{'+' if delta >= 0 else '−'}{n(abs(delta))} vs yesterday")
+    sign = "+" if delta >= 0 else "−"
+    text, dtext = (
+        (usd(value), f"{sign}{usd(abs(delta))} vs yesterday")
+        if money
+        else (n(value), f"{sign}{n(abs(delta))} vs yesterday")
+    )
     direction = (up if delta > 0 else down if delta < 0 else "") if (up or down) else ""
+    quiet = not value and not before  # two empty days say nothing against each other
     return Tile(
         key=key,
         label=label,
         value=value,
         text=text,
-        delta=delta,
-        delta_text=dtext,
+        delta=None if quiet else delta,
+        delta_text="" if quiet else dtext,
         direction=direction,
         series=series,
         series_label=f"{label.split(maxsplit=1)[0].lower()}, last seven days",
@@ -749,7 +752,8 @@ def _grid(cfg: Config, conn: sqlite3.Connection, since: str) -> tuple[list[GridR
     elif liked and liked_high / liked >= 0.7:
         sentence = f"Your great and good fall mostly in the 70+ bands ({liked_high} of {liked}): the judge is calibrated to you."
     elif liked:
-        sentence = f"Only {liked_high} of your {liked} great and good are in the 70+ bands: the judge rates what you like lower than you do. Keep tagging; Sunday's rewrite reads these."
+        count = "None" if not liked_high else f"Only {liked_high}"
+        sentence = f"{count} of your {liked} great and good {'is' if liked == 1 else 'are'} in the 70+ bands: the judge rates what you like lower than you do. Keep tagging; Sunday's rewrite reads these."
     else:
         sentence = f"{total} verdicts, none of them great or good yet."
     return grid, sentence, total
@@ -1134,13 +1138,19 @@ def _machinery(cfg: Config, conn: sqlite3.Connection, now: datetime, mode: str) 
 # -- the document ---------------------------------------------------------------------------
 
 
+def local_now(cfg: Config, now: datetime | None = None) -> datetime:
+    """The instant the page is dated from, in the reader's zone, so every time printed from it
+    (the stamp, "yesterday 09:10", "Mon 6 Oct") reads in that zone."""
+    return (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(cfg.timezone))
+
+
 def build(
     cfg: Config, conn: sqlite3.Connection, mode: str = "console", now: datetime | None = None
 ) -> DashboardDocument:
     """Every panel from the store, in page order. `mode` only decides what the document
     carries (the levers, the verdict menu and the log are console and app matters)."""
     tz = ZoneInfo(cfg.timezone)
-    now = now or datetime.now(timezone.utc)
+    now = local_now(cfg, now)
     state = _state(cfg, conn, now, mode)
     return DashboardDocument(
         schema=SCHEMA,
@@ -1172,7 +1182,7 @@ def live(
 ) -> dict[str, Any]:
     """The slices a progress tick carries: the state (cheap, every tick) and, while a run is
     in progress, today's tiles, so the page moves without rebuilding the document."""
-    now = now or datetime.now(timezone.utc)
+    now = local_now(cfg, now)
     state = _state(cfg, conn, now, "console")
     out: dict[str, Any] = {"as_of": now.isoformat(), "state": state.model_dump()}
     if with_today or state.running:

@@ -55,7 +55,8 @@
     stale = missed;
     if (stamp) stamp.classList.toggle('stale', stale);
     const line = $('#state-line');
-    if (line) line.textContent = stale ? 'The console is not answering; the numbers are from ' + ago(Date.now() - asOf) + '.' : sentence;
+    const at = isNaN(asOf) ? '' : new Date(asOf).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (line) line.textContent = stale ? 'The console is not answering; the numbers are as of ' + at + '.' : sentence;
   }
   setInterval(clock, 1000); clock();
 

@@ -70,7 +70,7 @@ Loading (the server renders every panel, so the first paint is the page; no skel
 refreshing (the previous render is held and nodes are swapped in place; a changed number
 carries a wash that fades, off under Reduce Motion), stale (the "updated … ago" stamp turns to
 the warning colour after two missed heartbeats and the state line says the console is not
-answering and how old the numbers are; the render stays at full opacity, it is still true),
+answering and the time the numbers are from; the render stays at full opacity, it is still true),
 empty (a sentence that says what will appear and what causes it, per part), error (the
 engine's own sentence in the notice line and the one action that helps), offline (the static
 export marks its time and that it is a snapshot). Each is on the `/design` page and in the

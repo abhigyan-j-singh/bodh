@@ -26,3 +26,6 @@ dist/
 *.log
 *.bak*
 .DS_Store
+
+# the browser tests' latest screenshots (the baselines beside them are committed)
+tests/visual/out/

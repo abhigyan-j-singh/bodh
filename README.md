@@ -243,6 +243,8 @@ by launchd. Open `http://127.0.0.1:8766` on the Mac. For the iPhone, publish it 
 tailscale serve --bg 8766         # then https://<your-mac>.<tailnet>.ts.net
 ```
 
+![The console: the state line and the levers, what happened today, the reading list](docs/images/page-1280-light.png)
+
 The page is the dashboard with the levers on top: the state line (idle and the next run, or
 "Judging 240 of 1,200 · 90 a minute · about 11 min left" with a meter), the mode as a chip, Run
 now, Stop and Pause, one attention banner when something needs you, and under "More actions" the
@@ -290,6 +292,8 @@ written beside it as `data.json`; `progress.json` (`docs/json.md`) is rewritten 
 as it goes. The log stays out of the export (it may be published); the console and `bodh progress`
 show it. On the Mac and on the phone over Tailscale the console (above) is the live version of the
 same page.
+
+<img src="docs/images/page-390-light.png" alt="The page on a phone, 390 px wide, light" width="195"> <img src="docs/images/page-390-dark.png" alt="The page on a phone, 390 px wide, dark" width="195">
 
 Six sections, each the question it answers: **What happened today** (unread now against the target;
 judged, cut, read and spend today, each against yesterday with a seven-day sparkline), **What to

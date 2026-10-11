@@ -220,7 +220,7 @@ def article_list(doc: DashboardDocument, mode: str) -> str:
         ).replace('<li class="list-row"', f'<li class="list-row" {row_attrs(a)}', 1)
         for a in lst.articles
     )
-    inner = filters + (f'<ul class="list" id="list-rows">{rows}</ul>' if rows else empty(lst.empty_text))
+    inner = filters + f'<ul class="list" id="list-rows">{rows}</ul>' if rows else empty(lst.empty_text)
     if lst.total > len(lst.articles):
         rest = (
             '<button type="button" class="button quiet js-only" data-action="list_more">Show 50 more</button>'
@@ -466,7 +466,7 @@ def _columns(m: object) -> str:
     days = m.days
     top_usd = max(*(d.usd for d in days), 0.01)
     budget_fits = m.budget_usd <= top_usd * 1.6
-    peak = (max(top_usd, m.budget_usd) if budget_fits else top_usd) * 1.12
+    peak = _nice_top((max(top_usd, m.budget_usd) if budget_fits else top_usd) * 1.12)
     inner_w, inner_h = w - left - 8, h - top - bottom
     step = inner_w / len(days)
     bar_w = min(20, step - 2)
@@ -489,7 +489,11 @@ def _columns(m: object) -> str:
         y = y_of(d.usd)
         label = ""
         if d is top_day or i == len(days) - 1:
-            label = f'<text x="{x + bar_w / 2:.1f}" y="{y - 4:.1f}" text-anchor="middle">${d.usd:.2f}</text>'
+            anchor = (
+                "end" if i == len(days) - 1 else "start" if i == 0 else "middle"
+            )  # never clipped at an edge
+            lx = x + bar_w if anchor == "end" else x if anchor == "start" else x + bar_w / 2
+            label = f'<text x="{lx:.1f}" y="{y - 4:.1f}" text-anchor="{anchor}">${d.usd:.2f}</text>'
         cols.append(
             f'<g class="col-group"><rect class="col" tabindex="0" x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{max(0.0, top + inner_h - y):.1f}" rx="2" '
             f'data-tip="{esc(usd(d.usd))} · {esc(d.label)}"><title>{esc(usd(d.usd))} · {esc(d.label)}</title></rect>{label}</g>'
@@ -508,6 +512,18 @@ def _columns(m: object) -> str:
         f'<svg class="columns" viewBox="0 0 {w} {h}" role="img" aria-label="Spend per day, last 30 days: {esc(m.chart_title)}">'
         f'{grid}{ticks}<line class="axis" x1="{left}" x2="{w - 8}" y1="{top + inner_h}" y2="{top + inner_h}"/>{"".join(cols)}{ref}{axis_labels}</svg>'
     )
+
+
+def _nice_top(value: float) -> float:
+    """The top of the axis: four grid steps of a round size (0.1, 0.2, 0.25, 0.3, 0.5, 1, 2 …)."""
+    import math
+
+    raw = max(value, 1e-6) / 4
+    unit = float(10 ** math.floor(math.log10(raw)))
+    for factor in (1.0, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0):
+        if unit * factor >= raw - 1e-12:
+            return unit * factor * 4
+    return unit * 40
 
 
 def machinery(doc: DashboardDocument, mode: str) -> str:
@@ -555,7 +571,7 @@ def machinery(doc: DashboardDocument, mode: str) -> str:
         log = f'<h3 style="margin-top: var(--space-5)">The log</h3><pre class="log" id="log">{lines}</pre><p class="js-only"><button type="button" class="button quiet" data-action="log_more">Show 200 lines</button></p>'
     return (
         f'<div id="machinery" style="margin-top: var(--space-5)"><h3>Batches with the model</h3>'
-        f'<p class="secondary small">{esc(mc.lead)}</p>{batches}<h3 style="margin-top: var(--space-5)">Runs</h3>{runs}{log}</div>'
+        f'{batches}<h3 style="margin-top: var(--space-5)">Runs</h3>{runs}{log}</div>'
     )
 
 

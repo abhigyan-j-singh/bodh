@@ -43,6 +43,7 @@ dev = [
     "types-PyYAML",
     "tomli>=2.0; python_version < '3.11'",
 ]
+browser = ["playwright>=1.45"]  # the visual and live-layer tests and scripts/screenshots.py; dev only
 
 [project.urls]
 Homepage = "https://github.com/abhigyan-j-singh/bodh"
