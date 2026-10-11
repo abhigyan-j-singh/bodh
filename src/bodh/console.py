@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from . import html as ui
 from . import jobs, locks, logs, progress
 from .config import Config, load_config
 
@@ -410,29 +411,19 @@ def _extra_args(action: str, params: dict) -> list[str]:
     return out
 
 
-PAGE = r"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>bodh console</title>
-<style>
-body{font:15px/1.45 -apple-system,system-ui,sans-serif;max-width:1100px;margin:18px auto;padding:0 14px;color:#222;background:#fff}
-h1{font-size:20px;margin:0 0 2px}h2{font-size:16px;margin:22px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
-.muted{color:#777}.ok{color:#2a7}.bad{color:#c33}.warn{color:#c80}
-.state{display:flex;align-items:center;gap:10px;font-size:17px;margin:10px 0}
-.dot{width:12px;height:12px;border-radius:6px;background:#bbb;display:inline-block}.dot.on{background:#2a7;animation:pulse 1.2s infinite}
-@keyframes pulse{0%{opacity:1}50%{opacity:.25}100%{opacity:1}}
-.kpis{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}.kpi{background:#f6f6f6;border-radius:8px;padding:8px 12px;min-width:120px}
-.kpi b{display:block;font-size:19px}.kpi small{color:#777}
-.actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid #ccc;background:#fafafa;cursor:pointer}
-button:hover{background:#eee}button.primary{background:#2a7;color:#fff;border-color:#2a7}button.danger{background:#fff;border-color:#c33;color:#c33}
-button:disabled{opacity:.45;cursor:default}
-input,select{font:inherit;padding:6px 8px;border:1px solid #ccc;border-radius:6px;width:90px}
-pre{white-space:pre-wrap;background:#f6f6f6;padding:10px;border-radius:6px;font-size:12.5px;max-height:260px;overflow:auto;margin:6px 0}
-table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #eee;vertical-align:top}
-th{color:#555;font-weight:600}.num{text-align:right}
-iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
-.msg{margin:6px 0;font-size:14px}.flash{background:#fff3b0;transition:background 1.5s}
-</style></head><body>
-<h1>bodh console</h1>
+CONSOLE_CSS = """
+.state{display:flex;align-items:center;gap:10px;font-size:17px;margin:10px 0}.state .dot{width:12px;height:12px;border-radius:6px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center}
+button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--panel-line);background:var(--panel);color:var(--fg);cursor:pointer}
+button:hover{filter:brightness(0.95)}button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.danger{background:var(--bg);border-color:var(--bad);color:var(--bad)}button:disabled{opacity:.45;cursor:default}
+input,select{font:inherit;padding:6px 8px;border:1px solid var(--panel-line);border-radius:6px;width:90px;background:var(--bg);color:var(--fg)}
+pre{max-height:260px;overflow:auto;margin:6px 0}iframe{width:100%;height:1500px;border:1px solid var(--rule);border-radius:8px;background:#fff}
+.msg{margin:6px 0;font-size:14px}
+"""
+
+# the page: the shell and the shared style from html.py, the levers, and the script that keeps it live
+PAGE_BODY = r"""<h1>bodh console</h1>
 <div class='muted'>__ROOT__ · <span id='clock'></span></div>
 
 <div class='state'><span id='dot' class='dot'></span><span id='state'>loading…</span></div>
@@ -485,7 +476,10 @@ iframe{width:100%;height:1500px;border:1px solid #ddd;border-radius:8px}
 <h2>Dashboard</h2>
 <iframe src='/dashboard/index.html' id='dash'></iframe>
 
-<script>
+"""
+
+# the script, in one string: polling, the buttons, the output stream
+PAGE_SCRIPT = r"""<script>
 var fails = 0, lastChildRunning = null;
 function n(x){ return x==null ? '–' : Number(x).toLocaleString('en-US'); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
@@ -543,4 +537,6 @@ async function refresh(){
 setInterval(refresh, 3000); refresh();
 setInterval(function(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
 </script>
-</body></html>"""
+"""
+
+PAGE = ui.page("bodh console", PAGE_BODY + PAGE_SCRIPT, css_extra=CONSOLE_CSS)

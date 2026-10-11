@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from . import html as ui
 from . import locks, store
 from .config import Config
 
@@ -517,10 +518,7 @@ def _sparkline(series: list[int]) -> str:
 def render_html(snap: dict) -> str:
     """The progress section of the dashboard: numbers now, and a script that keeps them moving by polling
     progress.json while a run writes it (bars, rate, ETA, phase, sparkline, batches, log)."""
-    import html as _h
-
-    def e(s: object) -> str:
-        return _h.escape(str(s if s is not None else ""))
+    e = ui.esc
 
     unread = snap["unread"] or 1
     judged, pending, inflight = snap["judged_unread"], snap["pending"], snap["inflight"]
@@ -547,9 +545,9 @@ def render_html(snap: dict) -> str:
         f"<span id='p-bar-pending' style='width:{pending / unread * 100:.2f}%' class='p-pending' title='pending'></span>"
         "</div>",
         "<p class='muted'>"
-        f"<b style='color:#2a7'>judged <span id='p-judged'>{judged:,}</span></b> · "
-        f"<b style='color:#e39b5d'>with the model <span id='p-inflight'>{inflight:,}</span></b> · "
-        f"<b style='color:#999'>pending <span id='p-pending'>{pending:,}</span></b> of <span id='p-unread'>{snap['unread']:,}</span> unread"
+        f"<b class='ok'>judged <span id='p-judged'>{judged:,}</span></b> · "
+        f"<b class='c-flight'>with the model <span id='p-inflight'>{inflight:,}</span></b> · "
+        f"<b class='muted'>pending <span id='p-pending'>{pending:,}</span></b> of <span id='p-unread'>{snap['unread']:,}</span> unread"
         f"<span id='p-old'>{e(old_note)}</span>"
         + (f" · {snap['skipped']:,} in folders that are not judged" if snap["skipped"] else "")
         + (
@@ -620,17 +618,15 @@ def _spark_svg(series: list[int]) -> str:
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     area = f"0,48 {line} 360,48"
     return (
-        f"<polygon points='{area}' fill='#2a7' fill-opacity='0.15'/>"
-        f"<polyline points='{line}' fill='none' stroke='#2a7' stroke-width='1.5'/>"
+        f"<polygon points='{area}' fill='var(--ok)' fill-opacity='0.15'/>"
+        f"<polyline points='{line}' fill='none' stroke='var(--ok)' stroke-width='1.5'/>"
     )
 
 
 PROGRESS_CSS = """
-.prog{display:flex;height:18px;background:#eee;border-radius:9px;overflow:hidden;margin:8px 0}
-.prog span{display:block;height:100%;transition:width .8s ease}.p-judged{background:#2a7}.p-flight{background:#e39b5d}.p-pending{background:#bbb}
-.live{font-size:13.5px;color:#444;margin:4px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:5px;background:#bbb;margin-right:6px;vertical-align:middle}
-.dot.on{background:#2a7;animation:pulse 1.2s infinite}@keyframes pulse{0%{opacity:1}50%{opacity:.25}100%{opacity:1}}
-.flash{background:#fff3b0;transition:background 1.5s}.spark{margin:6px 0 10px}.spark svg{display:block;margin-top:2px}
+.prog{display:flex;height:18px;background:var(--line);border-radius:9px;overflow:hidden;margin:8px 0}
+.prog span{display:block;height:100%;transition:width .8s ease}.p-judged{background:var(--ok)}.p-flight{background:var(--flight)}.p-pending{background:var(--pending)}
+.live{font-size:13.5px;margin:4px 0}.c-flight{color:var(--flight)}.spark{margin:6px 0 10px}.spark svg{display:block;margin-top:2px}
 """
 
 LIVE_SCRIPT = """<script>
@@ -646,7 +642,7 @@ LIVE_SCRIPT = """<script>
     var top = Math.max.apply(null, series) || 1, n = series.length, pts = [];
     for(var i=0;i<n;i++){ pts.push((i*360/Math.max(1,n-1)).toFixed(1)+','+(46-series[i]/top*44).toFixed(1)); }
     var line = pts.join(' ');
-    svg.innerHTML = "<polygon points='0,48 "+line+" 360,48' fill='#2a7' fill-opacity='0.15'/><polyline points='"+line+"' fill='none' stroke='#2a7' stroke-width='1.5'/>"; }
+    svg.innerHTML = "<polygon points='0,48 "+line+" 360,48' fill='var(--ok)' fill-opacity='0.15'/><polyline points='"+line+"' fill='none' stroke='var(--ok)' stroke-width='1.5'/>"; }
   function apply(d){
     var unread = d.unread || 1;
     document.getElementById('p-bar-judged').style.width = (d.judged_unread/unread*100).toFixed(2)+'%';
