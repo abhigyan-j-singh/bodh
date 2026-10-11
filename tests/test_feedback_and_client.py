@@ -186,3 +186,25 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
     assert "Marked bad or meh" in ctx and "concept 3: 1" in ctx
     assert [k for k, _ in store.feedback_for(conn, ids[4])] == ["more"]
+
+
+def test_login_and_heartbeat_logs_carry_no_secrets(caplog, monkeypatch):
+    """Log lines reach progress.json and the dashboard, so the account email and the ping URL
+    (whose path is the check's secret) must never appear in them."""
+    import logging
+
+    from triage.ops import Heartbeat
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("ClientLogin"):
+            return httpx.Response(200, text="SID=x\nAuth=token-value\n")
+        raise httpx.ConnectError("down")
+
+    client = BazQuxClient("student@example.com", "hunter2", transport=httpx.MockTransport(handler))
+    with caplog.at_level(logging.INFO):
+        client.login()
+        monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("down")))
+        Heartbeat("https://hc-ping.com/0123abcd-secret-uuid").ok("summary")
+    text = caplog.text
+    assert "student@example.com" not in text and "hunter2" not in text and "token-value" not in text
+    assert "0123abcd-secret-uuid" not in text and "hc-ping.com" in text

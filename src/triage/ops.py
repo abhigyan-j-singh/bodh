@@ -17,6 +17,17 @@ import httpx
 log = logging.getLogger(__name__)
 
 
+def _host_only(url: str) -> str:
+    """A ping URL without its secret path (the check's UUID), for log lines."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+        return f"{parts.scheme}://{parts.netloc}/…"
+    except ValueError:
+        return "<heartbeat url>"
+
+
 class RunTimeout(Exception):
     pass
 
@@ -162,7 +173,7 @@ class Heartbeat:
         try:
             httpx.post(f"{self.url}{suffix}", content=body[:10000].encode("utf-8"), timeout=10.0)
         except Exception as exc:  # noqa: BLE001
-            log.warning("heartbeat: could not reach %s%s (%s)", self.url, suffix, exc)
+            log.warning("heartbeat: could not reach %s (%s)", _host_only(self.url) + suffix, exc)
 
     def ok(self, summary: str) -> None:
         self._post("", summary)

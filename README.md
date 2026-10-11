@@ -15,7 +15,7 @@ Design: the "RSS Triage System Design" doc in the RSS reader project. This file 
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
 | `src/triage/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/triage/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
-| `tests/` | 56 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
+| `tests/` | 57 tests with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
 | `launchd/`, `install.sh`, `install-launchd.sh`, `laptop-install.sh` | Install and schedule on a Mac | yes |
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates: copy to `config.yaml`, `.env`, `profile/` | yes |
 | `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
@@ -238,6 +238,6 @@ record). Learner model history: `git log` in `profile/`.
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # 56 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
+.venv/bin/pytest -q        # 57 tests: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, pipeline end to end
 .venv/bin/ruff check src tests
 ```

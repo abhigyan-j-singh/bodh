@@ -165,7 +165,7 @@ class BazQuxClient:
         for line in response.text.splitlines():
             if line.startswith("Auth="):
                 self._auth = line[5:].strip()
-                log.info("bazqux: logged in as %s", self._email)
+                log.info("bazqux: logged in")  # never the account email: logs reach the dashboard
                 return self._auth
         raise BazQuxAuthError("BazQux login response carried no Auth token")
 

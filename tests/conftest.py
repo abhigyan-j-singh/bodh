@@ -37,6 +37,16 @@ def make_item(n: int, feed: str = "Feed A", title: str | None = None, url: str |
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_launchd(monkeypatch):
+    """The suite runs on the owner's Mac too: never touch the real launchd jobs or processes."""
+    from triage import control
+
+    monkeypatch.setattr(control, "_plist_path", lambda label: (None, ""))
+    monkeypatch.setattr(control, "launchctl_available", lambda: False)
+    monkeypatch.setattr(control, "stray_processes", lambda: [])
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()

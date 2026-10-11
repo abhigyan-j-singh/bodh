@@ -91,7 +91,7 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
     ctx = pipeline.Context(cfg, secrets, conn)
     try:
         info = ctx.client.user_info()
-        typer.echo(f"bazqux login: ok ({info.get('userEmail') or info.get('userName')})")
+        typer.echo("bazqux login: ok")
         unread = ctx.client.unread_ids()
         typer.echo(f"bazqux unread: {len(unread)}")
         subs = ctx.client.subscriptions()
