@@ -330,6 +330,10 @@ class _Handler(BaseHTTPRequestHandler):
                 "__KEEP__", str(console.cfg.prune.keep)
             )
             self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        elif url.path == "/design":
+            from .web.templates import design_page
+
+            self._send(200, design_page().encode("utf-8"), "text/html; charset=utf-8")
         elif url.path == "/api/status":
             self._send(200, _status_body(console))
         elif url.path == "/api/log":
