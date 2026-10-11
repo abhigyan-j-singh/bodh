@@ -31,11 +31,17 @@ mkdir -p "$HOME/Library/Logs/viveka" 2>/dev/null || true
 
 if [ ! -d profile ]; then
   cp -R profile.example profile
-  echo "created profile/ from profile.example: write profile/seed.md, fifteen lines about the student"
+  echo "created profile/ from profile.example: replace the worked example in profile/seed.md with fifteen lines about you"
 fi
 if [ -d profile ] && [ ! -d profile/.git ] && command -v git >/dev/null 2>&1; then
   (cd profile && git init -q && git add -A && git commit -q -m "seed and initial learner model") || true
 fi
 
 echo
-.venv/bin/viveka doctor
+if .venv/bin/viveka doctor; then
+  echo "next: ./install-launchd.sh schedules it (shadow mode: nothing is cut until cut.enforce is true)"
+else
+  echo
+  echo "not ready yet: fix what doctor lists above (.env, profile/seed.md), then run .venv/bin/viveka doctor again" >&2
+  exit 1
+fi

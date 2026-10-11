@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from viveka.cli import app
@@ -52,6 +54,10 @@ def test_doctor_exit_code_on_missing_secrets(tmp_path, monkeypatch):
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1 and "MISSING" in result.output and "problem(s)" in result.output
     (root / ".env").write_text("BAZQUX_EMAIL=a@b.c\nBAZQUX_PASSWORD=pw\nANTHROPIC_API_KEY=sk-ant-test\n", encoding="utf-8")
+    example = (Path(__file__).resolve().parents[1] / "profile.example" / "seed.md").read_text(encoding="utf-8")
+    (root / "profile" / "seed.md").write_text(example, encoding="utf-8")  # what ./install.sh leaves behind
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1 and "STILL THE EXAMPLE" in result.output, result.output
     (root / "profile" / "seed.md").write_text("# Seed\nStudent: test.\n", encoding="utf-8")
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0 and result.output.rstrip().endswith("ok"), result.output

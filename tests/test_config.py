@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -101,3 +102,51 @@ def test_unknown_model_warns_once(caplog):
         m.price("brand-new-model")
         m.price("brand-new-model")
     assert caplog.text.count("no price for 'brand-new-model'") == 1
+
+
+def test_timezone_defaults_to_the_machine_and_the_example_leaves_it_out(monkeypatch):
+    """A stranger's budget day ends at their midnight, not the author's; $TZ wins, then
+    /etc/localtime, then UTC; a name this machine does not know is passed over."""
+    from viveka import config
+
+    monkeypatch.setenv("TZ", ":Europe/Lisbon")
+    assert config.system_timezone() == "Europe/Lisbon"
+    monkeypatch.setenv("TZ", "Mars/Olympus")
+    monkeypatch.setattr(config, "_localtime_name", lambda: "America/Sao_Paulo")
+    assert config.system_timezone() == "America/Sao_Paulo"
+    monkeypatch.delenv("TZ")
+    monkeypatch.setattr(config, "_localtime_name", lambda: None)
+    assert config.system_timezone() == "UTC"
+    assert Config().timezone == "UTC"
+    raw = yaml.safe_load((ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+    assert "timezone" not in raw, "the example must leave the zone to the machine"
+    assert "Asia/Kolkata" not in (ROOT / "config.example.yaml").read_text(encoding="utf-8")
+
+
+def test_localtime_name_reads_the_zoneinfo_link(tmp_path, monkeypatch):
+    from viveka import config
+
+    link = tmp_path / "localtime"
+    target = tmp_path / "usr" / "share" / "zoneinfo" / "Europe" / "Lisbon"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"TZif2")
+    link.symlink_to(target)
+    real_path = config.Path
+    monkeypatch.setattr(config, "Path", lambda p="": real_path(str(link)) if p == "/etc/localtime" else real_path(p))
+    assert config._localtime_name() == "Europe/Lisbon"
+
+
+def test_the_example_seed_is_recognised_and_refused(tmp_path, cfg, conn):
+    """profile.example/seed.md describes an invented student: `doctor` reports it, the
+    teacher refuses to judge for it, and a real seed in the example's shape passes."""
+    from viveka.teacher import Teacher
+
+    example = (ROOT / "profile.example" / "seed.md").read_text(encoding="utf-8")
+    cfg.seed_path.write_text(example, encoding="utf-8")
+    assert cfg.seed_is_example()
+    with pytest.raises(ConfigError, match="still the worked example"):
+        Teacher(cfg, None, conn)  # type: ignore[arg-type]
+    own = re.sub(r"<!--.*?-->", "", example, flags=re.S).replace("Ines, a marine biologist", "Someone else, a geologist")
+    cfg.seed_path.write_text(own, encoding="utf-8")
+    assert not cfg.seed_is_example() and "geologist" in cfg.read_seed()
+    Teacher(cfg, None, conn)  # type: ignore[arg-type]

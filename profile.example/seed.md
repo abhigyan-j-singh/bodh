@@ -1,17 +1,30 @@
 # Seed
 
-Student: who you are in one paragraph, as a teacher would need to know it. Your work, the fields you
-practise in, where you live and operate, how you read (to decide, to understand new fields, both).
+<!-- The seed is fifteen lines on the student, written once and rarely touched; the teacher reads
+     it with every article. Five paragraphs: who the student is; what they already know well (the
+     teacher scores "fit" against it); what reading is for this year; the decisions in front of
+     them (it scores "relevance" against these); what is never worth attention. Below is a worked
+     example for an invented student, so you can see the shape. Replace every paragraph with your
+     own and delete this comment: while it is here, `viveka doctor` reports the seed as still the
+     example and `viveka run` refuses to judge for someone who does not exist. -->
 
-Already knows well, at a practitioner level: the fields where routine news and beginner explainers teach
-you little. Name them plainly; the teacher scores "fit" against this list.
+Student: Ines, a marine biologist at a university field station on the Atlantic coast of Portugal.
+Runs a small lab on seagrass meadow recovery, teaches two undergraduate courses, reviews for two
+journals and sits on the station's equipment committee. Reads to decide (grant calls, equipment,
+which collaborations to take) and to understand the fields next to her own.
 
-Goal: what reading is for, this year. Breadth as a goal in itself, or depth in one field, or both.
+Already knows well, at a practitioner level: seagrass and coastal ecology, marine population
+genetics, fieldwork logistics and scientific diving, R and the usual statistics, the conservation
+funding landscape in Europe. Routine news and beginner explainers in these teach her nothing.
 
-Decisions this quarter: the three to five decisions in front of you that articles could inform. The
-teacher scores "relevance" against these; rewrite them when they change.
+Goal: breadth this year. Physical oceanography, climate modelling, remote sensing and machine
+learning on ecological data are the fields she wants to read fluently by December; depth in her
+own field comes from the journals, not from the feed.
 
-Never worth attention: the kinds of content you never want kept, whatever the topic. The teacher is
-strict with these.
+Decisions this quarter: whether the lab's next grant goes into environmental DNA monitoring or
+keeps funding diver surveys; which of two remote-sensing collaborations to join; whether the
+station should buy a drone; whether to move the lab's data pipeline off spreadsheets.
 
-(Fifteen lines, rarely touched. The learner model next to it is rewritten weekly from what you read.)
+Never worth attention: press releases dressed as news, listicles, "ten things" explainers,
+conference announcements, anything written to sell a product, and opinion pieces on questions she
+has already settled.

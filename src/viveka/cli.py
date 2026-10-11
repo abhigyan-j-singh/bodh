@@ -89,7 +89,10 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
                f" · articles older than {cfg.scoring.max_age_days} days are never scored")
     typer.echo(f"cut: {'enforcing' if cfg.cut.enforce else 'shadow mode'}, target {cfg.cut.target_unread}, "
                f"floor {cfg.cut.default_floor}, max {cfg.cut.max_cuts_per_run}/run, folders {list(cfg.cut.folders) or 'none'}")
-    if cfg.read_seed():
+    if cfg.seed_is_example():
+        problem("seed: STILL THE EXAMPLE (profile/seed.md describes an invented student): replace every paragraph "
+                "with your own and delete the comment at the top")
+    elif cfg.read_seed():
         typer.echo("seed: found")
     else:
         problem("seed: MISSING (profile/seed.md): the teacher cannot judge for a student it knows nothing about")

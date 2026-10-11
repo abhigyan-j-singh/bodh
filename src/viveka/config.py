@@ -15,6 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 
 log = logging.getLogger(__name__)
 
+# the sentence in profile.example/seed.md's opening comment; `viveka doctor` and the teacher
+# look for it, so the example is never mistaken for a student
+EXAMPLE_SEED_MARKER = "worked example for an invented student"
+
 
 class Strict(BaseModel):
     """Every section: a key that is not known is a typo, and a typo must not load as a default."""
@@ -213,8 +217,43 @@ class Feedback(Strict):
     concept_window_days: int = Field(default=90, ge=1)
 
 
+def _zone_name_ok(name: str | None) -> bool:
+    if not name:
+        return False
+    try:
+        ZoneInfo(name)
+    except (KeyError, ValueError, OSError):  # ZoneInfoNotFoundError is a KeyError
+        return False
+    return True
+
+
+def _localtime_name() -> str | None:
+    """Where /etc/localtime points, as an IANA name (…/zoneinfo/Europe/Lisbon → Europe/Lisbon;
+    macOS keeps its copy under /var/db/timezone/zoneinfo). Debian also writes /etc/timezone."""
+    try:
+        parts = Path("/etc/localtime").resolve().parts
+        if "zoneinfo" in parts:
+            tail = parts[len(parts) - 1 - parts[::-1].index("zoneinfo") + 1:]
+            if tail:
+                return "/".join(tail)
+        text = Path("/etc/timezone").read_text(encoding="utf-8").strip()
+        return text or None
+    except OSError:
+        return None
+
+
+def system_timezone() -> str:
+    """The machine's zone: $TZ when it names one, else /etc/localtime, else UTC (Windows has
+    neither; a `timezone` line in config.yaml is the way there)."""
+    env = (os.environ.get("TZ") or "").lstrip(":")
+    for candidate in (env, _localtime_name()):
+        if _zone_name_ok(candidate):
+            return str(candidate)
+    return "UTC"
+
+
 class Config(Strict):
-    timezone: str = "Asia/Kolkata"
+    timezone: str = Field(default_factory=system_timezone)   # the day boundary for the budget and the counts
     data_dir: Path = Path("./data")
     profile_dir: Path = Path("./profile")
     dashboard_dir: Path = Path("./dashboard")
@@ -232,10 +271,8 @@ class Config(Strict):
     @field_validator("timezone")
     @classmethod
     def _zone(cls, v: str) -> str:
-        try:
-            ZoneInfo(v)
-        except (KeyError, ValueError, OSError) as exc:  # ZoneInfoNotFoundError is a KeyError
-            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Asia/Kolkata' say)") from exc
+        if not _zone_name_ok(v):
+            raise ValueError(f"timezone {v!r} is not a known zone (IANA names, 'Europe/Lisbon' say)")
         return v
 
     @property
@@ -260,6 +297,12 @@ class Config(Strict):
 
     def read_seed(self) -> str:
         return self.seed_path.read_text(encoding="utf-8").strip() if self.seed_path.exists() else ""
+
+    def seed_is_example(self) -> bool:
+        """profile.example/seed.md describes an invented student and says so in a comment at the
+        top; a seed that still carries that comment is nobody's, and the teacher must not judge
+        for it. The comment, not the text: a student may well keep the example's shape."""
+        return EXAMPLE_SEED_MARKER in " ".join(self.read_seed().split())  # however an editor wrapped it
 
     def read_learner(self) -> str:
         return self.learner_path.read_text(encoding="utf-8").strip() if self.learner_path.exists() else ""

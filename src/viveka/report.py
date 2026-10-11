@@ -1,5 +1,5 @@
 """The monthly feed report: per feed, volume, mean score, share cut, read and star
-rates, and a proposal (unsubscribe, move to Firehose, protect). Proposals are
+rates, and a proposal (unsubscribe, move to the strictest folder, protect). Proposals are
 written for you to act on in BazQux; nothing is changed automatically."""
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ MIN_VOLUME_FOR_PROPOSAL = 40   # articles in the window, and judged ones: a feed
 
 
 def strictest_folder(cfg: Config) -> str | None:
-    """The folder with the highest automatic floor above the default (the owner's "Firehose"),
+    """The folder with the highest automatic floor above the default (`News` in the example config),
     where a high-volume, low-keep feed belongs; None when the config has no such folder."""
     best: tuple[int, str] | None = None
     for name, policy in cfg.cut.folders.items():

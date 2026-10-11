@@ -25,7 +25,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import BaseModel, Field, ValidationError
 
 from . import store
-from .config import Config, Secrets
+from .config import Config, ConfigError, Secrets
 from .ids import resolve_ordinal
 
 log = logging.getLogger(__name__)
@@ -588,6 +588,9 @@ class Teacher:
         self.expansion_topics = expansion_topics or []
         base = fill_prompt(load_prompt(self.prompt_version, cfg.root), cfg)
         intro, _, rubric = base.partition("\n\n")
+        if cfg.seed_is_example():
+            raise ConfigError("profile/seed.md is still the worked example: the teacher will not judge for an "
+                              "invented student. Write your own seed (`viveka doctor` explains)")
         seed = cfg.read_seed() or "(no seed written yet)"
         learner = (cfg.read_learner() if learner_text is None else learner_text) or "(no learner model yet)"
         # the cached prefix changes only when the seed or the learner model does; the concept
