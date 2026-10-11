@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sqlite3
 from typing import Any, Literal
@@ -204,7 +205,9 @@ def compose(v: Verdict | dict[str, Any], cfg: Config, expansion_topics: list[str
     never a promo, an off-field funding round or a duplicate over the cut-off."""
     d = v.model_dump() if isinstance(v, Verdict) else dict(v)
     w = cfg.judge.weights
-    s = sum(w[k] * float(d.get(k, 0)) for k in w)
+    # fsum, not sum: the same verdict must compose to the same score on every Python (3.12
+    # changed sum() to a compensated sum, and 80.45 rounded one way on 3.10 and the other on 3.13)
+    s = math.fsum(w[k] * float(d.get(k, 0)) for k in w)
     flags = set(normalize_flags(d.get("flags")))
     if "home_angle" in flags and cfg.judge.home_angle:
         s += cfg.judge.home_bonus

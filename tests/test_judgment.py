@@ -549,8 +549,10 @@ def test_topic_matching_counts_words_of_three_letters_and_half_the_union():
 
 
 def test_compose_rounds_to_one_decimal_and_reads_a_missing_subscore_as_zero():
+    """The same on every Python: 80.45 is summed exactly (math.fsum) and rounds to 80.5 on
+    3.10 and 3.13 alike; a naive sum gave 80.44999999999999 on 3.10 and 80.45 on 3.13."""
     cfg = Config()
-    assert compose(base_verdict(quality=81, fit=81), cfg) == 80.4  # 80.45 to one decimal
+    assert compose(base_verdict(quality=81, fit=81), cfg) == 80.5
     assert compose({"quality": 80}, cfg) == 24.0  # 0.30 * 80, nothing for the rest
 
 

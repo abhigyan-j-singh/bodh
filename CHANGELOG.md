@@ -93,6 +93,9 @@ of the aliases go away in the release after 1.0.0.
   coming back unread took seven seconds; under one now). Migration 5 adds the indexes the queries
   by time walk; it is harmless to older code.
 - `canonical_url` strips whitespace from the path, so the result is its own canonical form.
+- `compose` sums the weighted sub-scores exactly (`math.fsum`), so the same verdict gives the
+  same score on every Python: 3.12 changed `sum()` for floats, and a sum landing on a half
+  (80.45) rounded to 80.4 on 3.10 and 80.5 on 3.13. Nothing stored is recomputed.
 - Dependencies carry bounds: `anthropic>=0.77,<2` (0.77 is the first with structured outputs;
   the 1.x line passes the suite), `httpx<1`, `pydantic<3`, `typer<1`, `pyyaml<7`,
   `python-dotenv<2`.
