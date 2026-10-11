@@ -138,3 +138,21 @@ def test_breaker_blocks_the_floor_until_cleared(conn, cfg):
     assert sel.cut_ids == [] and "safety reset" in sel.blocked and len(sel.survivors) == 10
     assert cut.reset_breaker(conn) and cut.breaker_tripped(conn) is None
     assert len(cut.select_floor(conn, cfg, teacher=None, run_id=9, newly_scored=set()).cut_ids) == 10
+
+
+def test_saved_count_excludes_old_failures(conn, cfg):
+    """An article kept after a failed second look in an earlier run was counted as a save on
+    every later run."""
+    cfg.cut.exploration_share = 0.0
+    ids = seed_scored(conn, cfg, [dict(n=1, score=30), dict(n=2, score=10)])
+    store.record_second_look_failure(conn, ids[0])
+
+    class NoLooks:
+        batch_mode = False
+
+        def second_looks(self, *a, **k):
+            raise AssertionError("nothing should be looked at")
+
+    sel = cut.select_floor(conn, cfg, teacher=NoLooks(), run_id=None)  # type: ignore[arg-type]
+    assert sel.cut_ids == [ids[1]] and sel.saved_by_second_look == 0 and sel.kept_after_failed_look == 1
+    assert ids[0] in {r["id"] for r in sel.survivors}

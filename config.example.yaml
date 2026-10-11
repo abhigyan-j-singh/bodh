@@ -35,6 +35,7 @@ scoring:
   opening_chars: 1200              # text the teacher sees on the first pass
   second_look_window: 10           # a floor candidate within this many points of the floor gets a second look...
   second_look_chars: 6000          # ...with this much text, and only when the article has more than the opening
+  second_look_max_per_run: 50      # synchronous runs: at most this many second looks per run
 
 cut:
   enforce: false                   # start in shadow mode: score and tag, cut nothing; flip to true after the shadow days

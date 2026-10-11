@@ -664,15 +664,17 @@ class Teacher:
         stats["total"] = len(todo)
         size = self.cfg.scoring.batch_size
         batches = [todo[i: i + size] for i in range(0, len(todo), size)]
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        workers = max(1, workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = {}
             queue = list(enumerate(batches))
             running: set = set()
 
             def feed() -> None:
-                # keep the pool full but never more than one batch queued per worker, so a
-                # deadline or the budget stops new calls promptly
-                while queue and len(running) < max(1, workers) * 2:
+                # at most one call per worker in flight and nothing queued behind it, so the
+                # deadline and the budget stop new calls at once, not after a backlog drains
+                while queue and len(running) < workers:
                     if self.llm.budget_left() <= 0:
                         stats["budget_stop"] = True
                         queue.clear()
@@ -690,8 +692,11 @@ class Teacher:
             while running:
                 done = next(as_completed(list(running)))
                 running.discard(done)
-                feed()
                 self._absorb_future(done, batches[futures[done]], stats, on_progress, len(todo))
+                feed()  # after the absorb: a rejection or an interrupt must not let one more call out
+        finally:
+            # a rejected key or model id, a timeout, Ctrl-C: whatever is queued is never sent
+            pool.shutdown(wait=True, cancel_futures=True)
         stats["pending_after"] = self.pending_count(exclude_inflight=True)
         return stats
 
@@ -981,38 +986,75 @@ class Teacher:
 
     # -- second look, synchronous -------------------------------------------------
 
-    def second_looks(self, rows: list[sqlite3.Row], run_id: int | None,
-                     workers: int | None = None) -> tuple[dict[str, float | None], bool]:
-        """Several second looks at once. Returns ({article id: composed score or None if the
-        look failed}, budget_hit). Articles missing from the dict were never examined because
-        the budget ran out; the caller leaves them unread."""
-        results: dict[str, float | None] = {}
+    def second_looks(self, rows: list[sqlite3.Row], run_id: int | None, client: Any = None,
+                     workers: int | None = None, stop_after: float | None = None,
+                     max_looks: int | None = None) -> dict[str, bool | None]:
+        """Several second looks at once, each recorded the moment it lands (a look that was
+        paid for is never lost to a timeout or a Ctrl-C later in the run). ``rows`` are
+        floor candidates with their score and folder. Returns {article id: True when the
+        article now clears its floor, False when the cut stands, None when the look failed
+        (recorded as failed; the article stays unread)}. An article missing from the result
+        was never examined (the budget, the deadline, or the per-run cap): it stays unread."""
+        results: dict[str, bool | None] = {}
+        cap = self.cfg.scoring.second_look_max_per_run if max_looks is None else max_looks
+        todo = [r for r in rows[:cap] if store.article(self.conn, r["id"]) is not None]
+        if len(rows) > cap:
+            log.info("teacher: %d close calls; looking at %d this run", len(rows), cap)
+        workers = max(1, workers or self.cfg.scoring.workers)
+        pool = ThreadPoolExecutor(max_workers=workers)
         budget_hit = False
-        fulls = [(r["id"], store.article(self.conn, r["id"])) for r in rows]
-        fulls = [(aid, f) for aid, f in fulls if f is not None]
-        with ThreadPoolExecutor(max_workers=max(1, workers or self.cfg.scoring.workers)) as pool:
-            futures = {}
-            for aid, full in fulls:
-                if self.llm.budget_left() <= 0:
-                    budget_hit = True
-                    break
-                futures[pool.submit(self.second_look, full, run_id)] = aid
-            for future in as_completed(futures):
-                aid = futures[future]
+        try:
+            futures: dict[Any, sqlite3.Row] = {}
+            queue = list(todo)
+            running: set = set()
+
+            def feed() -> None:
+                nonlocal budget_hit
+                while queue and len(running) < workers:
+                    if self.llm.budget_left() <= 0:
+                        budget_hit = True
+                        queue.clear()
+                        return
+                    if stop_after is not None and time.monotonic() > stop_after:
+                        queue.clear()
+                        return
+                    row = queue.pop(0)
+                    fut = pool.submit(self.second_look, store.article(self.conn, row["id"]), run_id)
+                    futures[fut] = row
+                    running.add(fut)
+
+            feed()
+            while running:
+                done = next(as_completed(list(running)))
+                running.discard(done)
+                row = futures[done]
+                aid = row["id"]
                 try:
-                    results[aid] = future.result()
+                    second = done.result()
                 except BudgetExceeded:
                     budget_hit = True
+                    second = None
+                    skip = True
                 except ModelConfigError:
-                    for other in futures:
-                        other.cancel()
                     raise
                 except Exception:  # noqa: BLE001
                     log.exception("teacher: second look failed for %s", aid)
+                    second, skip = None, False
+                else:
+                    skip = False
+                if skip:
+                    pass  # unexamined: the budget ran out while it waited
+                elif second is None:
+                    store.record_second_look_failure(self.conn, aid)
                     results[aid] = None
+                else:
+                    results[aid] = self.apply_second_look(aid, float(row["score"]), float(second), row["folder"], client)
+                feed()
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
         if budget_hit:
             log.warning("teacher: budget reached during second looks; unexamined close calls stay unread")
-        return results, budget_hit
+        return results
 
     def second_look(self, row: sqlite3.Row, run_id: int | None) -> float | None:
         """Re-read one article with the full text on the stronger model, now. Returns the

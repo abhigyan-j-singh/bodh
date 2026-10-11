@@ -117,6 +117,8 @@ class Scoring(Strict):
     opening_chars: int = Field(default=1200, ge=100)
     second_look_window: int = Field(default=10, ge=0, le=100)
     second_look_chars: int = Field(default=6000, ge=100)
+    second_look_max_per_run: int = Field(default=50, ge=0)   # synchronous runs: looks per run, so a backlog of
+                                                             # close calls cannot eat the run's fifteen minutes
 
     @field_validator("weights")
     @classmethod

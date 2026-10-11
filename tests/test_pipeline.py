@@ -709,3 +709,24 @@ def test_collect_counts_duplicate_results_once_and_is_idempotent_after_an_interr
     res = pipeline.run(ctx, enforce=False)
     assert res.scored == 2 and conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 1
     assert store.recent_batches(conn)[0]["status"] == "done"
+
+
+def test_run_timeout_mid_scoring_stops_promptly(cfg, conn):
+    """The 15-minute limit was one SIGALRM in the main thread while the pool kept queued calls
+    going for minutes; the run now stops starting calls at its deadline and reports ok."""
+    import time as _t
+
+    cfg.scoring.batch_size = 1
+    ctx, client, items = build(cfg, conn, [f"plain {i}" for i in range(8)], batch=False)
+    real = ctx.llm.judge
+
+    def slow(*a, **k):
+        _t.sleep(0.03)
+        return real(*a, **k)
+
+    ctx.llm.judge = slow
+    res = pipeline.run(ctx, enforce=False, workers=1, stop_after=_t.monotonic() + 0.1)
+    assert res.ok and 0 < res.scored < 8 and "time limit near" in " ".join(res.notes)
+    assert res.pending == 8 - res.scored and store.last_runs(conn, 1)[0]["ok"]
+    res = pipeline.run(ctx, enforce=False, workers=4)
+    assert res.pending == 0

@@ -21,6 +21,7 @@ from .teacher import LLM, Teacher, concept_context
 log = logging.getLogger(__name__)
 
 RUN_TIMEOUT_SECONDS = 15 * 60
+RUN_DEADLINE_MARGIN = 60   # no new model call starts this close to the limit; running ones finish
 INGEST_BATCH = 200
 
 
@@ -156,10 +157,14 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
 
 
 def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, workers: int | None = None,
-        sync: bool = False) -> RunResult:
+        sync: bool = False, stop_after: float | None = None) -> RunResult:
     """The timer's job. ``enforce=False`` is shadow mode: everything but the cuts.
-    ``sync=True`` waits for every model call instead of using the Batches API."""
+    ``sync=True`` waits for every model call instead of using the Batches API. No model call
+    starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
+    run's limit), so the next scheduled run is not skipped because this one overran."""
     cfg, conn = ctx.cfg, ctx.conn
+    if stop_after is None:
+        stop_after = time.monotonic() + RUN_TIMEOUT_SECONDS - RUN_DEADLINE_MARGIN
     run_id = store.begin_run(conn, "run")
     res = RunResult(run_id=run_id)
     ctx.heartbeat.start()
@@ -221,7 +226,10 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
         else:
             phase("judging")
             stats = teacher.score_pending(run_id, limit=score_limit or cfg.scoring.max_per_run,
-                                          workers=workers or cfg.scoring.workers, on_progress=live)
+                                          workers=workers or cfg.scoring.workers, on_progress=live,
+                                          stop_after=stop_after)
+            if stats["stopped_early"]:
+                res.notes.append("time limit near: the rest waits for the next run")
             res.scored += stats["scored"]
             res.dupes, res.pending = stats["dupes"], stats["pending_after"]
             if stats["budget_stop"]:
@@ -239,7 +247,8 @@ def run(ctx: Context, score_limit: int | None = None, enforce: bool = True, work
                 res.notes.append(f"rescues above {cfg.breakers.rescue_rate_week:.0%} this week; floor lowered to "
                                  f"{cfg.breakers.lowered_floor}")
                 cfg.cut.default_floor = min(cfg.cut.default_floor, cfg.breakers.lowered_floor)
-            sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client)
+            sel = cutmod.select_floor(conn, cfg, teacher, run_id, newly_scored=newly_scored, client=ctx.client,
+                                      stop_after=stop_after)
             if sel.blocked:
                 res.notes.append(sel.blocked)
             res.second_looks += sel.second_looks

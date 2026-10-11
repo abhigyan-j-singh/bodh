@@ -40,6 +40,7 @@ class Selection:
     saved_by_second_look: int = 0
     reserved_for_exploration: int = 0
     second_looks: int = 0
+    kept_after_failed_look: int = 0  # earlier runs' failed looks: they stay unread, and are not this run's saves
     blocked: str = ""  # why the floor cut nothing this run (the breaker is tripped), else empty
 
     @property
@@ -65,7 +66,8 @@ def reset_breaker(conn: sqlite3.Connection) -> bool:
 # -- the automatic floor ------------------------------------------------------
 
 def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None, run_id: int | None,
-                 newly_scored: set[str] | None = None, client: BazQuxClient | None = None) -> Selection:
+                 newly_scored: set[str] | None = None, client: BazQuxClient | None = None,
+                 stop_after: float | None = None) -> Selection:
     """Everything unread, scored with medium or high confidence, below its folder's floor,
     minus the second look's saves, minus the exploration quota, capped per run. Exempt as
     well: what an undo restored (``exempt``), until a prune takes it."""
@@ -108,7 +110,8 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
     # model, once; the higher score stands. In batch mode the look arrives on the next run,
     # so the article is held (unread) until then.
     if teacher is not None:
-        saved: list[sqlite3.Row] = []
+        saved: list[sqlite3.Row] = []       # this run's second look cleared them, or never got to them
+        kept: list[sqlite3.Row] = []        # an earlier run's look failed: kept, but not a save of this run
         remaining: list[sqlite3.Row] = []
         to_look: list[sqlite3.Row] = []
         for row in candidates:
@@ -117,7 +120,7 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
                 remaining.append(row)
             elif row["second_look_model"] is not None:
                 if row["second_look_model"] == "failed":
-                    saved.append(row)  # fail open: a look that could not be had keeps the article
+                    kept.append(row)  # fail open: a look that could not be had keeps the article
                 else:
                     remaining.append(row)  # looked at already; the higher score still sits below the floor
             elif not has_more_to_read(row, cfg):
@@ -127,23 +130,21 @@ def select_floor(conn: sqlite3.Connection, cfg: Config, teacher: Teacher | None,
             else:
                 to_look.append(row)
         if to_look:
-            results, _budget_hit = teacher.second_looks(to_look, run_id)
+            results = teacher.second_looks(to_look, run_id, client=client, stop_after=stop_after)
             for row in to_look:
                 if row["id"] not in results:
-                    saved.append(row)  # never examined (budget): stays unread
+                    saved.append(row)  # never examined (budget, deadline, cap): stays unread
                     continue
                 sel.second_looks += 1
-                second = results[row["id"]]
-                if second is None:
-                    store.record_second_look_failure(conn, row["id"])
-                    saved.append(row)  # fail open
-                elif teacher.apply_second_look(row["id"], float(row["score"]), float(second), row["folder"], client):
-                    saved.append(row)
+                if results[row["id"]] is False:
+                    remaining.append(row)  # the stronger model agreed: the cut stands
                 else:
-                    remaining.append(row)
+                    saved.append(row)  # cleared the floor, or the look failed: fail open
         sel.saved_by_second_look = len(saved)
+        sel.kept_after_failed_look = len(kept)
         candidates = remaining
         sel.survivors.extend(saved)
+        sel.survivors.extend(kept)
         sel.survivors.extend(sel.held)
 
     # exploration quota: new ground of decent quality is exempt from the floor
