@@ -35,6 +35,7 @@ MIN_REQUEST_INTERVAL = 0.5
 MAX_RETRIES = 4
 BACKOFF_BASE = 1.5
 IDS_PAGE = 1000
+MAX_PAGES = 500         # 500,000 items: more than any reading list; a continuation that loops stops here
 CONTENTS_BATCH = 200
 EDIT_BATCH = 500
 
@@ -133,11 +134,15 @@ class BazQuxClient:
             return response
         raise BazQuxError(f"bazqux request failed after {MAX_RETRIES} attempts: {last_exc}")
 
-    def _authed(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """A request with the auth header; on a 401, log in once more and retry."""
+    def _authed(self, method: str, path: str, with_token: bool = False, **kwargs: Any) -> httpx.Response:
+        """A request with the auth header; on a 401, log in once more and retry. With
+        ``with_token`` the write token goes into the form data on each attempt, so the retry
+        after a re-login carries a token issued under the new session, not the old one."""
         for attempt in range(2):
             headers = dict(kwargs.pop("headers", {}) or {})
             headers["Authorization"] = f"GoogleLogin auth={self.auth}"
+            if with_token:
+                kwargs["data"] = {**(kwargs.get("data") or {}), "T": self._write_token()}
             try:
                 response = self._request(method, path, headers=headers, **kwargs)
             except _Unauthorized:
@@ -155,9 +160,12 @@ class BazQuxClient:
     # -- auth ---------------------------------------------------------------
 
     def login(self) -> str:
-        response = self._request(
-            "POST", "/accounts/ClientLogin", data={"Email": self._email, "Passwd": self._password}
-        )
+        try:
+            response = self._request(
+                "POST", "/accounts/ClientLogin", data={"Email": self._email, "Passwd": self._password}
+            )
+        except _Unauthorized:
+            raise BazQuxAuthError("BazQux login failed: HTTP 401 (wrong email or password?)") from None
         if response.status_code != 200:
             reason = response.headers.get("X-BQ-LoginErrorReason", "")
             detail = f" ({reason})" if reason else ""
@@ -216,7 +224,8 @@ class BazQuxClient:
         """Every item ref in a stream, by continuation. ``exclude`` is an ``xt=`` stream."""
         out: list[ItemRef] = []
         continuation: str | None = None
-        while True:
+        seen: set[str] = set()
+        for _page in range(MAX_PAGES):
             params: dict[str, Any] = {"s": stream, "n": IDS_PAGE, "output": "json"}
             if exclude:
                 params["xt"] = exclude
@@ -226,11 +235,10 @@ class BazQuxClient:
             refs = data.get("itemRefs", []) or []
             for ref in refs:
                 try:
-                    ts = ref.get("timestampUsec")
                     out.append(
                         ItemRef(
                             id=normalize_item_id(ref["id"]),
-                            timestamp_usec=int(ts) if ts else None,
+                            timestamp_usec=_int_or_none(ref.get("timestampUsec")),
                             direct_stream_ids=[str(s) for s in ref.get("directStreamIds") or []],
                         )
                     )
@@ -239,6 +247,12 @@ class BazQuxClient:
             continuation = data.get("continuation")
             if not continuation or not refs or (limit and len(out) >= limit):
                 return out
+            if continuation in seen:
+                log.warning("bazqux: %s repeated continuation %r; stopping after %d items", stream, continuation, len(out))
+                return out
+            seen.add(continuation)
+        log.warning("bazqux: %s did not end after %d pages; stopping at %d items", stream, MAX_PAGES, len(out))
+        return out
 
     def unread_ids(self) -> list[ItemRef]:
         return self.item_refs(READING_LIST, exclude=READ)
@@ -266,12 +280,12 @@ class BazQuxClient:
         returned: set[str] = set()
         for start in range(0, len(ids), CONTENTS_BATCH):
             batch = ids[start : start + CONTENTS_BATCH]
-            token = self._write_token()
             response = self._authed(
                 "POST",
                 "/reader/api/0/stream/items/contents",
+                with_token=True,
                 params={"output": "json"},
-                data={"i": batch, "T": token},
+                data={"i": batch},
             )
             try:
                 data = response.json()
@@ -300,13 +314,12 @@ class BazQuxClient:
         done = 0
         for start in range(0, len(ids), EDIT_BATCH):
             batch = ids[start : start + EDIT_BATCH]
-            token = self._write_token()
-            data: dict[str, Any] = {"i": batch, "T": token}
+            data: dict[str, Any] = {"i": batch}
             if add:
                 data["a"] = add
             if remove:
                 data["r"] = remove
-            response = self._authed("POST", "/reader/api/0/edit-tag", data=data)
+            response = self._authed("POST", "/reader/api/0/edit-tag", with_token=True, data=data)
             if response.text.strip() != "OK":
                 raise BazQuxError(f"edit-tag returned {response.text[:100]!r}")
             done += len(batch)
@@ -323,6 +336,20 @@ class BazQuxClient:
 
     def untag(self, item_ids: Iterable[str], name: str) -> int:
         return self.edit_tag(item_ids, remove=label(name))
+
+
+def _int_or_none(value: object) -> int | None:
+    """A timestamp as BazQux writes it (an int, a digit string, now and then "1.7e9"), or
+    None: a bad timestamp must not drop the item, which would be refetched every run."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 def _first_href(entries: object) -> str:
@@ -347,8 +374,6 @@ def _parse_item(raw: dict) -> Item:
     content = raw.get("content") or {}
     if isinstance(content, dict) and len(str(content.get("content") or "")) > len(body):
         body = str(content["content"])
-    crawled = raw.get("crawlTimeMsec")
-    published = raw.get("published")
     return Item(
         id=long_id,
         short_id=long_to_short(long_id),
@@ -358,8 +383,8 @@ def _parse_item(raw: dict) -> Item:
         url=url,
         title=html.unescape(str(raw.get("title") or "")),
         author=html.unescape(str(raw.get("author") or "")),
-        published=int(published) if published else None,
-        crawled_msec=int(crawled) if crawled else None,
+        published=_int_or_none(raw.get("published")),
+        crawled_msec=_int_or_none(raw.get("crawlTimeMsec")),
         html=body,
         categories=[str(c) for c in raw.get("categories") or []],
     )
