@@ -714,6 +714,11 @@ def test_version_check_and_upgrade_command(tmp_path, monkeypatch):
     monkeypatch.setattr(upgrade.httpx, "get", down)
     assert upgrade.newest_on_pypi() is None
     _project(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        upgrade,
+        "channel",
+        lambda: upgrade.Channel("checkout", ["git", "-C", "/x", "pull", "--ff-only"], "a checkout"),
+    )
     result = invoke(["upgrade"])
     assert result.exit_code == 0 and "a checkout" in result.output and "to upgrade: git -C" in result.output
     ran = []
