@@ -1,0 +1,874 @@
+# The evaluation set: sixty short articles, written for the purpose (none is a real
+# publication; names, places and figures are invented), each with the band the example student
+# in profile.example (Ines, the marine biologist) should see it in. `bodh eval` judges them
+# with the configured judge and prints the agreement by band; tests/test_evals.py checks the
+# set itself offline. Add an article by copying an entry; keep texts under 200 words; `why`
+# says in one line what makes the band, so a disagreement can be argued about.
+#
+# bands: score-90 excellent for Ines, score-70 good, score-50 middling, score-30 poor,
+# score-0 junk (press releases, listicles, marketing, stubs).
+
+- id: 1
+  title: "Comparing environmental DNA and diver transects on twelve Atlantic seagrass meadows"
+  feed: "Journal of Coastal Methods"
+  folder: Science
+  expected: score-90
+  why: a primary, careful field comparison on the exact decision in front of her (eDNA against diver surveys)
+  text: |
+    We sampled twelve seagrass meadows along the Portuguese and Galician coast with paired diver
+    transects and one-litre water samples filtered on site, over two seasons. Diver surveys found
+    41 fish species; eDNA metabarcoding found 58, including nine cryptic gobies no diver recorded,
+    but missed three large transients that divers saw on every visit. Agreement between the two
+    methods was highest in sheltered meadows and fell sharply where tidal currents exceeded half a
+    knot, which we attribute to eDNA transport from neighbouring habitats. Per site, eDNA cost a
+    third of a diver day once the lab pipeline was running, but the first season's set-up cost was
+    four times that. We recommend a hybrid design: eDNA for species lists and seasonal presence,
+    divers for abundance and size structure. The sampling protocol, primer sets and the full
+    occurrence table are in the supplement.
+
+- id: 2
+  title: "What a sea-surface temperature map does not tell you: a field ecologist's guide to satellite products"
+  feed: "Remote Sensing for Ecologists"
+  folder: Science
+  expected: score-90
+  why: a practitioner's technical explainer in a field she wants to read fluently, aimed at exactly her kind of reader
+  text: |
+    Most ecologists meet satellite data as a pretty map. This guide explains what sits behind it:
+    the difference between a level-2 swath and a level-4 gap-filled analysis, why a daily product
+    over a cloudy coast is mostly interpolation, how a one-kilometre pixel averages the water your
+    transect runs through with the upwelling plume beside it, and when a product's stated error of
+    0.3 degrees is honest. It walks through downloading a month of data with a free account,
+    extracting a time series at a station's coordinates, and matching it against a logger on the
+    sea floor, with the Python shown. The last section is on what to ask a remote-sensing
+    collaborator before signing a proposal: which product, which validation sites, and who owns
+    the processing chain when the grant ends.
+
+- id: 3
+  title: "Fitting a hierarchical occupancy model to five years of coastal survey data"
+  feed: "Ecological Statistics Notebook"
+  folder: Science
+  expected: score-90
+  why: a worked, code-backed tutorial on machine learning and statistics on ecological data, pitched above the beginner level she already has
+  text: |
+    This post works through a real data set: 180 sites, five years, imperfect detection, divers
+    who change from year to year. It starts from the simple logistic model that most of us fit and
+    shows, with the residuals, where it lies. Then it builds the occupancy model in stages:
+    detection as a function of visibility and diver experience, occupancy as a function of depth
+    and distance to the nearest meadow, a random effect per site. Each stage has the model code, the
+    prior choices explained, and the posterior checks that made the author change her mind twice.
+    The surprise was that diver experience mattered more than visibility, which has consequences
+    for how to roster a survey season. The data and the notebook are on the author's repository.
+
+- id: 4
+  title: "Downscaling a global climate model to a 200-kilometre coastline: what the regional runs got wrong"
+  feed: "Climate Modelling Digest"
+  folder: Science
+  expected: score-90
+  why: first-hand technical writing in climate modelling, a goal field, with the failures stated plainly
+  text: |
+    We ran three regional ocean models nested inside the same global projection for the Iberian
+    upwelling coast and compared them with twenty years of mooring data. All three reproduced the
+    seasonal cycle; none reproduced the frequency of the short, strong upwelling pulses that drive
+    nutrient supply, and the two with coarser vertical resolution produced a shelf that was too
+    warm by almost a degree in late summer. The errors did not cancel when the runs were averaged.
+    We describe what the vertical grid choice does to the pulse statistics, why the bias is larger
+    near the coast than offshore, and which diagnostic a biologist should ask a modeller for before
+    using a projection in a habitat forecast: the distribution of event durations, not the mean.
+
+- id: 5
+  title: "Moving a field station's twenty years of logger data out of spreadsheets"
+  feed: "Research Data Practice"
+  folder: Science
+  expected: score-90
+  why: an honest first-hand account of the exact pipeline decision she faces, with costs and mistakes
+  text: |
+    Our station kept temperature, salinity and tide-gauge records in spreadsheets, one per
+    instrument per year, 340 files in all. This is what moving them into one database cost and
+    what we would do differently. The migration took one technician four months, most of it on
+    inconsistent timestamps and units; the writing of the loader took two weeks. We chose SQLite
+    with a thin schema (instrument, deployment, reading, flag), skipped the cloud entirely, and
+    wrote the quality flags as a separate table so a correction never overwrote a reading. The
+    gains: a query that used to take a day takes a minute, and three students found errors in the
+    old files within a week. The losses: two people who refused to stop using the spreadsheets, and
+    one lost year that was never typed in. Schema and scripts attached.
+
+- id: 6
+  title: "Why the Canary Current is weakening, and what the moorings say about it"
+  feed: "Physical Oceanography Letters"
+  folder: Science
+  expected: score-90
+  why: primary physical oceanography on her own coast, written for a technical reader outside the specialty
+  text: |
+    The Canary Current carries cool water down the Iberian and Moroccan coasts, and a decline in
+    its transport has been reported from satellite altimetry for a decade. We combine fifteen
+    years of current-meter moorings with the altimetry and find the decline is real but half the
+    size the altimetry alone suggested, because a shift in the current's offshore position was
+    being read as a loss of strength. The weakening is concentrated in late summer and coincides
+    with a poleward shift of the trade winds. We explain the method for separating position from
+    strength, give the uncertainties, and end with what the change implies for upwelling-fed
+    ecosystems on the shelf: fewer, longer events rather than weaker ones.
+
+- id: 7
+  title: "A drone survey protocol for intertidal meadows that survived a season of use"
+  feed: "Field Methods Workshop"
+  folder: Science
+  expected: score-90
+  why: direct, practical evidence for the drone purchase decision, with the failures and the costs
+  text: |
+    We flew a small multirotor over four intertidal seagrass meadows at every spring low tide for
+    one season, 38 flights in all. What worked: a fixed flight plan at 40 metres, overlap of 80
+    percent, a pair of ground targets for scale, and flying within an hour of low water. What did
+    not: the first camera's rolling shutter, a battery policy that lost two flights to the cold,
+    and classification of meadow against algae, which needed hand-labelled training data from
+    every month because the colour changed. Cover estimates agreed with quadrat surveys within six
+    percent at the three sheltered sites and not at all at the exposed one, where the tide never
+    fell far enough. Total cost including the two months of a student's time is given per hectare
+    mapped, against the diver survey it replaced.
+
+- id: 8
+  title: "Reading a research budget as a lab head: the three lines that decide everything"
+  feed: "The Working Scientist"
+  folder: Essays
+  expected: score-90
+  why: unusually good writing on a decision she makes every year, from first-hand experience
+  text: |
+    Every grant budget has three lines that decide whether the project is alive in year three:
+    the salary of the one person who knows how the data flow, the maintenance of the instrument
+    that produces it, and the travel that keeps the collaboration honest. Everything else can be
+    cut. This essay, by someone who has run a field lab through two funding cycles, is about how
+    to protect those lines when the reviewers ask for a ten percent reduction, why equipment
+    budgets are easier to defend than people, how to write a data-management line that is not a
+    fiction, and what to do in the year the renewal fails. It is specific, unsentimental, and has
+    the numbers from the author's own budgets, anonymised but real.
+
+- id: 9
+  title: "How ocean colour satellites estimate chlorophyll, and where they fail near the coast"
+  feed: "Oceans Explained"
+  folder: Science
+  expected: score-70
+  why: a good explainer in a goal field, clearly written, a little below the level she will need
+  text: |
+    Chlorophyll from space is an inference, not a measurement. The sensor sees reflected light in
+    a handful of bands; an algorithm fitted to open-ocean data turns the blue-to-green ratio into
+    a concentration. The article explains the fit, the correction for the atmosphere that removes
+    ninety percent of the signal before anything is estimated, and the three reasons coastal water
+    breaks the method: suspended sediment, dissolved organic matter from rivers, and the sea floor
+    showing through in shallow water. It describes the regional algorithms that try to repair this
+    and how a station's own water samples can be used to check them. A clear introduction, with a
+    reading list at the end for the next level.
+
+- id: 10
+  title: "The lab that stopped running its own servers"
+  feed: "Computing in the Sciences"
+  folder: Science
+  expected: score-70
+  why: a thoughtful adjacent case study on the data-pipeline question, from a lab bigger than hers
+  text: |
+    A genomics group at a mid-sized university describes four years of running its own compute
+    cluster, then two years after moving to a national facility. The post is specific about what
+    changed: the graduate students stopped spending a third of their time on system
+    administration, the queue waits grew to a day in term time, the cost per sample fell by half,
+    and the lab lost the ability to run a tool that the facility would not install. The author's
+    view is that a small lab should never own hardware it cannot afford to have fail, and that the
+    real cost of self-hosting is the person whose career is spent on it. Useful for anyone deciding
+    how much infrastructure a field station should carry itself.
+
+- id: 11
+  title: "Ocean heatwaves are getting longer, and the fish are moving north"
+  feed: "Science Weekly"
+  folder: News
+  expected: score-70
+  why: solid science journalism on an adjacent topic with a primary study behind it
+  text: |
+    A study of forty years of temperature records and fisheries surveys in the north-east Atlantic
+    finds marine heatwaves lasting twice as long as in the 1980s, and the centre of distribution of
+    eleven commercial fish species shifting north by an average of 25 kilometres a decade. The
+    article interviews two of the authors on how the survey data were harmonised across countries,
+    quotes a sceptic who notes that fishing pressure moved in the same period, and explains the
+    difference between a heatwave's intensity and its duration for an animal that can move. It
+    links the paper and the data portal. Not new to a marine biologist, but a careful summary of a
+    large piece of work she would otherwise not have time to read.
+
+- id: 12
+  title: "What I learned writing an image classifier for coral photos with no machine-learning background"
+  feed: "A Biologist Learns to Code"
+  folder: Essays
+  expected: score-70
+  why: an honest first-person account of machine learning on ecological images, pitched at her level
+  text: |
+    I had ten thousand photographs of coral quadrats and a reviewer asking for cover estimates. This
+    is what six months of learning to train a classifier taught me, written for the biologist I
+    was. The labels were the hard part: thirty hours of drawing polygons, and then the discovery
+    that my own labels disagreed with my colleague's on a fifth of the images. The model itself was
+    a pretrained network with the last layer retrained, which took an afternoon. The accuracy
+    looked wonderful until I tested it on photographs from a different camera. The post ends with
+    the checklist I now use: label a test set first, from a different site; measure agreement
+    between human labellers before trusting the machine; keep the images small.
+
+- id: 13
+  title: "A plain explanation of how the global ocean carries heat, with the numbers"
+  feed: "Physical Oceanography Letters"
+  folder: Science
+  expected: score-70
+  why: a good technical introduction to physical oceanography, a goal field; introductory but not thin
+  text: |
+    The ocean holds ninety percent of the heat the climate system has gained. This article explains
+    how that heat moves: the wind-driven gyres in the top kilometre, the slow overturning that
+    sinks cold water in the North Atlantic and Southern Ocean, and the eddies, a hundred kilometres
+    across, that carry most of the heat across currents. It gives the transports in petawatts, the
+    time scales from months to a thousand years, and the measurement methods behind each number,
+    from ship sections to the profiling floats. The final section is on what a two-decade warming
+    of the deep Atlantic does and does not mean for a coastal shelf. A sound first chapter for
+    someone reading into the field.
+
+- id: 14
+  title: "A referee's checklist for ecological papers that use remote-sensing data"
+  feed: "Peer Review Notes"
+  folder: Science
+  expected: score-70
+  why: directly useful for her reviewing and for judging a collaboration, written by an experienced editor
+  text: |
+    After handling two hundred manuscripts that combine field ecology with satellite data, an
+    editor lists what she now asks for before anything else. Which product and version, with the
+    date of download. The pixel size against the size of the habitat patches. How cloud gaps were
+    filled, and whether the filled values were used in the statistics. Whether the ground-truth
+    sites were chosen before or after looking at the imagery. The validation against independent
+    field data, separately for the easy and the hard cases. The list is short, each item has an
+    example of the error it catches, and the author is candid that half the papers she sees fail
+    the third item.
+
+- id: 15
+  title: "European research funding in 2027: the calls that matter for marine science"
+  feed: "Funding Watch Europe"
+  folder: News
+  expected: score-70
+  why: relevant, well-organised funding news for a decision she makes this year, from a source that knows the landscape
+  text: |
+    A summary of the research calls expected next year that touch marine and coastal work: the
+    ocean mission's second round, with a stated preference for monitoring methods; the biodiversity
+    partnership's call on long-term observation; two national programmes that fund equipment up to
+    a stated ceiling; and a small-grant scheme for data infrastructure that few labs apply to. For
+    each, the likely opening month, the success rate from the last round, and what the evaluators
+    rewarded. The author notes that the equipment programmes now require a data-management plan
+    with named software, which is a change from the previous cycle. Not writing of any
+    distinction, but complete and accurate.
+
+- id: 16
+  title: "Twenty years of a kelp forest, in one person's photographs"
+  feed: "Coastlines"
+  folder: Essays
+  expected: score-70
+  why: well-written and observant, in her broad field, though it teaches a practitioner little that is new
+  text: |
+    A diver who has photographed the same kelp forest off a Scottish headland since 2006 writes
+    about what the pictures show that the surveys did not: the year the urchins came, the three
+    summers the canopy thinned before anyone measured it, the return of a fish species that the
+    records say was never there. It is a reflective piece about what long attention sees and what
+    sampling misses, with the photographs, dated. The science is light and the author says so.
+    The writing is very good. For a biologist it is more an argument about observation than new
+    information; it would be a 90 for a general reader.
+
+- id: 17
+  title: "Interview: the modeller who runs the national coastal forecast"
+  feed: "Science Weekly"
+  folder: News
+  expected: score-70
+  why: a substantive interview in a goal field with real detail on how a forecast is made and checked
+  text: |
+    The head of the coastal forecasting group talks about how the daily forecast of currents,
+    waves and temperature is made: the global model it takes its boundary from, the local
+    resolution, which observations are assimilated and which are only used for checking, the
+    forecast's known weaknesses in estuaries, and how a fish-farm operator and a search-and-rescue
+    coordinator read the same output differently. She is frank about where the model is worst and
+    about the forecast skill falling to climatology after four days. The interviewer asks good
+    questions and lets her answer at length.
+
+- id: 18
+  title: "The case for counting fewer things better"
+  feed: "The Working Scientist"
+  folder: Essays
+  expected: score-70
+  why: a well-argued essay on survey design that bears on her diver-versus-eDNA decision, if not directly
+  text: |
+    Monitoring programmes grow by adding variables and sites, and shrink by losing the person who
+    understood them. This essay argues for the opposite design: fewer sites, fewer variables, a
+    protocol a new graduate can follow from the written instructions alone, and a budget line for
+    the one check that tells you the series is still measuring the same thing. The examples are
+    from bird counts and river gauging rather than the sea, but the argument is general, and the
+    section on how to decide which long series to keep when money is cut is the best treatment of
+    that question I have read.
+
+- id: 19
+  title: "Scientists discover seagrass meadows store more carbon than thought"
+  feed: "Daily Science News"
+  folder: News
+  expected: score-30
+  why: routine news in her own field, a result she knows, written for a general reader
+  text: |
+    Seagrass meadows, the underwater grasslands found along coasts around the world, may store far
+    more carbon than previously estimated, according to a new study. Researchers measured carbon in
+    sediment cores from meadows in several countries and found that some had been storing it for
+    thousands of years. "Seagrass is a hidden hero of the climate," said the lead author. The
+    plants trap particles in their leaves and roots, which build up in the sediment. The study
+    suggests that protecting these habitats could be an important tool against climate change.
+    Seagrass meadows are declining worldwide due to pollution and coastal development, the
+    researchers warn.
+
+- id: 20
+  title: "What is ocean acidification? A beginner's guide"
+  feed: "Oceans Explained"
+  folder: Science
+  expected: score-30
+  why: a beginner explainer on a topic she teaches; competent, but it teaches her nothing
+  text: |
+    The ocean absorbs about a quarter of the carbon dioxide humans release. When the gas dissolves
+    in seawater it forms carbonic acid, which lowers the pH; since the industrial revolution the
+    surface ocean has become about thirty percent more acidic. This guide explains the chemistry
+    in plain terms, why the change is a problem for animals that build shells and skeletons from
+    calcium carbonate, which regions are affected first, and what scientists measure to track it.
+    It ends with a short section on what can be done. Clear and correct, with diagrams, written for
+    the curious reader with no science background.
+
+- id: 21
+  title: "This week in marine science: eight stories you might have missed"
+  feed: "Ocean Roundup"
+  folder: Aggregators
+  expected: score-30
+  why: a thin roundup of one-paragraph summaries, each a link to coverage elsewhere
+  text: |
+    Our weekly digest. A new estimate of global kelp cover from satellite imagery. A fish species
+    recorded in the Mediterranean for the first time. A study on microplastics in deep-sea
+    sediment. Funding announced for an autonomous glider fleet in the North Sea. A coral bleaching
+    alert for the Red Sea. A profile of a researcher studying whale song. A new book on the history
+    of oceanography. A video of a cuttlefish changing colour. Each item is two sentences and a
+    link. Thanks for reading, and send us anything we missed.
+
+- id: 22
+  title: "Why I am optimistic about the ocean"
+  feed: "Coastlines"
+  folder: Essays
+  expected: score-30
+  why: pleasant and general, an opinion with little in it she has not heard
+  text: |
+    It is easy to despair about the sea. Warming, acidification, overfishing, plastic. But I want
+    to make the case for hope. Whale populations are recovering in many places. Marine protected
+    areas work when they are enforced. Young people care more than any generation before. The
+    technology for monitoring the ocean has never been better. We know what to do; the question is
+    whether we will do it. I believe we will, because we have before. This is a short piece of
+    encouragement for a hard week, nothing more.
+
+- id: 23
+  title: "Study links coastal development to seagrass decline in the Mediterranean"
+  feed: "Daily Science News"
+  folder: News
+  expected: score-30
+  why: a competent news report of a result well known to her, with nothing on method
+  text: |
+    A study published this week finds that seagrass meadows near developed coastlines in the
+    Mediterranean have declined faster than those near undeveloped shores over the past three
+    decades. The researchers compared aerial photographs and dive surveys at sixty sites. Meadows
+    near marinas and dredged channels lost the most area. The authors call for stronger protection
+    of coastal habitats in planning decisions. Seagrass meadows provide nurseries for fish and
+    protect shorelines from erosion. The study appears in a conservation journal.
+
+- id: 24
+  title: "Reef briefing: coral news from around the world"
+  feed: "Ocean Roundup"
+  folder: Aggregators
+  expected: score-30
+  why: an aggregated briefing that summarises other outlets' coverage, nothing first-hand
+  text: |
+    A quick tour of this month's coral stories. Australian scientists reported mixed results from a
+    bleaching season. A Florida restoration programme reached a milestone number of outplanted
+    fragments. Researchers in the Maldives tested a shading method. A new coral species was
+    described from the Pacific. A documentary on reefs premiered at a festival. Each story is a
+    summary of a report elsewhere, with the link; we have not spoken to the scientists ourselves.
+
+- id: 25
+  title: "The ten most beautiful marine animals, ranked"
+  feed: "Ocean Lifestyle"
+  folder: null
+  expected: score-0
+  why: a listicle
+  text: |
+    10. The mandarinfish, a riot of colour. 9. The leafy seadragon, nature's camouflage artist. 8.
+    The blue-ringed octopus, deadly but gorgeous. 7. The nudibranch, in a thousand varieties. 6.
+    The flamboyant cuttlefish. 5. The manta ray, gentle giant. 4. The lionfish. 3. The clownfish,
+    everyone's favourite. 2. The sea turtle. 1. The whale shark, biggest fish in the sea. Which is
+    your favourite? Tell us in the comments and share with a friend who loves the ocean.
+
+- id: 26
+  title: "AquaSense Pro: the all-in-one water quality platform that research teams trust"
+  feed: "Marine Tech Insider"
+  folder: News
+  expected: score-0
+  why: vendor marketing with no data
+  text: |
+    Tired of juggling loggers, spreadsheets and manual downloads? AquaSense Pro brings your whole
+    monitoring programme into one cloud dashboard. Our patented sensors deliver lab-grade accuracy
+    in the field, and our AI-powered analytics surface insights your team would otherwise miss.
+    Trusted by leading research institutions worldwide. Flexible subscription plans to fit any
+    budget. Book a demo today and see why scientists are switching to AquaSense Pro. Mention this
+    article for a fifteen percent discount on your first year.
+
+- id: 27
+  title: "University announces new ocean research institute"
+  feed: "Campus News Wire"
+  folder: News
+  expected: score-0
+  why: a press release dressed as news
+  text: |
+    The university today announced the creation of a new institute for ocean research, to be
+    housed in a renovated building on the waterfront campus. "This is a landmark moment for our
+    university and for ocean science," said the vice-chancellor. The institute will bring together
+    researchers from across the university to tackle the great challenges facing our oceans. An
+    initial investment has been committed by the university and a philanthropic partner. The
+    institute's founding director will be announced in the coming months. The university is
+    committed to excellence in research and to the sustainability of our planet.
+
+- id: 28
+  title: "Register now: the 14th International Conference on Coastal Ecosystems"
+  feed: "Conference Calendar"
+  folder: News
+  expected: score-0
+  why: a conference announcement
+  text: |
+    Registration is now open for the 14th International Conference on Coastal Ecosystems, to be
+    held next spring in Lisbon. Early-bird rates apply until the end of the year. The programme
+    features keynote lectures, parallel sessions, poster presentations and a workshop day. Abstract
+    submission closes in two months. Student travel grants are available. Join colleagues from
+    around the world for four days of science and networking. Visit the conference website for
+    details and to register.
+
+- id: 29
+  title: "Seven signs your lab needs a data management upgrade"
+  feed: "Marine Tech Insider"
+  folder: News
+  expected: score-0
+  why: a listicle that exists to sell the product named at the end
+  text: |
+    1. You cannot find last year's data. 2. Two people have different versions of the same file.
+    3. A student's departure took the knowledge with them. 4. You have been asked for a data
+    management plan and panicked. 5. Your spreadsheets have more than twenty tabs. 6. You back up by
+    emailing files to yourself. 7. You dread the audit. If three or more apply, it is time to talk
+    to us about LabVault, the data platform built for research teams. Request a free consultation.
+
+- id: 30
+  title: "Marine biologist shares her top five beach reads this summer"
+  feed: "Ocean Lifestyle"
+  folder: null
+  expected: score-0
+  why: lifestyle filler
+  text: |
+    Summer is here and we asked a marine biologist what she is reading on the beach. Her picks: a
+    thriller set on a research vessel, a memoir by a diver, a novel about a lighthouse keeper, a
+    popular science book about octopuses, and a cookbook for seafood. "I like to switch off from
+    work," she says. Which books are in your beach bag? Let us know. Plus: the best sunscreens that
+    are safe for coral, according to our affiliate partners.
+
+- id: 31
+  title: "OceanCoin: invest in the blue economy with the first ocean-backed token"
+  feed: "Blue Economy Weekly"
+  folder: null
+  expected: score-0
+  why: promotional, unrelated to her reading, nothing in it
+  text: |
+    The ocean economy is worth trillions, and now you can own a piece of it. OceanCoin is the first
+    digital token backed by sustainable ocean ventures, from seaweed farms to offshore wind. Early
+    investors receive bonus tokens and exclusive access to our investor community. Our team
+    combines decades of maritime experience with cutting-edge blockchain technology. Do not miss
+    the wave. Join the presale now. This is not financial advice.
+
+- id: 32
+  title: "Webinar: unlocking the power of AI for environmental monitoring"
+  feed: "Marine Tech Insider"
+  folder: News
+  expected: score-0
+  why: a webinar promotion
+  text: |
+    Join our experts for a free one-hour webinar on how artificial intelligence is transforming
+    environmental monitoring. Learn how leading organisations are using AI to reduce costs, improve
+    accuracy and unlock insights from their data. Topics include predictive analytics, automated
+    species identification and real-time alerts. All attendees receive a free e-book and a chance
+    to win a smart water sensor. Seats are limited; register today.
+
+- id: 33
+  title: "Breaking: large marine mammal spotted off the coast"
+  feed: "Local News Live"
+  folder: News
+  expected: score-0
+  why: a stub with no content
+  text: |
+    Beachgoers were treated to a surprise this morning when a large marine mammal was spotted
+    swimming close to shore. Witnesses described the animal as "huge" and "amazing". Experts have
+    been contacted for identification. More details to follow as this story develops. Were you
+    there? Send us your photos and videos.
+
+- id: 34
+  title: "Six months with a cheap eDNA kit: a small-lab report"
+  feed: "Field Methods Workshop"
+  folder: Science
+  expected: score-70
+  why: useful first-hand evidence for the eDNA decision, from a smaller effort than the big study; less rigorous
+  text: |
+    We tried a commercial eDNA sampling kit at our estuary station for six months to see whether a
+    lab without a molecular biologist could get anything from it. The sampling was easy and the
+    filters stored well. The sequencing went to a service provider; the results came back as a
+    species list with read counts and little else. The lists were plausible and detected two
+    invasive species we had not seen. Where we struggled was in knowing what the read counts meant
+    and what a negative result was worth. The per-sample cost was moderate; the real cost was the
+    weeks spent learning to read the output. Our conclusion: workable for presence lists, not yet
+    for anything quantitative, and you need a friend who does genetics.
+
+- id: 35
+  title: "How the Nordic monitoring network standardised its diver surveys across six countries"
+  feed: "Journal of Coastal Methods"
+  folder: Science
+  expected: score-70
+  why: a solid methods account in her field, useful for her committee work, not about her exact decision
+  text: |
+    Six national programmes surveyed the same habitats with six protocols for twenty years before
+    agreeing on one. The paper describes how they did it: a two-year intercalibration where teams
+    surveyed each other's sites, the variables that could be harmonised and the three that could
+    not, the statistical adjustment used to splice the historical series, and the governance that
+    keeps the protocol from drifting again. The authors are honest about what was lost: a species
+    group that one country counted and the others dropped. The supplementary material has the
+    protocol itself.
+
+- id: 36
+  title: "A gentle introduction to neural networks for ecologists"
+  feed: "Ecological Statistics Notebook"
+  folder: Science
+  expected: score-50
+  why: competent and relevant to a goal field, but it stops at the level a short course would reach
+  text: |
+    This post introduces neural networks from the ecologist's point of view: a regression with
+    many more parameters, trained by gradient descent, which needs a lot of data and a held-out
+    test set. It explains layers, activation functions and overfitting with a small example on
+    bird-song spectrograms, and warns about the common mistakes: testing on data from the training
+    sites, trusting accuracy on an unbalanced data set, and reading feature importance into a
+    model that has none. It does not go beyond the basics and says so; the reading list at the end
+    is good.
+
+- id: 37
+  title: "What the latest IPCC ocean chapter says, in two thousand words"
+  feed: "Climate Modelling Digest"
+  folder: Science
+  expected: score-50
+  why: a fair summary of a report she has read the summary of already; useful as a refresher, not new
+  text: |
+    A summary of the ocean and cryosphere chapter of the latest assessment: the observed warming
+    by depth, the confidence levels on marine heatwave trends, the projected changes in
+    stratification and oxygen, the regional sea-level ranges, and what the authors say about
+    ecosystems. The piece is accurate and well organised, with the figure numbers given so the
+    reader can go to the source. It adds no interpretation of its own.
+
+- id: 38
+  title: "Should field stations buy drones? Two researchers disagree"
+  feed: "The Working Scientist"
+  folder: Essays
+  expected: score-50
+  why: on her decision, but two short opinions with little evidence in either
+  text: |
+    Two researchers argue the question in six hundred words each. One says a drone pays for itself
+    in a season and changes what a station can see; the other says the drone is cheap and the
+    person to fly it, maintain it and process the imagery is not, and that most station drones sit
+    in a cupboard after year one. Both have a point; neither gives figures beyond an anecdote. A
+    fair framing of the question, not an answer.
+
+- id: 39
+  title: "Why statistics courses fail biology students"
+  feed: "Teaching Science"
+  folder: Essays
+  expected: score-50
+  why: relevant to her teaching, reasonably argued, familiar ground
+  text: |
+    Most biology degrees include one statistics course, taught by a statistician, built around
+    tests the students will never use on their own data. The author argues for teaching statistics
+    through the students' own field data, starting from the question and the plot rather than the
+    test, and for making the course a thread through the degree rather than one semester. The
+    argument is sound and well made; it has been made before, and the piece offers no evidence
+    that the alternative works better, only that the current approach fails.
+
+- id: 40
+  title: "A year of upwelling, in one chart"
+  feed: "Oceans Explained"
+  folder: Science
+  expected: score-50
+  why: a nice piece of data journalism on her coast, light on substance
+  text: |
+    One interactive chart of a year's sea-surface temperature at six points along the Iberian
+    coast, with the upwelling events marked. The text walks through the seasons: the spring
+    onset, the summer pulses, the autumn relaxation. It explains what drives the pattern in a
+    paragraph and points to where the data came from. Nicely done and accurate; a reader who works
+    on this coast learns little from it.
+
+- id: 41
+  title: "Deep learning finds whales in satellite images"
+  feed: "Science Weekly"
+  folder: News
+  expected: score-50
+  why: good general science news in a goal field, at the level of a magazine
+  text: |
+    Researchers trained a neural network to find whales in very high resolution satellite images,
+    with an accuracy they say approaches that of a human analyst, and applied it to a region where
+    aerial surveys are impossible. The article explains why counting whales is hard, how the
+    training images were labelled, and the limits: cloud, sea state, and whales below the surface.
+    An author is quoted on the cost of the imagery, which is the real barrier. A clear report of a
+    nice result; the paper would be the thing to read.
+
+- id: 42
+  title: "The station manager's year: a diary"
+  feed: "Coastlines"
+  folder: Essays
+  expected: score-50
+  why: pleasant and relatable, some practical detail, little she does not already live
+  text: |
+    A month-by-month account of running a small field station: the winter of repairs, the spring
+    rush of visiting groups, the boat that failed its inspection, the student who nearly drowned, the
+    summer of too many people and too few beds, the audit, the grant that came through in November.
+    It is warm, well observed and honest about the toll. For someone who runs a station it is
+    recognition rather than information.
+
+- id: 43
+  title: "New species of seagrass-dwelling shrimp described from Mozambique"
+  feed: "Daily Science News"
+  folder: News
+  expected: score-30
+  why: routine taxonomic news, far from her questions
+  text: |
+    A new species of shrimp living among seagrass blades has been described from a bay in
+    Mozambique. The animal is about a centimetre long and transparent except for a green stripe
+    that matches the leaves. It was found during a survey of the bay's invertebrates. The authors
+    say it is probably widespread but overlooked. The description appears in a taxonomy journal.
+
+- id: 44
+  title: "Five simple things you can do to help the ocean"
+  feed: "Ocean Lifestyle"
+  folder: null
+  expected: score-0
+  why: a listicle for a general audience
+  text: |
+    1. Say no to single-use plastic. 2. Choose sustainable seafood. 3. Reduce your carbon
+    footprint. 4. Join a beach clean. 5. Spread the word. Small actions add up. Share this list
+    with someone who loves the sea.
+
+- id: 45
+  title: "How we built a low-cost temperature logger network with off-the-shelf parts"
+  feed: "Field Methods Workshop"
+  folder: Science
+  expected: score-70
+  why: practical and first-hand, relevant to the station's equipment questions, with a parts list
+  text: |
+    Commercial loggers cost more than we could spend for forty sites, so we built our own: a
+    waterproof housing, a cheap temperature sensor, a microcontroller, a coin cell, a year of
+    battery life at ten-minute readings. The post gives the parts list with prices, the firmware,
+    the calibration against a reference bath, the drift measured over a year, and the failure rate
+    (nine of forty, mostly flooded housings in the first batch). Accuracy was within a tenth of a
+    degree after calibration, which is enough for our purpose and not for all. Everything is on
+    the repository under an open licence.
+
+- id: 46
+  title: "The year the data went missing: a post-mortem"
+  feed: "Research Data Practice"
+  folder: Science
+  expected: score-70
+  why: a candid post-mortem with lessons for the pipeline decision; narrower than the migration account
+  text: |
+    A postdoc's laptop held the only copy of two years of survey data. It was stolen. This is the
+    lab's account of what was lost, what was recovered from email attachments and field notebooks,
+    and what changed: a nightly copy to a server the institution runs, a rule that raw data is
+    read-only after the week it is collected, and a monthly check that someone other than the
+    collector can open the files. The author is specific about why the rules that existed before
+    were not followed, which is the useful part.
+
+- id: 47
+  title: "Can machine learning predict harmful algal blooms? A review"
+  feed: "Climate Modelling Digest"
+  folder: Science
+  expected: score-70
+  why: a careful review bridging two of her goal fields, with the limits stated
+  text: |
+    A review of forty studies that used machine learning to predict harmful algal blooms from
+    satellite, buoy and weather data. The authors group the methods, compare the reported skill,
+    and show that most of the reported accuracy comes from predicting the absence of blooms, which
+    is easy. Few studies tested on years they did not train on; the ones that did report much lower
+    skill. The review ends with a short set of standards for reporting that would make the
+    literature comparable. Dense but clear.
+
+- id: 48
+  title: "Tide tables explained"
+  feed: "Oceans Explained"
+  folder: Science
+  expected: score-30
+  why: a beginner explainer on something she uses every week
+  text: |
+    Why are there two high tides a day? Why are they higher at new and full moon? Why do the times
+    shift by about fifty minutes a day? This explainer answers the questions in plain language with
+    diagrams, explains the difference between spring and neap tides, and shows how to read a tide
+    table. It ends with a note on how local geography changes the pattern. Correct and friendly;
+    nothing for a field scientist.
+
+- id: 49
+  title: "Partnership announced between research station and technology company"
+  feed: "Campus News Wire"
+  folder: News
+  expected: score-0
+  why: a press release
+  text: |
+    The research station and a technology company today announced a strategic partnership to
+    accelerate innovation in ocean monitoring. The collaboration will combine the station's
+    scientific expertise with the company's cutting-edge sensor platform to deliver next-generation
+    solutions. "We are thrilled to partner with such an innovative company," said the station's
+    director. "Together we will unlock new possibilities." Financial terms were not disclosed.
+
+- id: 50
+  title: "Your weekly ocean horoscope"
+  feed: "Ocean Lifestyle"
+  folder: null
+  expected: score-0
+  why: filler
+  text: |
+    Pisces: the tides are turning in your favour this week. Cancer: hold on tight to your shell.
+    Scorpio: the deep calls to you. Everyone else: drink water and go to the beach. Share with a
+    friend who needs it.
+
+- id: 51
+  title: "Measuring seagrass carbon: a methods comparison that changes the global estimates"
+  feed: "Journal of Coastal Methods"
+  folder: Science
+  expected: score-70
+  why: primary and rigorous, in her own field; she knows the debate, but the method result is new
+  text: |
+    Estimates of carbon stored under seagrass meadows vary by an order of magnitude between
+    studies. We show that most of the variation comes from the method: the depth of the core, the
+    treatment of carbonate, and whether the meadow's edge was sampled. Re-analysing 112 published
+    cores with one method narrows the global estimate to a range a third as wide, and lower than
+    the commonly quoted figure. We provide the correction factors and argue that future studies
+    report the raw measurements rather than the derived stock. For anyone who cites seagrass
+    carbon numbers, this changes which numbers to cite.
+
+- id: 52
+  title: "An oceanographer explains why the Gulf Stream will not switch off next year"
+  feed: "Science Weekly"
+  folder: News
+  expected: score-50
+  why: good public explanation of a goal-field question; familiar to a careful reader of the news
+  text: |
+    After a week of alarming headlines, an oceanographer explains the difference between the Gulf
+    Stream, which is wind-driven and will keep flowing, and the overturning circulation, which is
+    weakening and whose collapse is a real but slow and uncertain possibility. She explains what
+    the recent paper actually found, why the early-warning statistics are contested, and what the
+    range of model projections looks like. Clear, measured and useful as a reference for the next
+    time the headlines appear.
+
+- id: 53
+  title: "The complete guide to becoming a marine biologist"
+  feed: "Ocean Lifestyle"
+  folder: null
+  expected: score-0
+  why: a career listicle for teenagers, with affiliate links
+  text: |
+    Do you love the ocean? Here is how to turn that passion into a career. Step 1: study biology
+    and chemistry at school. Step 2: choose a university with a marine programme. Step 3: get
+    diving qualifications (we recommend these courses). Step 4: volunteer. Step 5: network at
+    conferences. Step 6: consider a master's degree. Step 7: never give up on your dream. Shop our
+    recommended gear for aspiring marine biologists.
+
+- id: 54
+  title: "What remote sensing cannot see: a cautionary tale from the mangroves"
+  feed: "Remote Sensing for Ecologists"
+  folder: Science
+  expected: score-90
+  why: a first-hand, specific account of where a goal-field method fails, exactly the judgement she needs before a collaboration
+  text: |
+    A mangrove restoration programme reported a doubling of forest cover from satellite imagery.
+    On the ground, half the new "forest" was a dense invasive shrub with the same spectral
+    signature. This account, by the ecologist who found the error, explains how the classification
+    was built, why the training data could not have caught the problem, how long the error stood
+    in official reports, and what a cheap check (two hundred ground points chosen at random, not
+    along the roads) would have cost. The last section lists the habitat types along temperate
+    coasts where the same confusion is likely, seagrass among them, with the reasons.
+
+- id: 55
+  title: "Fieldwork safety when the budget is cut: a protocol that survived"
+  feed: "Field Methods Workshop"
+  folder: Science
+  expected: score-70
+  why: practical and first-hand on a responsibility she carries; not a reading goal but a decision she will face
+  text: |
+    When our station's budget fell by a fifth, the safety line was the first thing people proposed
+    cutting. This post describes the protocol we kept and why: a written dive plan for every day,
+    two people on every boat, a check-in call that costs nothing, a rule about weather that no one
+    overrides. It gives the near-misses from the five years before the protocol, the costs of each
+    element, and the one element we did cut, with the reasoning. Short and sober.
+
+- id: 56
+  title: "The best waterproof cameras of the year"
+  feed: "Marine Tech Insider"
+  folder: News
+  expected: score-0
+  why: a product roundup with affiliate links
+  text: |
+    Whether you are a diver, a snorkeller or just clumsy at the pool, these are the waterproof
+    cameras to buy this year. Our top pick combines image quality and value. The budget option
+    surprised us. The premium choice is for serious underwater photographers. Each review covers
+    battery, depth rating and image quality. We may earn a commission from purchases made through
+    our links.
+
+- id: 57
+  title: "Opinion: marine protected areas work, and the debate should be over"
+  feed: "Coastlines"
+  folder: Essays
+  expected: score-30
+  why: an opinion piece on a question she has settled, which the profile says is never worth attention
+  text: |
+    For thirty years the evidence has accumulated: protected areas that are enforced and large
+    enough hold more fish, bigger fish and more species, and the benefits spill over the
+    boundaries. Yet every planning process reopens the debate as if the evidence did not exist.
+    This piece argues that the argument is over and that the only questions left are where and how
+    large. It is well written and the author is right; a marine biologist has heard every word of
+    it before.
+
+- id: 58
+  title: "A statistician reads an ecology paper: the five mistakes she keeps finding"
+  feed: "Ecological Statistics Notebook"
+  folder: Science
+  expected: score-70
+  why: directly useful for her reviewing and her own lab's work; the mistakes are familiar, the treatment is sharp
+  text: |
+    Pseudoreplication by another name. Testing a hypothesis the data were used to generate. A
+    random effect that should be fixed. Confidence intervals that ignore detection. Model selection
+    reported as if it were a result. For each, a real example (anonymised), why reviewers miss it,
+    and the one line in the methods that would reveal it. The author is a statistician who has
+    consulted for ecologists for twenty years and writes with affection and precision.
+
+- id: 59
+  title: "Scientists call for more funding for ocean research"
+  feed: "Daily Science News"
+  folder: News
+  expected: score-30
+  why: routine news with no content beyond the call itself
+  text: |
+    A group of leading marine scientists has called on governments to increase funding for ocean
+    research, warning that the seas face unprecedented threats. In an open letter, the scientists
+    say that current investment is far below what is needed to understand and protect ocean
+    ecosystems. They point to climate change, pollution and overfishing as urgent challenges. "We
+    cannot protect what we do not understand," the letter says. The letter has been signed by
+    researchers from more than forty countries.
+
+- id: 60
+  title: "Buoy data, three ways: the pipeline we settled on after two false starts"
+  feed: "Research Data Practice"
+  folder: Science
+  expected: score-90
+  why: specific, first-hand technical writing on the pipeline decision, with the two failures and the costs
+  text: |
+    Our buoys send a reading every ten minutes over a satellite link. The first pipeline was a
+    script on a desk machine that someone restarted after every power cut; the second was a cloud
+    service that cost more each month than the buoys did and locked the data in a format we could
+    not export. The third, which has run for three years, is described in full: a small server at
+    the institution, a queue that tolerates a week of outage, raw messages kept forever, a derived
+    table rebuilt from them nightly, quality flags as data, and a dashboard that is a static page.
+    The post gives what each attempt cost in money and in the time of the one person who
+    understood it, and the two rules we would never break again.

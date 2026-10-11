@@ -167,18 +167,25 @@ class Judge:
         context: str = "",
         expansion_topics: list[str] | None = None,
         learned_text: str | None = None,
+        about_text: str | None = None,
+        purpose: str = "teacher",
     ) -> None:
         """``learned_text`` stands in for profile/learned.md (the weekly rewrite's gate judges
-        with a proposed model without writing it to disk)."""
+        with a proposed model without writing it to disk); ``about_text`` for profile/about.md
+        (the evals judge for the example student). ``purpose`` labels the costs."""
         self.cfg = cfg
         self.llm = llm
         self.conn = conn
+        self.purpose = purpose
         self.prompt_version = cfg.judge.prompt_version
         self.expansion_topics = expansion_topics or []
         base = fill_prompt(load_prompt(self.prompt_version, cfg.root), cfg)
         intro, _, rubric = base.partition("\n\n")
-        cfg.check_about()  # the backstop; run and catch-up refuse earlier, before any network
-        about = cfg.read_about() or "(nothing written about the student yet)"
+        if about_text is None:
+            cfg.check_about()  # the backstop; run and catch-up refuse earlier, before any network
+        about = (
+            cfg.read_about() if about_text is None else about_text
+        ) or "(nothing written about the student yet)"
         learned = (cfg.read_learned() if learned_text is None else learned_text) or "(no learned profile yet)"
         # the cached prefix changes only when the student's description or the learned profile
         # does; the concept lists change with every star and read, so they travel in the user
@@ -246,7 +253,7 @@ class Judge:
     def judge_batch(self, rows: list[sqlite3.Row], run_id: int | None) -> dict[str, Verdict]:
         ordered = [r["id"] for r in rows]
         user_text = self._user_text(rows, self.cfg.judge.text_chars)
-        verdicts = self.llm.judge(self.cfg.models.judge, self.system_text, user_text, run_id, "teacher")
+        verdicts = self.llm.judge(self.cfg.models.judge, self.system_text, user_text, run_id, self.purpose)
         return self._by_article(verdicts, ordered)
 
     @staticmethod

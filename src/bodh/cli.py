@@ -24,6 +24,7 @@ import json
 import logging
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -658,6 +659,43 @@ def rebuild(
     with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "rebuild"), graceful_sigterm():
         stats = recovery.rebuild(ctx, dry_run=dry_run)
     typer.echo(recovery.summary(stats))
+
+
+@app.command("eval")
+@_handled
+def evals_command(
+    set_path: Path | None = typer.Option(
+        None, "--set", help="The set (default: evals/set.yaml in the checkout)."
+    ),
+    model: str | None = typer.Option(None, "--model", help="The judge to use; default models.judge."),
+    cap: float = typer.Option(0.5, "--cap", min=0.0, help="Stop at this many dollars."),
+    write: Path | None = typer.Option(None, "--write", help="Also write the results as JSON to this file."),
+    profile_dir: Path | None = typer.Option(
+        None, "--profile", help="The example student (default: profile.example/)."
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Judge the evaluation set for the example student and print the agreement by band and
+    the cost (a few cents, under --cap). The README quotes the figure with its date."""
+    from . import evals
+
+    ctx = _ctx(verbose)
+    items = evals.load_set(set_path or evals.SET_PATH, ctx.cfg.tags.bands)
+    judge_model = model or ctx.cfg.models.judge
+    typer.echo(
+        f"{len(items)} articles; about ${evals.estimate_usd(ctx.cfg, len(items), judge_model):.2f} with {judge_model}"
+    )
+    summary = evals.run_eval(
+        ctx,
+        items,
+        model=model,
+        cap_usd=cap,
+        profile_dir=profile_dir or evals.EXAMPLE_PROFILE,
+        on_progress=lambda done, total: typer.echo(f"  {done}/{total}", err=True),
+    )
+    typer.echo(evals.render_text(summary))
+    if write is not None:
+        typer.echo(f"written: {evals.write_results(summary, write)}")
 
 
 @app.command("clear-old")
