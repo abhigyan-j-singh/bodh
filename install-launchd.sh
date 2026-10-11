@@ -2,7 +2,7 @@
 # Install the four launchd jobs for this checkout: the run (every 30 minutes), the Sunday learner
 # rewrite, the monthly report, and the control room (http://127.0.0.1:8766, kept alive).
 #   ./install-launchd.sh            laptop: LaunchAgents in ~/Library/LaunchAgents, no sudo, run while logged in
-#   ./install-launchd.sh --daemon   always-on Mac mini: LaunchDaemons in /Library/LaunchDaemons (asks for sudo)
+#   ./install-launchd.sh --daemon   an always-on Mac: LaunchDaemons in /Library/LaunchDaemons (asks for sudo)
 # Run again after moving the folder, updating the code or changing the plists; it replaces what is there.
 set -euo pipefail
 cd "$(dirname "$0")"

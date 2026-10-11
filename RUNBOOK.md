@@ -37,7 +37,7 @@ Three or four times a day, in this order; two minutes each time.
 1. Look: open http://127.0.0.1:8766 (or `viveka status`). The top line says idle or what is
    running and its phase; then the mode (shadow or enforcing), the next scheduled run, the
    pile (unread, judged, in flight, pending), today's spend, the last runs.
-2. Read in BazQux or NetNewsWire. In BazQux the judgments are tags: `score-90` (assign it),
+2. Read in BazQux or in a reader that syncs with it. In BazQux the judgments are tags: `score-90` (assign it),
    `score-70` (worth the hour), `score-50` (reference), `score-30` and `score-0` (skip, junk).
    Open a tag with the unread filter on. Star what was good.
 3. Cut, when the unread list is too long:
@@ -100,7 +100,7 @@ would have read?), switch the automatic floor on:
     viveka enforce off               # back to shadow
 
 The floors: `cut.default_floor: 35` for every folder, and in `cut.folders` the ones with their
-own (`World News & Politics` and `Sports` cut below 70, `Aggregators` below 60). Start with 25
+own (in the example config, `News` cuts below 70 and `Aggregators` below 60). Start with 25
 if you want it gentle; raise it when the kept list is still too long. `viveka run --shadow` is
 one run without cutting even while enforcing.
 
@@ -112,7 +112,7 @@ before writing, the run fails, and the floor stays off (every later run says so 
 
 ## 5. Teaching the teacher: the tags
 
-Your opinion of an article is a tag on it in BazQux (web or phone; NetNewsWire syncs stars only).
+Your opinion of an article is a tag on it in BazQux (web or phone; most synced readers carry stars only).
 Three small sets: a grade, the level, a steer. Use one word or all three; a word you do not use
 costs nothing. The run reads them every 30 minutes.
 
@@ -239,7 +239,7 @@ unknown timezone is refused with the key named, by every command. Current values
 
 | Key | Means |
 | --- | --- |
-| `timezone` [Asia/Kolkata] | the day boundary for the budget and the counts |
+| `timezone` [the machine's zone] | the day boundary for the budget and the counts; an IANA name such as `Europe/Lisbon`. Left out, the zone the machine is set to (`$TZ`, else `/etc/localtime`), UTC when neither says |
 | `data_dir`, `profile_dir`, `dashboard_dir` [./data, ./profile, ./dashboard] | where the database, your profile and the dashboard live |
 | `obsidian_note` [empty] | a path for the weekly note, e.g. `~/Obsidian/Main/Viveka/Weekly.md` |
 
@@ -305,8 +305,9 @@ student knows.
 **.env** (never committed, `chmod 600`): `BAZQUX_EMAIL`, `BAZQUX_PASSWORD`, `ANTHROPIC_API_KEY`,
 `HEALTHCHECK_URL` (optional). `viveka doctor` says which are set without showing them.
 
-**profile/**: `seed.md` is yours; `learner.md` is Opus's, rewritten on Sundays, versioned in
-`profile/`'s own git history and in the database (`viveka profile revert`).
+**profile/**: `seed.md` is yours (the install leaves a worked example there; `viveka doctor` and the
+run refuse it until it is replaced); `learner.md` is the learner model's, rewritten on Sundays,
+versioned in `profile/`'s own git history and in the database (`viveka profile revert`).
 
 
 ## 10. When something looks wrong

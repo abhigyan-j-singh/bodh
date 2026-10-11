@@ -3,30 +3,34 @@
 Keeps your BazQux unread list worth reading. A teacher (Claude Sonnet 5.5) scores every unread
 article once as teaching material for you: writing quality, what you learn, level fit, breadth,
 relevance. The worst are marked read in BazQux itself; you choose how deep the cut goes and can
-run it again. NetNewsWire on the Mac and the iPhone simply syncs. Every machine action is a tag,
-every cut can be undone, and nothing but mark-as-read ever changes in your reader.
+run it again. Any reader that syncs with BazQux (NetNewsWire, Reeder, the BazQux apps) simply
+follows. Every machine action is a tag, every cut can be undone, and nothing but mark-as-read ever
+changes in your reader.
 
-Design: the "RSS Viveka System Design" doc in the RSS reader project. This file is the runbook.
+This file is the overview and the install; `RUNBOOK.md` is the operator's sheet.
 
 ## What is in this repository
 
 | Path | What | Committed? |
 | --- | --- | --- |
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
+| `CHANGELOG.md`, `LICENSE` | What changed, by release; the MIT licence | yes |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
 | `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
 | `src/viveka/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
 | `src/viveka/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
 | `tests/` | the test suite, with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
-| `launchd/`, `install.sh`, `install-launchd.sh`, `laptop-install.sh` | Install and schedule on a Mac | yes |
-| `config.example.yaml`, `.env.example`, `profile.example/` | Templates: copy to `config.yaml`, `.env`, `profile/` | yes |
+| `launchd/`, `install.sh`, `install-launchd.sh` | Install and schedule on a Mac | yes |
+| `config.example.yaml`, `.env.example`, `profile.example/` | Templates; `./install.sh` copies them to `config.yaml`, `.env`, `profile/` | yes |
+| `contrib/` | Scripts outside the package: `replay_archive.py` judges another filter's archive offline | yes |
+| `shortcuts/` | The Prune button: an Apple Shortcut over SSH | yes |
 | `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
 | `.env` | BazQux password, Anthropic key, heartbeat URL | never |
 | `profile/` | Your seed and learner model, with their own git history | never |
 | `data/`, `dashboard/` | The SQLite cache, logs, the rendered dashboard | never |
 
-Anyone else can clone it, run `./install.sh`, fill in `.env`, write `profile/seed.md` and set their own
-folders in `config.yaml`; nothing in the code is tied to one account.
+Nothing in the code is tied to one account: clone it, run `./install.sh`, fill in `.env`, replace the
+worked example in `profile/seed.md` with yourself, and name your own folders in `config.yaml`.
 
 ## What runs
 
@@ -48,7 +52,6 @@ folders in `config.yaml`; nothing in the code is tied to one account.
 | `viveka want "x"`, `viveka meh "x"` | Nudge the learner model now instead of waiting for Sunday (the `more` and `less` tags do the same from BazQux). |
 | `viveka weekly` | Sunday: rewrite the learner model from the week's reading (kept only if the eval gate passes), write the weekly note, run the drift check. |
 | `viveka report` | Monthly feed report with proposals (unsubscribe, move to the strictest folder, protect). |
-| `viveka replay --archive … --golden …` | Judge a sample of FeedBrain's archive offline; check the gate before anything goes live. |
 | `viveka doctor [--live]` | Configuration and connectivity checks; exit code 1 when one fails. Run after every update. |
 
 ## Install
@@ -58,36 +61,39 @@ Keep the checkout somewhere plain such as `~/viveka`: launchd cannot run jobs th
 `~/Desktop` or `~/Downloads` (macOS privacy protection denies them with "Operation not permitted"), and a
 path with spaces makes pip wrap the command in `/bin/sh`, which is denied first. The installer refuses both.
 
-**One command on a laptop** (reuses a FeedBrain `../.env` if one sits beside the checkout, installs the
-launchd agents in shadow mode, scores a first batch):
-
 ```bash
-bash ~/viveka/laptop-install.sh
-```
-
-Step by step, or on the Mac mini:
-
-```bash
-cd ~/viveka
-./install.sh                      # venv, package, config.yaml and .env (copied from FeedBrain's), doctor
-$EDITOR config.yaml               # folders, target, floor; leave enforce: false for the shadow days
-$EDITOR profile/seed.md           # who the student is; 15 lines, rarely touched (copied from profile.example)
+git clone <this repository> ~/viveka && cd ~/viveka
+./install.sh                      # venv, package; config.yaml, .env and profile/ from the templates; doctor
+$EDITOR .env                      # BazQux email and password, Anthropic key (the file says where each comes from)
+$EDITOR profile/seed.md           # replace the worked example with fifteen lines about you
+$EDITOR config.yaml               # your folders, target, floor; leave enforce: false for the shadow days
 .venv/bin/viveka doctor --live    # logs in, lists folders, calls both models once (a few cents)
 ./install-launchd.sh              # laptop: agents, run while logged in, no sudo
-./install-launchd.sh --daemon     # Mac mini: daemons, run without login (asks for sudo)
+./install-launchd.sh --daemon     # an always-on Mac: daemons, run without login (asks for sudo)
 ```
 
-In BazQux, before relying on it: create a smart stream named **Must read** with your highest-intent
-terms (its members are never cut), and put the feeds you always read in a folder named **Always read**
-and the general-news firehoses in a folder named **Firehose**. Folder names are matched against
-`cut.folders` in `config.yaml`; moving a feed between folders in BazQux changes how it is treated.
+`doctor` exits 1 until `.env` and the seed are yours; `install.sh` runs it last and says so.
+
+In BazQux, before relying on it:
+
+- **The `Must read` stream.** A smart stream is a saved search shown as a feed; viveka reads it as a
+  label, and its unread members are never cut. Create it once: with **Latest** selected in the sidebar,
+  search for the terms that mark an article you must see, for example
+  `subject:("my company" OR "my town" OR "the grant programme")`, and in the results choose
+  **New smart stream**; name it `Must read` (or name yours in `cut.must_read_stream`). Keep it
+  narrow: it is a guarantee, not a reading list. Edit it later under Settings → Filters & streams.
+  `viveka doctor --live` says whether it exists; without it, a run judges and tags but cuts nothing.
+- **Folders.** Put the feeds you always read in a folder named **Always read**, the comics in
+  **Comics**, the general-news firehoses in **News**; `cut.folders` in `config.yaml` names them
+  (never cut; never judged; a stricter floor). Folder names are matched exactly, and moving a feed
+  between folders in BazQux changes how it is treated.
 
 ## Day 0 to steady state
 
 1. **Bankruptcy or blast.** `viveka bankruptcy --older-than 14` clears the pile (`viveka undo` if you regret it); or `viveka blast --model claude-haiku-5-5 --all-ages` judges every unread article once, now, for a few dollars, so the pile can be pruned on merit (the teacher then re-judges the promising ones). Otherwise the backlog is scored 1,200 articles a run through the batch API, newest first.
-2. **Replay.** `viveka replay --archive ../feedfilter/data/feedfilter.db --golden ../evals/golden.jsonl`
-   judges 500 archived articles plus everything you starred. The gate passes when no starred article
-   falls below the floor. Costs about a dollar.
+2. **Coming from another filter?** `contrib/replay_archive.py` judges a sample of its archive
+   offline, plus everything you starred, and checks that no starred article falls below the floor;
+   its header says what archive it expects. About a dollar for 500 articles; it touches nothing live.
 3. **Shadow days.** With the launchd jobs installed and `cut.enforce: false`: For two or three days,
    look at `viveka prune --dry-run` and the dashboard's near misses. Articles get scored and tagged;
    nothing is cut.
@@ -113,15 +119,15 @@ against $1.90 per 1,000 before. `viveka progress` shows the actual rate and the 
 `models.daily_budget_usd` still caps a bad day. Trade-offs: a judgment lands 30 to 60 minutes after an
 article arrives instead of at once (the Batches API finishes most batches within the hour), and a
 close call survives one extra run. `viveka run --sync` restores the immediate path when you want it
-(`doctor --live` and `replay` always run synchronously; `scoring.workers` model calls run at once).
+(`doctor --live` always runs synchronously; `scoring.workers` model calls run at once).
 
 ## launchd
 
 `install-launchd.sh` renders the four templates in `launchd/` (the run, the Sunday rewrite, the monthly
 report, the control room) with this checkout's path and installs them:
 as LaunchAgents (`~/Library/LaunchAgents`, no sudo, run while you are logged in; the laptop) or, with
-`--daemon`, as LaunchDaemons (`/Library/LaunchDaemons`, run without login; the Mac mini). Run it again
-after moving the folder.
+`--daemon`, as LaunchDaemons (`/Library/LaunchDaemons`, run without login; an always-on Mac). Run it
+again after moving the folder.
 
 ```bash
 launchctl print gui/$(id -u)/viveka.run      # agent status (daemon: sudo launchctl print system/…)
@@ -133,7 +139,7 @@ tail -f ~/Library/Logs/viveka/viveka.log
 The job takes a lock, so an overrun never overlaps the next start, and it kills itself after 15 minutes;
 the next run picks up what is left. A laptop that sleeps simply misses runs and catches up on wake; a
 backlog drains at `scoring.batch_max_per_run` (1,200) articles per run, or `scoring.max_per_run` (400)
-with `--sync`, where `scoring.workers` calls run in parallel. For an always-on Mac mini also keep it
+with `--sync`, where `scoring.workers` calls run in parallel. For an always-on Mac, also keep it
 awake and self-healing:
 
 ```bash
@@ -220,15 +226,15 @@ disagree most. How all of this changes the judging is in RUNBOOK.md, "How it lea
 cd ~/viveka && git pull && ./install.sh
 ```
 
-`install.sh` reinstalls the package and runs `viveka doctor`. The running launchd jobs pick up the new
-code on their next start. Prompts live in `src/viveka/prompts/`; a copy in `./prompts/` next to
+`install.sh` reinstalls the package and runs `viveka doctor`; after a change to the launchd templates,
+`./install-launchd.sh` too. The running launchd jobs pick up the new code on their next start. Prompts live in `src/viveka/prompts/`; a copy in `./prompts/` next to
 `config.yaml` overrides the packaged one. Changing `scoring.prompt_version` re-scores unread articles.
 
 ## When something breaks
 
 | Symptom | Where to look | What happens meanwhile |
 | --- | --- | --- |
-| Heartbeat alert, no error | Is the Mac mini on and online? `sudo launchctl print system/viveka.run` | Nothing is cut; unread grows |
+| Heartbeat alert, no error | Is the Mac on and online? `launchctl print gui/$(id -u)/viveka.run` (daemon: `sudo launchctl print system/viveka.run`) | Nothing is cut; unread grows |
 | launchd job: `last exit code = 126`, "Operation not permitted" in the logs | The checkout sits in Documents, Desktop or Downloads, or its path has spaces; move it (see Install) and reinstall | Nothing runs on the schedule; manual commands work |
 | "BazQux login failed (YearSubscriptionExpired)" | Renew BazQux | Run aborts before any write |
 | "daily model budget … reached" | `models.daily_budget_usd` in config.yaml | Scoring pauses until midnight; nothing is cut |

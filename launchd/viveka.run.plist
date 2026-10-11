@@ -4,7 +4,7 @@
 <dict>
     <!-- viveka: one run every 30 minutes, and once at login or boot. install-launchd.sh fills in
          the placeholders; as a LaunchAgent (laptop) it runs while you are logged in, as a
-         LaunchDaemon (Mac mini) it runs whether or not anyone is logged in. -->
+         LaunchDaemon (an always-on Mac) it runs whether or not anyone is logged in. -->
     <key>Label</key>
     <string>viveka.run</string>
 

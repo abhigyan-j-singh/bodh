@@ -9,7 +9,7 @@ plus every starred article, so the eval gate can be checked: no starred article 
 below the automatic floor.
 
     cd <your viveka folder>
-    .venv/bin/python contrib/replay_feedfilter.py --archive /path/to/archive.db [--golden golden.jsonl] [--sample 500]
+    .venv/bin/python contrib/replay_archive.py --archive /path/to/archive.db [--golden golden.jsonl] [--sample 500]
 
 Costs about a dollar for 500 articles. Touches nothing in BazQux.
 """
