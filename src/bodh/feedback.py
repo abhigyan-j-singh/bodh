@@ -32,6 +32,8 @@ MIN_CUTS_FOR_RESCUE_RATE = 20  # the weekly rescue rate means nothing on a handf
 def collect(
     client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_now: set[str], starred_now: set[str]
 ) -> dict:
+    """What the student did since the last run, from BazQux's state: stars, articles marked
+    unread again, reads and dismissals, rescues, verdict tags, the prune request."""
     stats = {
         "stars": 0,
         "reads": 0,
@@ -45,61 +47,86 @@ def collect(
         "prune_requested": False,
     }
     known = store.known_ids(conn)
-
     # stars: explicit, the strongest signal, and a protection
     new_stars = [aid for aid in starred_now & known if store.add_feedback(conn, aid, "star")]
     store.set_flags(conn, [aid for aid in starred_now & known], starred=1)
     stats["stars"] = len(new_stars)
+    stats["returned"] = _collect_returned(conn, unread_now)
+    ours_unread = store.status_ids(conn, "unread")
+    _collect_reads(conn, cfg, ours_unread, unread_now, stats)
+    stats["rescues"] = _collect_rescues(client, conn, cfg, known, unread_now)
+    stats.update(collect_verdicts(client, conn, cfg, known))
+    # prune: any article tagged `prune` asks for one more step. The request is kept until a
+    # run with autocut on applies it: scoring-only mode or a failed run must not lose it.
+    prune_ids = client.label_ids(cfg.tags.prune)
+    if prune_ids:
+        client.untag(prune_ids, cfg.tags.prune)
+        store.kv_set(conn, PRUNE_REQUEST_KEY, store.utcnow_iso())
+    stats["prune_requested"] = store.kv_get(conn, PRUNE_REQUEST_KEY) is not None
+    # everything still unread was seen unread now
+    store.set_flags(conn, list(ours_unread & unread_now), last_seen_unread_at=store.utcnow_iso())
+    return stats
 
-    # back to unread: what we recorded as read, dismissed or expired that the student marked
-    # unread again belongs to the pool once more (no feedback: nothing is known about why). One
-    # the student had read (a `read` row) and kept to finish later is exempt from the automatic
-    # autocut, which would only cut it for its old score; a prune may still take it. A reversed
-    # dismissal or expiry (BazQux's answer was wrong for an hour) earns no exemption: nothing
-    # about those articles changed.
+
+def _collect_returned(conn: sqlite3.Connection, unread_now: set[str]) -> int:
+    """Back to unread: what we recorded as read, dismissed or expired that the student marked
+    unread again belongs to the pool once more (no feedback: nothing is known about why). One
+    the student had read (a `read` row) and kept to finish later is exempt from autocut, which
+    would only cut it for its old score; a prune may still take it. A reversed dismissal or
+    expiry (BazQux's answer was wrong for an hour) earns no exemption: nothing about those
+    articles changed."""
     returned: set[str] = set()
     for status in ("read", "dismissed", "expired"):
         returned |= store.status_ids(conn, status) & unread_now
-    if returned:
-        kept = returned & store.feedback_ids(conn, "read")
-        store.restore_unread(conn, kept, rescued=False, exempt=True)
-        store.restore_unread(conn, returned - kept, rescued=False)
-        stats["returned"] = len(returned)
+    if not returned:
+        return 0
+    kept = returned & store.feedback_ids(conn, "read")
+    store.restore_unread(conn, kept, rescued=False, exempt=True)
+    store.restore_unread(conn, returned - kept, rescued=False)
+    return len(returned)
 
-    # reads and dismissals: what we left unread and is now read, by the student's hand
-    ours_unread = store.status_ids(conn, "unread")
+
+def _collect_reads(
+    conn: sqlite3.Connection, cfg: Config, ours_unread: set[str], unread_now: set[str], stats: dict
+) -> None:
+    """Reads and dismissals: what we left unread and is now read, by the student's hand. A
+    burst across several feeds is mark-all-as-read, not reading; an old article going read is
+    expiry, not reading."""
     flipped = ours_unread - unread_now
     if _suspect_flip(conn, ours_unread, flipped, unread_now):
         stats["suspect_flip"] = len(flipped)
-        flipped = set()
-    if flipped:
-        rows = store.fetch_in(
-            conn, "SELECT id, feed_title, crawled_msec FROM articles WHERE id IN ({marks})", flipped
-        )
-        now_msec = int(time.time() * 1000)
-        recent = [
-            r
-            for r in rows
-            if (r["crawled_msec"] or now_msec) >= now_msec - READ_INFERENCE_MAX_AGE_DAYS * 86400_000
-        ]
-        recent_ids = {r["id"] for r in recent}
-        expired = [r["id"] for r in rows if r["id"] not in recent_ids]
-        feeds = Counter(r["feed_title"] for r in recent)
-        bulk = len(recent) >= cfg.safety.mark_all_read_threshold and len(feeds) >= 3
-        kind = "dismiss" if bulk else "read"
-        for r in recent:
-            store.add_feedback(conn, r["id"], kind)
-        store.set_flags(
-            conn, recent_ids, status=("dismissed" if bulk else "read"), read_at=store.utcnow_iso()
-        )
-        store.set_flags(conn, expired, status="expired")
-        stats["dismissed" if bulk else "reads"] = len(recent)
-        stats["expired"] = len(expired)
+        return
+    if not flipped:
+        return
+    rows = store.fetch_in(
+        conn, "SELECT id, feed_title, crawled_msec FROM articles WHERE id IN ({marks})", flipped
+    )
+    now_msec = int(time.time() * 1000)
+    recent = [
+        r
+        for r in rows
+        if (r["crawled_msec"] or now_msec) >= now_msec - READ_INFERENCE_MAX_AGE_DAYS * 86400_000
+    ]
+    recent_ids = {r["id"] for r in recent}
+    expired = [r["id"] for r in rows if r["id"] not in recent_ids]
+    feeds = Counter(r["feed_title"] for r in recent)
+    bulk = len(recent) >= cfg.safety.mark_all_read_threshold and len(feeds) >= 3
+    kind = "dismiss" if bulk else "read"
+    for r in recent:
+        store.add_feedback(conn, r["id"], kind)
+    store.set_flags(conn, recent_ids, status=("dismissed" if bulk else "read"), read_at=store.utcnow_iso())
+    store.set_flags(conn, expired, status="expired")
+    stats["dismissed" if bulk else "reads"] = len(recent)
+    stats["expired"] = len(expired)
 
-    # rescues: a cut article that is unread again was marked unread by the student; a `rescue`
-    # tag on a cut article asks for the same, whether or not the cut has reached BazQux yet (a
-    # cut whose read mark failed is still unread there, carrying the tag). `rescue` on anything
-    # else is a strong positive with no rescue in it (there was no cut to reverse).
+
+def _collect_rescues(
+    client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, known: set[str], unread_now: set[str]
+) -> int:
+    """Rescues: a cut article that is unread again was marked unread by the student; a `rescue`
+    tag on a cut article asks for the same, whether or not the cut has reached BazQux yet (a
+    cut whose read mark failed is still unread there, carrying the tag). `rescue` on anything
+    else is a strong positive with no rescue in it (there was no cut to reverse)."""
     ours_cut_marked = {
         r[0] for r in conn.execute("SELECT article_id FROM state WHERE status = 'cut' AND read_marked = 1")
     }
@@ -124,23 +151,7 @@ def collect(
     for name, ids in tagged.items():
         if ids:
             client.untag(ids, name)
-    stats["rescues"] = len(rescued)
-
-    # verdicts: grades, levels and steers, from the tags left on the articles
-    v = collect_verdicts(client, conn, cfg, known)
-    stats.update(v)
-
-    # prune: any article tagged `prune` asks for one more step. The request is kept until an
-    # run with autocut on applies it: scoring-only mode or a failed run must not lose it.
-    prune_ids = client.label_ids(cfg.tags.prune)
-    if prune_ids:
-        client.untag(prune_ids, cfg.tags.prune)
-        store.kv_set(conn, PRUNE_REQUEST_KEY, store.utcnow_iso())
-    stats["prune_requested"] = store.kv_get(conn, PRUNE_REQUEST_KEY) is not None
-
-    # everything still unread was seen unread now
-    store.set_flags(conn, list(ours_unread & unread_now), last_seen_unread_at=store.utcnow_iso())
-    return stats
+    return len(rescued)
 
 
 def _suspect_flip(

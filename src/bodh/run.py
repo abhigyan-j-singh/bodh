@@ -179,6 +179,42 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
     store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] in starred], starred=1)
 
 
+@dataclass
+class _Run:
+    """What one run's phases hand each other."""
+
+    ctx: Context
+    res: RunResult
+    enforce: bool
+    sync: bool
+    score_limit: int | None
+    workers: int | None
+    stop_after: float
+    live: Any
+    folders: dict[str, str | None] = field(default_factory=dict)
+    unread_now: set[str] = field(default_factory=set)
+    starred: set[str] = field(default_factory=set)
+    protected: set[str] | None = None
+    judge: Judge | None = None
+    newly_scored: set[str] = field(default_factory=set)
+
+    @property
+    def cfg(self) -> Config:
+        return self.ctx.cfg
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        return self.ctx.conn
+
+    @property
+    def run_id(self) -> int:
+        return self.res.run_id
+
+    def phase(self, text: str) -> None:
+        progress.set_phase(self.conn, text)
+        progress.write_live(self.cfg, self.conn)
+
+
 def run(
     ctx: Context,
     score_limit: int | None = None,
@@ -198,165 +234,213 @@ def run(
     run_id = store.begin_run(conn, "run")
     res = RunResult(run_id=run_id)
     ctx.heartbeat.start()
-    live = progress.live_writer(cfg, conn)
-
-    def phase(text: str) -> None:
-        progress.set_phase(conn, text)
-        progress.write_live(cfg, conn)
-
+    st = _Run(
+        ctx,
+        res,
+        enforce=enforce,
+        sync=sync,
+        score_limit=score_limit,
+        workers=workers,
+        stop_after=stop_after,
+        live=progress.live_writer(cfg, conn),
+    )
     try:
-        phase("talking to BazQux")
-        folders = folder_map(ctx.client)
-        refs = ctx.client.unread_ids()
-        unread_now = {r.id for r in refs}
-        ctx.ref_time = {r.id: (r.timestamp_usec or 0) for r in refs}
-        res.unread_upstream = len(unread_now)
-        starred = set(ctx.client.starred_ids())
-        protected = protected_ids(ctx)
-        if protected is None and enforce:
-            enforce = False
-            res.notes.append("could not read the Must read stream; nothing cut this run")
-
-        res.feedback = feedback.collect(ctx.client, conn, cfg, unread_now, starred)
-        phase("fetching new articles")
-        res.new = ingest(ctx, unread_now, folders)
-        refresh_protection(ctx, protected, starred)
-        cutmod.finish_pending_cuts(ctx.client, conn, cfg)
-
-        judge = ctx.judge()
-        if sync:
-            judge.batch_mode = False
-        res.batch_mode = judge.batch_mode
-        before = store.scored_ids(conn)
-        if store.open_batches(conn):
-            # judgments submitted last time come back now, whatever mode this run is in: a batch
-            # submitted before `models.batch` was turned off must not strand its articles
-            phase("collecting finished batches")
-            col = judge.collect(run_id, client=ctx.client, on_progress=live)
-            res.scored, res.reviews, res.saved = col["scored"], col["second_looks"], col["saved"]
-            res.notes.extend(col["notes"])
-            if col["failed"]:
-                res.notes.append(f"{col['failed']} review(s) failed; those articles stay unread")
-        else:
-            col = {"scored": 0}
-        if judge.batch_mode:
-            # what arrived since goes out
-            phase("submitting a batch")
-            sub = judge.submit_pending(run_id, limit=score_limit)
-            res.submitted, res.dupes = sub["submitted"], sub["dupes"]
-            if sub["budget_stop"]:
-                res.notes.append("daily budget reached; the rest waits for tomorrow")
-            if sub["waiting"]:
-                res.notes.append(f"{sub['waiting']} articles wait for a fuller batch")
-            res.pending = judge.pending_count(exclude_inflight=True)
-            res.inflight = len(store.inflight_ids(conn, "teacher"))
-            if col["scored"] or sub["submitted"]:
-                log.info(
-                    "judge: judged %d, submitted %d, with the model %d, pending %d",
-                    col["scored"],
-                    sub["submitted"],
-                    res.inflight,
-                    res.pending,
-                )
-        else:
-            phase("judging")
-            stats = judge.score_pending(
-                run_id,
-                limit=score_limit or cfg.limits.per_run_sync,
-                workers=workers or cfg.limits.parallel_calls,
-                on_progress=live,
-                stop_after=stop_after,
-            )
-            if stats["stopped_early"]:
-                res.notes.append("time limit near: the rest waits for the next run")
-            res.scored += stats["scored"]
-            res.dupes, res.pending = stats["dupes"], stats["pending_after"]
-            if stats["budget_stop"]:
-                res.notes.append("daily budget reached; unscored articles stay unread")
-            if stats["failed_batches"]:
-                res.notes.append(f"{stats['failed_batches']} batch(es) failed and stay pending")
-        newly_scored = store.scored_ids(conn) - before
-        phase("tagging in BazQux")
-        cutmod.untag_stale(ctx.client, judge.stale_tags)
-        cutmod.tag_bands(ctx.client, conn)
-
-        if enforce:
-            phase("autocut")
-            if feedback.rescue_rate_week(conn) > cfg.safety.rescue_rate_week:
-                res.notes.append(
-                    f"rescues above {cfg.safety.rescue_rate_week:.0%} this week; cut-off lowered to "
-                    f"{cfg.safety.lowered_cutoff}"
-                )
-                cfg.autocut.cutoff = min(cfg.autocut.cutoff, cfg.safety.lowered_cutoff)
-            sel = cutmod.select_autocut(
-                conn, cfg, judge, run_id, newly_scored=newly_scored, client=ctx.client, stop_after=stop_after
-            )
-            if sel.blocked:
-                res.notes.append(sel.blocked)
-            res.reviews += sel.reviews
-            res.saved += sel.saved_by_review
-            res.new_ground = sel.reserved_for_new_ground
-            res.cut_autocut = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, run_id, "autocut")
-            res.boundary = sel.boundary
-            if sel.held:
-                res.held = judge.submit_reviews(run_id, sel.held)
-            if res.feedback.get("prune_requested") and sel.blocked:
-                res.notes.append("prune requested by tag; it waits for `bodh safety reset`")
-            elif res.feedback.get("prune_requested"):
-                psel = cutmod.select_prune(conn, cfg)
-                res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, run_id, "prune")
-                res.boundary = psel.boundary
-                feedback.prune_request_done(conn)
-                res.notes.append("prune tag seen: pruned to target")
-        else:
-            res.notes.append("scoring-only mode: nothing cut")
-            if res.feedback.get("prune_requested"):
-                res.notes.append("prune requested by tag; it waits for a run with autocut on")
-        if res.feedback.get("suspect_flip"):
-            res.notes.append(
-                f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
-                "as read until the next run sees the same"
-            )
-
-        res.spend_usd = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
-        store.finish_run(
-            conn,
-            run_id,
-            True,
-            unread_upstream=res.unread_upstream,
-            new=res.new,
-            scored=res.scored,
-            second_looks=res.reviews,
-            cut_autocut=res.cut_autocut,
-            cut_prune=res.cut_prune,
-            rescues=res.feedback.get("rescues", 0),
-            reads=res.feedback.get("reads", 0),
-            spend_usd=res.spend_usd,
-            boundary=res.boundary,
-            summary=res.summary(),
-        )
-        phase("rendering the dashboard")
-        render_dashboard(cfg, conn, res)
-        progress.set_phase(conn, "")
-        progress.write_live(cfg, conn)
-        ctx.heartbeat.ok(res.summary())
+        _collect_feedback(st)
+        _fetch(st)
+        _judge(st)
+        _tag(st)
+        _autocut(st)
+        _finish(st)
         return res
     except KeyboardInterrupt:
         res.ok = False
         res.error = "stopped"
         store.finish_run(conn, run_id, False, error=res.error, summary=res.summary())
-        progress.set_phase(conn, "")
-        progress.write_live(cfg, conn)
+        st.phase("")
         raise
     except Exception as exc:
         res.ok = False
         res.error = f"{type(exc).__name__}: {exc}"
         log.exception("run %d failed", run_id)
         store.finish_run(conn, run_id, False, error=res.error, summary=res.summary())
-        progress.set_phase(conn, "")
-        progress.write_live(cfg, conn)
+        st.phase("")
         ctx.heartbeat.fail(res.error)
         raise
+
+
+def _collect_feedback(st: _Run) -> None:
+    """What is unread, starred and protected now, and what the student did since the last run."""
+    ctx, res = st.ctx, st.res
+    st.phase("talking to BazQux")
+    st.folders = folder_map(ctx.client)
+    refs = ctx.client.unread_ids()
+    st.unread_now = {r.id for r in refs}
+    ctx.ref_time = {r.id: (r.timestamp_usec or 0) for r in refs}
+    res.unread_upstream = len(st.unread_now)
+    st.starred = set(ctx.client.starred_ids())
+    st.protected = protected_ids(ctx)
+    if st.protected is None and st.enforce:
+        st.enforce = False
+        res.notes.append("could not read the Must read stream; nothing cut this run")
+    res.feedback = feedback.collect(ctx.client, st.conn, st.cfg, st.unread_now, st.starred)
+
+
+def _fetch(st: _Run) -> None:
+    """New articles with their text; the protection flags; the cuts a run before left half-done."""
+    st.phase("fetching new articles")
+    st.res.new = ingest(st.ctx, st.unread_now, st.folders)
+    refresh_protection(st.ctx, st.protected, st.starred)
+    cutmod.finish_pending_cuts(st.ctx.client, st.conn, st.cfg)
+
+
+def _judge(st: _Run) -> None:
+    """Collect the judgments the Batches API finished, then submit what is pending (batch
+    mode) or judge it now (synchronous)."""
+    ctx, res, conn = st.ctx, st.res, st.conn
+    judge = st.judge = ctx.judge()
+    if st.sync:
+        judge.batch_mode = False
+    res.batch_mode = judge.batch_mode
+    before = store.scored_ids(conn)
+    collected = 0
+    if store.open_batches(conn):
+        # judgments submitted last time come back now, whatever mode this run is in: a batch
+        # submitted before `models.batch` was turned off must not strand its articles
+        st.phase("collecting finished batches")
+        col = judge.collect(st.run_id, client=ctx.client, on_progress=st.live)
+        res.scored, res.reviews, res.saved = col["scored"], col["second_looks"], col["saved"]
+        res.notes.extend(col["notes"])
+        if col["failed"]:
+            res.notes.append(f"{col['failed']} review(s) failed; those articles stay unread")
+        collected = col["scored"]
+    if judge.batch_mode:
+        _submit_batch(st, collected)
+    else:
+        _judge_now(st)
+    st.newly_scored = store.scored_ids(conn) - before
+
+
+def _submit_batch(st: _Run, collected: int) -> None:
+    """Batch mode: what arrived since the last run goes out to the Batches API."""
+    res, conn, judge = st.res, st.conn, st.judge
+    assert judge is not None
+    st.phase("submitting a batch")
+    sub = judge.submit_pending(st.run_id, limit=st.score_limit)
+    res.submitted, res.dupes = sub["submitted"], sub["dupes"]
+    if sub["budget_stop"]:
+        res.notes.append("daily budget reached; the rest waits for tomorrow")
+    if sub["waiting"]:
+        res.notes.append(f"{sub['waiting']} articles wait for a fuller batch")
+    res.pending = judge.pending_count(exclude_inflight=True)
+    res.inflight = len(store.inflight_ids(conn, "teacher"))
+    if collected or sub["submitted"]:
+        log.info(
+            "judge: judged %d, submitted %d, with the model %d, pending %d",
+            collected,
+            sub["submitted"],
+            res.inflight,
+            res.pending,
+        )
+
+
+def _judge_now(st: _Run) -> None:
+    """Synchronous mode: every model call now, up to the limit and the deadline."""
+    res, cfg, judge = st.res, st.cfg, st.judge
+    assert judge is not None
+    st.phase("judging")
+    stats = judge.score_pending(
+        st.run_id,
+        limit=st.score_limit or cfg.limits.per_run_sync,
+        workers=st.workers or cfg.limits.parallel_calls,
+        on_progress=st.live,
+        stop_after=st.stop_after,
+    )
+    if stats["stopped_early"]:
+        res.notes.append("time limit near: the rest waits for the next run")
+    res.scored += stats["scored"]
+    res.dupes, res.pending = stats["dupes"], stats["pending_after"]
+    if stats["budget_stop"]:
+        res.notes.append("daily budget reached; unscored articles stay unread")
+    if stats["failed_batches"]:
+        res.notes.append(f"{stats['failed_batches']} batch(es) failed and stay pending")
+
+
+def _tag(st: _Run) -> None:
+    """Every judged article carries its band in BazQux; stale bands from a re-score go."""
+    assert st.judge is not None
+    st.phase("tagging in BazQux")
+    cutmod.untag_stale(st.ctx.client, st.judge.stale_tags)
+    cutmod.tag_bands(st.ctx.client, st.conn)
+
+
+def _autocut(st: _Run) -> None:
+    """The automatic cut below the cut-off, with the reviews first; the prune the student
+    asked for by tag. In scoring-only mode nothing is cut and the notes say so."""
+    ctx, res, cfg, conn, judge = st.ctx, st.res, st.cfg, st.conn, st.judge
+    assert judge is not None
+    if not st.enforce:
+        res.notes.append("scoring-only mode: nothing cut")
+        if res.feedback.get("prune_requested"):
+            res.notes.append("prune requested by tag; it waits for a run with autocut on")
+        return
+    st.phase("autocut")
+    if feedback.rescue_rate_week(conn) > cfg.safety.rescue_rate_week:
+        res.notes.append(
+            f"rescues above {cfg.safety.rescue_rate_week:.0%} this week; cut-off lowered to "
+            f"{cfg.safety.lowered_cutoff}"
+        )
+        cfg.autocut.cutoff = min(cfg.autocut.cutoff, cfg.safety.lowered_cutoff)
+    sel = cutmod.select_autocut(
+        conn, cfg, judge, st.run_id, newly_scored=st.newly_scored, client=ctx.client, stop_after=st.stop_after
+    )
+    if sel.blocked:
+        res.notes.append(sel.blocked)
+    res.reviews += sel.reviews
+    res.saved += sel.saved_by_review
+    res.new_ground = sel.reserved_for_new_ground
+    res.cut_autocut = cutmod.apply_cut(ctx.client, conn, cfg, sel.cut_ids, st.run_id, "autocut")
+    res.boundary = sel.boundary
+    if sel.held:
+        res.held = judge.submit_reviews(st.run_id, sel.held)
+    if res.feedback.get("prune_requested") and sel.blocked:
+        res.notes.append("prune requested by tag; it waits for `bodh safety reset`")
+    elif res.feedback.get("prune_requested"):
+        psel = cutmod.select_prune(conn, cfg)
+        res.cut_prune = cutmod.apply_cut(ctx.client, conn, cfg, psel.cut_ids, st.run_id, "prune")
+        res.boundary = psel.boundary
+        feedback.prune_request_done(conn)
+        res.notes.append("prune tag seen: pruned to target")
+
+
+def _finish(st: _Run) -> None:
+    """The run row, the dashboard, the heartbeat."""
+    ctx, res, cfg, conn = st.ctx, st.res, st.cfg, st.conn
+    if res.feedback.get("suspect_flip"):
+        res.notes.append(
+            f"{res.feedback['suspect_flip']} unread articles gone upstream at once: not recorded "
+            "as read until the next run sees the same"
+        )
+    res.spend_usd = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
+    store.finish_run(
+        conn,
+        st.run_id,
+        True,
+        unread_upstream=res.unread_upstream,
+        new=res.new,
+        scored=res.scored,
+        second_looks=res.reviews,
+        cut_autocut=res.cut_autocut,
+        cut_prune=res.cut_prune,
+        rescues=res.feedback.get("rescues", 0),
+        reads=res.feedback.get("reads", 0),
+        spend_usd=res.spend_usd,
+        boundary=res.boundary,
+        summary=res.summary(),
+    )
+    st.phase("rendering the dashboard")
+    render_dashboard(cfg, conn, res)
+    st.phase("")
+    ctx.heartbeat.ok(res.summary())
 
 
 def render_dashboard(cfg: Config, conn: sqlite3.Connection, res: RunResult | None = None) -> None:
@@ -388,12 +472,12 @@ def catch_up(
         cfg.limits.max_age_days = None
     if budget is not None:
         cfg.models.daily_budget_usd = max(cfg.models.daily_budget_usd, budget)
-    stand_in = bool(model) and model != cfg.models.judge
+    quick = bool(model) and model != cfg.models.judge
     if model:
         cfg.models.judge = model
     judge = ctx.judge()
     judge.batch_mode = False
-    if stand_in:
+    if quick:
         judge.rejudge = None
     ctx.llm.retries(8)
     run_id = store.begin_run(conn, "catch-up")
@@ -420,38 +504,8 @@ def catch_up(
         if on_progress is not None:
             on_progress(total, stats)
 
-    idle_rounds = 0
     try:
-        while total["pending"] > 0:
-            progress.set_phase(
-                conn,
-                f"catch-up round {total['rounds'] + 1}: judging {min(chunk, total['pending']):,} "
-                f"of {total['pending']:,} pending",
-            )
-            progress.write_live(cfg, conn)
-            current.clear()
-            stats = judge.score_pending(
-                run_id, limit=chunk, workers=workers, on_progress=tick, stop_after=deadline
-            )
-            current.clear()
-            total["rounds"] += 1
-            total["scored"] += stats["scored"]
-            total["dupes"] += stats["dupes"]
-            total["failed"] += stats["failed_batches"]
-            total["pending"] = stats["pending_after"]
-            if stats["budget_stop"]:
-                total["budget_stop"] = True
-                break
-            if stats["stopped_early"] or (deadline is not None and time.monotonic() > deadline):
-                total["timed_out"] = True
-                break
-            if stats["scored"] == 0 and stats["dupes"] == 0:
-                idle_rounds += 1
-                if idle_rounds >= 2:
-                    break  # the API keeps refusing; stop rather than spin
-                time.sleep(10)
-            else:
-                idle_rounds = 0
+        _catch_up_rounds(ctx, judge, run_id, total, current, chunk, workers, tick, deadline)
     except KeyboardInterrupt:
         total["interrupted"] = True
         if current:  # the round that was cut short still counts what landed
@@ -464,35 +518,88 @@ def catch_up(
         total["error"] = f"{type(exc).__name__}: {exc}"
         raise
     finally:
-        progress.set_phase(conn, "tagging in BazQux")
-        progress.write_live(cfg, conn)
-        try:
-            cutmod.untag_stale(ctx.client, judge.stale_tags)
-            cutmod.tag_bands(ctx.client, conn)
-        except Exception:
-            log.exception("catch-up: tagging failed; the next run finishes it")
-        total["elapsed"] = time.monotonic() - total["started"]
-        total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
-        summary = (
-            f"catch-up ({cfg.models.judge}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
-            f"{total['elapsed'] / 60:.1f} min, {total['failed']} failed batches, pending {total['pending']}"
-            + (", interrupted" if total["interrupted"] else "")
-            + (", time limit" if total["timed_out"] else "")
-            + (", budget reached" if total["budget_stop"] else "")
-        )
-        store.finish_run(
-            conn,
-            run_id,
-            not total["interrupted"] and not total.get("error"),
-            scored=total["scored"],
-            spend_usd=total["spend"],
-            summary=summary,
-            error=total.get("error"),
-        )
-        render_dashboard(cfg, conn)
-        progress.set_phase(conn, "")
-        progress.write_live(cfg, conn)
+        _catch_up_close(ctx, judge, run_id, total)
     return total
+
+
+def _catch_up_rounds(
+    ctx: Context,
+    judge: Judge,
+    run_id: int,
+    total: dict,
+    current: dict,
+    chunk: int,
+    workers: int,
+    tick: Any,
+    deadline: float | None,
+) -> None:
+    """Round after round of ``chunk`` articles until nothing is pending, the budget is reached,
+    the deadline passes, or the API keeps refusing."""
+    cfg, conn = ctx.cfg, ctx.conn
+    idle_rounds = 0
+    while total["pending"] > 0:
+        progress.set_phase(
+            conn,
+            f"catch-up round {total['rounds'] + 1}: judging {min(chunk, total['pending']):,} "
+            f"of {total['pending']:,} pending",
+        )
+        progress.write_live(cfg, conn)
+        current.clear()
+        stats = judge.score_pending(
+            run_id, limit=chunk, workers=workers, on_progress=tick, stop_after=deadline
+        )
+        current.clear()
+        total["rounds"] += 1
+        total["scored"] += stats["scored"]
+        total["dupes"] += stats["dupes"]
+        total["failed"] += stats["failed_batches"]
+        total["pending"] = stats["pending_after"]
+        if stats["budget_stop"]:
+            total["budget_stop"] = True
+            return
+        if stats["stopped_early"] or (deadline is not None and time.monotonic() > deadline):
+            total["timed_out"] = True
+            return
+        if stats["scored"] == 0 and stats["dupes"] == 0:
+            idle_rounds += 1
+            if idle_rounds >= 2:
+                return  # the API keeps refusing; stop rather than spin
+            time.sleep(10)
+        else:
+            idle_rounds = 0
+
+
+def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict) -> None:
+    """Whatever happened: the tags, the run row with its summary, the dashboard."""
+    cfg, conn = ctx.cfg, ctx.conn
+    progress.set_phase(conn, "tagging in BazQux")
+    progress.write_live(cfg, conn)
+    try:
+        cutmod.untag_stale(ctx.client, judge.stale_tags)
+        cutmod.tag_bands(ctx.client, conn)
+    except Exception:
+        log.exception("catch-up: tagging failed; the next run finishes it")
+    total["elapsed"] = time.monotonic() - total["started"]
+    total["spend"] = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
+    summary = (
+        f"catch-up ({cfg.models.judge}): judged {total['scored']} (+{total['dupes']} dupes) in {total['rounds']} rounds, "
+        f"{total['elapsed'] / 60:.1f} min, {total['failed']} failed batches, pending {total['pending']}"
+        + (", interrupted" if total["interrupted"] else "")
+        + (", time limit" if total["timed_out"] else "")
+        + (", budget reached" if total["budget_stop"] else "")
+    )
+    store.finish_run(
+        conn,
+        run_id,
+        not total["interrupted"] and not total.get("error"),
+        scored=total["scored"],
+        spend_usd=total["spend"],
+        summary=summary,
+        error=total.get("error"),
+    )
+    render_dashboard(cfg, conn)
+    progress.set_phase(conn, "")
+    progress.write_live(cfg, conn)
 
 
 def prune(

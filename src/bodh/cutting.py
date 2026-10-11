@@ -93,103 +93,142 @@ def select_autocut(
         sel.survivors = list(pool)
         sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
         return sel
+    candidates = _candidates(pool, cfg, sel)
+    _check_safety(conn, cfg, candidates, newly_scored, run_id)
+    if judge is not None:
+        candidates = _review_close_calls(candidates, cfg, judge, sel, run_id, client, stop_after)
+    candidates = _reserve_new_ground(conn, cfg, candidates, newly_scored, sel)
+    candidates.sort(key=lambda r: (float(r["score"]), r["crawled_msec"] or 0))
+    sel.cut = candidates[: cfg.autocut.max_per_run]
+    sel.survivors.extend(candidates[cfg.autocut.max_per_run :])
+    sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
+    return sel
+
+
+def _candidates(pool: list[sqlite3.Row], cfg: Config, sel: Selection) -> list[sqlite3.Row]:
+    """What sits below its folder's cut-off and may be cut; everything else survives."""
     candidates: list[sqlite3.Row] = []
     for row in pool:
-        floor = cfg.cutoff_for(row["folder"])
+        cutoff = cfg.cutoff_for(row["folder"])
         if (
-            floor is None
+            cutoff is None
             or not eligible(row)
             or row["exploration"]
             or row["exempt"]
             or row["confidence"] == "low"
         ):
             sel.survivors.append(row)
-            continue
-        if row["score"] < floor:
+        elif row["score"] < cutoff:
             candidates.append(row)
         else:
             sel.survivors.append(row)
+    return candidates
 
-    # the safety limit: a model or prompt failure shows up as nearly everything new being junk
-    if newly_scored is not None and len(newly_scored) >= cfg.safety.min_judged:
-        new_candidates = sum(1 for r in candidates if r["id"] in newly_scored)
-        share = new_candidates / len(newly_scored)
-        if share > cfg.safety.max_cut_share:
-            store.kv_set(conn, SAFETY_KEY, str(run_id if run_id is not None else "?"))
-            store.kv_set(conn, store.LEGACY_SAFETY_KEY, str(run_id if run_id is not None else "?"))
-            raise SafetyTripped(
-                f"floor would cut {new_candidates} of {len(newly_scored)} newly scored articles "
-                f"({share:.0%}); stopping before any write. The prompt or model has probably broken; "
-                "autocut stays off until `bodh safety reset`."
-            )
 
-    # review: a close call whose full text holds more than the opening gets the stronger
-    # model, once; the higher score stands. In batch mode the look arrives on the next run,
-    # so the article is held (unread) until then.
-    if judge is not None:
-        saved: list[sqlite3.Row] = []  # this run's review cleared them, or never got to them
-        kept: list[sqlite3.Row] = []  # an earlier run's look failed: kept, but not a save of this run
-        remaining: list[sqlite3.Row] = []
-        to_look: list[sqlite3.Row] = []
-        for row in candidates:
-            floor = cfg.cutoff_for(row["folder"]) or cfg.autocut.cutoff
-            if float(row["score"]) < floor - cfg.review.window:
-                remaining.append(row)
-            elif row["second_look_model"] is not None:
-                if row["second_look_model"] == "failed":
-                    kept.append(row)  # fail open: a look that could not be had keeps the article
-                else:
-                    remaining.append(row)  # looked at already; the higher score still sits below the cut-off
-            elif not has_more_to_read(row, cfg):
-                remaining.append(row)  # the first pass saw everything there was
-            elif judge.batch_mode:
-                sel.held.append(row)  # examined by the next run
+def _check_safety(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    candidates: list[sqlite3.Row],
+    newly_scored: set[str] | None,
+    run_id: int | None,
+) -> None:
+    """The safety limit: a model or prompt failure shows up as nearly everything new being junk."""
+    if newly_scored is None or len(newly_scored) < cfg.safety.min_judged:
+        return
+    new_candidates = sum(1 for r in candidates if r["id"] in newly_scored)
+    share = new_candidates / len(newly_scored)
+    if share > cfg.safety.max_cut_share:
+        store.kv_set(conn, SAFETY_KEY, str(run_id if run_id is not None else "?"))
+        store.kv_set(conn, store.LEGACY_SAFETY_KEY, str(run_id if run_id is not None else "?"))
+        raise SafetyTripped(
+            f"autocut would cut {new_candidates} of {len(newly_scored)} newly scored articles "
+            f"({share:.0%}); stopping before any write. The prompt or model has probably broken; "
+            "autocut stays off until `bodh safety reset`."
+        )
+
+
+def _review_close_calls(
+    candidates: list[sqlite3.Row],
+    cfg: Config,
+    judge: Judge,
+    sel: Selection,
+    run_id: int | None,
+    client: BazQuxClient | None,
+    stop_after: float | None,
+) -> list[sqlite3.Row]:
+    """A close call whose full text holds more than the opening gets the stronger model,
+    once; the higher score stands. In batch mode the review arrives on the next run, so the
+    article is held (unread) until then. Returns the candidates still to be cut."""
+    saved: list[sqlite3.Row] = []  # this run's review cleared them, or never got to them
+    kept: list[sqlite3.Row] = []  # an earlier run's review failed: kept, but not a save of this run
+    remaining: list[sqlite3.Row] = []
+    to_look: list[sqlite3.Row] = []
+    groups = {"cut": remaining, "kept": kept, "held": sel.held, "review": to_look}
+    for row in candidates:
+        groups[_review_group(row, cfg, judge)].append(row)
+    if to_look:
+        results = judge.reviews(to_look, run_id, client=client, stop_after=stop_after)
+        for row in to_look:
+            if row["id"] not in results:
+                saved.append(row)  # never examined (budget, deadline, cap): stays unread
+                continue
+            sel.reviews += 1
+            if results[row["id"]] is False:
+                remaining.append(row)  # the stronger model agreed: the cut stands
             else:
-                to_look.append(row)
-        if to_look:
-            results = judge.reviews(to_look, run_id, client=client, stop_after=stop_after)
-            for row in to_look:
-                if row["id"] not in results:
-                    saved.append(row)  # never examined (budget, deadline, cap): stays unread
-                    continue
-                sel.reviews += 1
-                if results[row["id"]] is False:
-                    remaining.append(row)  # the stronger model agreed: the cut stands
-                else:
-                    saved.append(row)  # cleared the cut-off, or the look failed: fail open
-        sel.saved_by_review = len(saved)
-        sel.kept_after_failed_look = len(kept)
-        candidates = remaining
-        sel.survivors.extend(saved)
-        sel.survivors.extend(kept)
-        sel.survivors.extend(sel.held)
+                saved.append(row)  # cleared the cut-off, or the review failed: fail open
+    sel.saved_by_review = len(saved)
+    sel.kept_after_failed_look = len(kept)
+    sel.survivors.extend(saved)
+    sel.survivors.extend(kept)
+    sel.survivors.extend(sel.held)
+    return remaining
 
-    # new-ground quota: new ground of decent quality is exempt from autocut
+
+def _review_group(row: sqlite3.Row, cfg: Config, judge: Judge) -> str:
+    """Where a candidate goes: "cut" (too far below, or reviewed already), "kept" (an earlier
+    review failed: fail open), "held" (batch mode: the review lands next run) or "review"."""
+    cutoff = cfg.cutoff_for(row["folder"]) or cfg.autocut.cutoff
+    if float(row["score"]) < cutoff - cfg.review.window:
+        return "cut"
+    if row["second_look_model"] is not None:
+        # reviewed already: a failed review keeps the article, a finished one left it below the cut-off
+        return "kept" if row["second_look_model"] == "failed" else "cut"
+    if not has_more_to_read(row, cfg):
+        return "cut"  # the first pass saw everything there was
+    return "held" if judge.batch_mode else "review"
+
+
+def _reserve_new_ground(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    candidates: list[sqlite3.Row],
+    newly_scored: set[str] | None,
+    sel: Selection,
+) -> list[sqlite3.Row]:
+    """The new-ground quota: a share of what autocut leaves is kept for decent articles on a
+    concept the student has not read. Returns the candidates still to be cut."""
     base = len(newly_scored) - len(candidates) if newly_scored is not None else len(sel.survivors)
     quota = math.ceil(cfg.autocut.new_ground_share * max(0, base))
-    if quota > 0 and candidates:
-        since = store.days_ago_iso(cfg.profile.concept_window_days)
-        known = {c for c, _ in store.concept_counts(conn, ["star", "read", "rescue"], since, limit=500)}
-        novel = [
-            r
-            for r in sorted(candidates, key=lambda r: -float(r["score"]))
-            if (r["quality"] or 0) >= 60
-            and (r["concept"] or "").strip().lower() not in known
-            and not r["dupe_of"]
-        ]
-        reserved = novel[:quota]
-        if reserved:
-            store.set_flags(conn, [r["id"] for r in reserved], exploration=1)
-            reserved_ids = {r["id"] for r in reserved}
-            candidates = [r for r in candidates if r["id"] not in reserved_ids]
-            sel.survivors.extend(reserved)
-            sel.reserved_for_new_ground = len(reserved)
-
-    candidates.sort(key=lambda r: (float(r["score"]), r["crawled_msec"] or 0))
-    sel.cut = candidates[: cfg.autocut.max_per_run]
-    sel.survivors.extend(candidates[cfg.autocut.max_per_run :])
-    sel.boundary = min((float(r["score"]) for r in sel.survivors if eligible(r)), default=None)
-    return sel
+    if quota <= 0 or not candidates:
+        return candidates
+    since = store.days_ago_iso(cfg.profile.concept_window_days)
+    known = {c for c, _ in store.concept_counts(conn, ["star", "read", "rescue"], since, limit=500)}
+    novel = [
+        r
+        for r in sorted(candidates, key=lambda r: -float(r["score"]))
+        if (r["quality"] or 0) >= 60
+        and (r["concept"] or "").strip().lower() not in known
+        and not r["dupe_of"]
+    ]
+    reserved = novel[:quota]
+    if not reserved:
+        return candidates
+    store.set_flags(conn, [r["id"] for r in reserved], exploration=1)
+    reserved_ids = {r["id"] for r in reserved}
+    sel.survivors.extend(reserved)
+    sel.reserved_for_new_ground = len(reserved)
+    return [r for r in candidates if r["id"] not in reserved_ids]
 
 
 # -- the manual prune ---------------------------------------------------------

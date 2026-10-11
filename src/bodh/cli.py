@@ -29,7 +29,7 @@ import typer
 from . import __version__, dashboard, feedback, profiler, report, store
 from . import cutting as cutmod
 from . import run as runmod
-from .config import Config, ConfigError, load_config, load_secrets
+from .config import Config, ConfigError, Secrets, load_config, load_secrets
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, RunTimeout, graceful_sigterm, run_lock, time_limit
 from .logs import setup_logging
@@ -74,6 +74,7 @@ def version() -> None:
 @app.command()
 def doctor(
     live: bool = typer.Option(False, "--live", help="Also log in to BazQux and call both models."),
+    values: bool = typer.Option(False, "--values", help="Print every setting in effect with its source."),
     verbose: bool = VERBOSE,
 ) -> None:
     """Connectivity and configuration checks. Run after every update. Exits 1 when a check
@@ -86,6 +87,26 @@ def doctor(
         problems.append(text)
         typer.echo(text)
 
+    _doctor_config(cfg)
+    if values:
+        for key, value, source in cfg.values_in_effect():
+            typer.echo(f"   {key} = {value!r}  ({source})")
+    _doctor_profile(cfg, problem)
+    _doctor_prompts(cfg, problem)
+    _doctor_secrets(secrets, problem)
+    conn = store.connect(cfg.db_path)
+    _doctor_database(cfg, conn, problem)
+    if live and not problems:
+        _doctor_live(cfg, secrets, conn, problem)
+    elif live:
+        typer.echo("live checks skipped until the problems above are fixed")
+    if problems:
+        typer.echo(f"\n{len(problems)} problem(s); see above", err=True)
+        raise typer.Exit(1)
+    typer.echo("ok")
+
+
+def _doctor_config(cfg: Config) -> None:
     typer.echo(f"root: {cfg.root}")
     typer.echo(f"timezone: {cfg.timezone} (from {cfg.timezone_source})")
     typer.echo(
@@ -116,33 +137,40 @@ def doctor(
         )
         for move in cfg.old_keys:
             typer.echo(f"   {move}")
+
+
+def _doctor_profile(cfg: Config, problem: Any) -> None:
     if cfg.about_is_example():
         problem(
             "about: STILL THE EXAMPLE (profile/about.md describes an invented student): replace every paragraph "
             "with your own and delete the comment at the top"
         )
     elif cfg.read_about():
-        typer.echo(
-            "about: found"
-            + (
-                " (as profile/seed.md, the old name; install.sh renames it)"
-                if cfg.about_path.name == "seed.md"
-                else ""
-            )
+        old = (
+            " (as profile/seed.md, the old name; install.sh renames it)"
+            if cfg.about_path.name == "seed.md"
+            else ""
         )
+        typer.echo("about: found" + old)
     else:
         problem(
             "about: MISSING (profile/about.md): the judge cannot judge for a student it knows nothing about"
         )
     typer.echo(f"learned profile: {'found' if cfg.read_learned() else 'missing (will start empty)'}")
+
+
+def _doctor_prompts(cfg: Config, problem: Any) -> None:
     from .judge import PROMPTS_DIR, load_prompt
 
     for name in (cfg.judge.prompt_version, "review.v1", "profiler.v1"):
         try:
             load_prompt(name, cfg.root)
             typer.echo(f"prompt {name}: ok")
-        except Exception as exc:
+        except Exception as exc:  # whatever stopped the read: the line names it and doctor exits 1
             problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
+
+
+def _doctor_secrets(secrets: Secrets, problem: Any) -> None:
     if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
         typer.echo("bazqux credentials: set")
     else:
@@ -153,19 +181,17 @@ def doctor(
         problem("anthropic key: MISSING (ANTHROPIC_API_KEY in .env)")
     hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
-    conn = store.connect(cfg.db_path)
-    typer.echo(
-        f"database: {cfg.db_path} ({conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]} articles, "
-        f"schema v{store.schema_version(conn)})"
-    )
-    if live and not problems:
-        _doctor_live(cfg, secrets, conn, problem)
-    elif live:
-        typer.echo("live checks skipped until the problems above are fixed")
-    if problems:
-        typer.echo(f"\n{len(problems)} problem(s); see above", err=True)
-        raise typer.Exit(1)
-    typer.echo("ok")
+
+
+def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
+    articles = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    typer.echo(f"database: {cfg.db_path} ({articles} articles, schema v{store.schema_version(conn)})")
+    for pragma in ("quick_check", "integrity_check"):
+        verdict = conn.execute(f"PRAGMA {pragma}").fetchone()[0]
+        if verdict != "ok":
+            problem(f"database {pragma}: {verdict} (restore data/bodh.db from a backup)")
+            return
+    typer.echo("database integrity: ok")
 
 
 def _doctor_live(cfg: Config, secrets, conn, problem) -> None:
@@ -186,7 +212,7 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:
         else:
             problem(
                 f"must-read stream '{cfg.protect.must_read_stream}': not found (create it in BazQux, or name yours in "
-                "cut.must_read_stream)"
+                "protect.must_read_stream)"
             )
         unknown = [f for f in cfg.folders if f not in folders]
         if unknown:
@@ -357,8 +383,6 @@ def catch_up(
     it with Ctrl-C and run it again to continue. Watch it with `bodh progress --watch`."""
     import time
 
-    from .judge import Judge
-
     ctx = _ctx(verbose)
     if not verbose:  # the progress line owns the terminal; the log file keeps the detail
         for h in logging.getLogger().handlers:
@@ -372,6 +396,51 @@ def catch_up(
     if all_ages:
         cfg.limits.max_age_days = None
     judge = model or cfg.catch_up.model
+    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget)
+    if pending == 0:
+        return
+    if not yes and not typer.confirm("Start the catch-up?"):
+        raise typer.Exit(0)
+    started = time.monotonic()
+
+    def show(total: dict, stats: dict) -> None:
+        done = total["scored"] + total["dupes"] + stats["scored"] + stats["dupes"]
+        mins = max(1e-6, (time.monotonic() - started) / 60)
+        rate = done / mins
+        left_n = max(0, pending - done)
+        eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
+        typer.echo(
+            f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
+            f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   ",
+            nl=False,
+        )
+
+    try:
+        with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
+            total = runmod.catch_up(
+                ctx,
+                workers=workers,
+                chunk=chunk,
+                all_ages=all_ages,
+                budget=budget,
+                on_progress=show,
+                model=judge,
+                max_seconds=max_seconds,
+            )
+    except AlreadyRunning:
+        _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again")
+        return
+    typer.echo("")
+    _catch_up_report(total)
+
+
+def _catch_up_preview(
+    ctx: runmod.Context, judge: str, workers: int, all_ages: bool, budget: float | None
+) -> int:
+    """How many articles are pending and what the pass will cost; 0 when there is nothing to do."""
+    from .judge import Judge
+
+    cfg = ctx.cfg
     quick = judge != cfg.models.judge
     rejudge = None if quick else Judge.rejudge_rule(cfg)
     pending = store.unscored_unread_count(
@@ -386,7 +455,7 @@ def catch_up(
         typer.echo(
             "nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)")
         )
-        return
+        return 0
     if not cfg.models.has_price(judge):
         _fail(f"no price for {judge} in models.prices_per_mtok; add it to config.yaml first")
     p_in, p_out = cfg.models.price(judge)
@@ -406,40 +475,10 @@ def catch_up(
         typer.echo(
             f"today's budget has ${left:.2f} left; pass --budget {need:.0f} to let the catch-up finish"
         )
-    if not yes and not typer.confirm("Start the catch-up?"):
-        raise typer.Exit(0)
-    started = time.monotonic()
-    last_line = {"n": 0}
+    return pending
 
-    def show(total: dict, stats: dict) -> None:
-        done = total["scored"] + total["dupes"] + stats["scored"] + stats["dupes"]
-        mins = max(1e-6, (time.monotonic() - started) / 60)
-        rate = done / mins
-        left_n = max(0, pending - done)
-        eta = f"{left_n / rate:.0f} min" if rate > 0 else "–"
-        line = (
-            f"\r  judged {done:,} of {pending:,} · {rate:.0f}/min · ETA {eta} · "
-            f"failed batches {total['failed'] + stats['failed_batches']} · round {total['rounds'] + 1}   "
-        )
-        typer.echo(line, nl=False)
-        last_line["n"] = done
 
-    try:
-        with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
-            total = runmod.catch_up(
-                ctx,
-                workers=workers,
-                chunk=chunk,
-                all_ages=all_ages,
-                budget=budget,
-                on_progress=show,
-                model=judge,
-                max_seconds=max_seconds,
-            )
-    except AlreadyRunning:
-        _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again")
-        return
-    typer.echo("")
+def _catch_up_report(total: dict) -> None:
     typer.echo(
         f"judged {total['scored']:,} (+{total['dupes']:,} dupes) in {total['elapsed'] / 60:.1f} min over "
         f"{total['rounds']} rounds; {total['failed']} failed batches; pending {total['pending']:,}; "

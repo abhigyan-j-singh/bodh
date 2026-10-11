@@ -346,6 +346,7 @@ class Config(Strict):
     root: Path = Path(".")
     _timezone_from_file: bool = PrivateAttr(default=False)
     _old_keys: list[str] = PrivateAttr(default_factory=list)
+    _from_file: set[str] = PrivateAttr(default_factory=set)  # the dotted keys config.yaml set itself
 
     def cutoff_for(self, folder: str | None) -> int | None:
         """The automatic cut-off for a folder; None means never cut automatically."""
@@ -363,6 +364,32 @@ class Config(Strict):
     def unjudged_folders(self) -> list[str]:
         """Folders the judge never reads (``judge: false``)."""
         return [name for name, policy in self.folders.items() if not policy.judge]
+
+    def values_in_effect(self) -> list[tuple[str, Any, str]]:
+        """Every setting as (dotted key, value, source), source being "config.yaml" or "default";
+        what `bodh doctor --values` prints."""
+        out: list[tuple[str, Any, str]] = []
+
+        def walk(model: BaseModel, prefix: str) -> None:
+            for name in type(model).model_fields:
+                if name == "root":
+                    continue
+                value = getattr(model, name)
+                key = f"{prefix}{name}"
+                if isinstance(value, BaseModel):
+                    walk(value, key + ".")
+                elif (
+                    isinstance(value, dict)
+                    and value
+                    and all(isinstance(v, BaseModel) for v in value.values())
+                ):
+                    for sub, policy in value.items():
+                        walk(policy, f"{key}.{sub}.")
+                else:
+                    out.append((key, value, "config.yaml" if key in self._from_file else "default"))
+
+        walk(self, "")
+        return out
 
     @property
     def old_keys(self) -> list[str]:
@@ -617,8 +644,21 @@ def load_config(root: Path | None = None) -> Config:
     cfg.root = root
     cfg._timezone_from_file = bool(str(raw.get("timezone") or "").strip())
     cfg._old_keys = old_keys
+    cfg._from_file = _dotted_keys(raw)
     (cfg.root / cfg.data_dir).mkdir(parents=True, exist_ok=True)
     return cfg
+
+
+def _dotted_keys(raw: dict[str, Any], prefix: str = "") -> set[str]:
+    """Every leaf key of a mapping, dotted: {"judge": {"weights": {...}}} gives "judge.weights"."""
+    out: set[str] = set()
+    for key, value in raw.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict) and name not in ("judge.weights", "tags.bands", "models.prices_per_mtok"):
+            out |= _dotted_keys(value, name + ".")
+        else:
+            out.add(name)
+    return out
 
 
 def load_secrets(root: Path | None = None) -> Secrets:

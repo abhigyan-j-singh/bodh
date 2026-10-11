@@ -357,25 +357,57 @@ def _eta(minutes: float | None) -> str:
 
 
 def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved; terminals wrap
-    lines: list[str] = []
+    """The terminal view: the state, the counts, the money, the folders, the batches, the log,
+    the last runs."""
+    lines = [
+        *_text_state(snap),
+        "",
+        *_text_counts(snap),
+        "",
+        *_text_money(snap),
+        "",
+        *_text_folders(snap),
+        "",
+    ]
+    if snap["batches"]:
+        lines += [*_text_batches(snap), ""]
+    if snap.get("log"):
+        lines += ["Log", *[f"  {line}" for line in snap["log"][-6:]], ""]
+    if snap["runs"]:
+        lines.append("Last runs")
+        for r in snap["runs"]:
+            ok = "ok " if r["ok"] else "ERR"
+            lines.append(
+                f"  {(r['started_at'] or '')[:16]} {ok} {r['kind']:<10} {(r['summary'] or r['error'] or '')}"
+            )
+    return "\n".join(lines)
+
+
+def _text_state(snap: dict) -> list[str]:
     mode = "batch mode: judgments arrive on the next run" if snap["batch_mode"] else "synchronous mode"
     now = snap["now"] if isinstance(snap["now"], datetime) else datetime.fromisoformat(snap["now"])
-    lines.append(f"bodh progress · {now.strftime('%a %d %b %H:%M:%S')} · {mode}")
-    if "running" in snap:
-        if snap["running"]:
-            since = f" for {_age(snap['run_started'])}" if snap.get("run_started") else ""
-            lines.append(
-                f"● RUN IN PROGRESS{since} · {snap.get('phase') or 'working'} · "
-                f"{snap['rate_per_min']:.0f} judged/min · ETA for pending {_eta(snap.get('eta_min'))}"
-            )
-        else:
-            lines.append(f"○ idle · last 10 min: {_n(snap['judged_10min'])} judged")
-    lines.append("")
+    lines = [f"bodh progress · {now.strftime('%a %d %b %H:%M:%S')} · {mode}"]
+    if "running" not in snap:
+        return lines
+    if snap["running"]:
+        since = f" for {_age(snap['run_started'])}" if snap.get("run_started") else ""
+        lines.append(
+            f"● RUN IN PROGRESS{since} · {snap.get('phase') or 'working'} · "
+            f"{snap['rate_per_min']:.0f} judged/min · ETA for pending {_eta(snap.get('eta_min'))}"
+        )
+    else:
+        lines.append(f"○ idle · last 10 min: {_n(snap['judged_10min'])} judged")
+    return lines
+
+
+def _text_counts(snap: dict) -> list[str]:
     unread = snap["unread"] or 1
     judged, pending, inflight = snap["judged_unread"], snap["pending"], snap["inflight"]
     in_window = judged + pending + inflight
-    lines.append(f"Unread known to bodh {_n(snap['unread']):>10}")
-    lines.append(f"  judged               {_n(judged):>10}  {_bar(judged / unread)} {judged / unread:4.0%}")
+    lines = [
+        f"Unread known to bodh {_n(snap['unread']):>10}",
+        f"  judged               {_n(judged):>10}  {_bar(judged / unread)} {judged / unread:4.0%}",
+    ]
     if inflight:
         lines.append(
             f"  with the model       {_n(inflight):>10}  {_bar(inflight / unread)} waiting for the batch to finish"
@@ -391,6 +423,13 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
         lines.append(f"  not judged (folders) {_n(snap['skipped']):>10}  {', '.join(snap['skip_folders'])}")
     if in_window:
         lines.append(f"  of the current window: {judged / in_window:.0%} judged")
+    notes = _text_notes(snap)
+    if notes:
+        lines.append("  " + " · ".join(notes))
+    return lines
+
+
+def _text_notes(snap: dict) -> list[str]:
     notes = []
     if snap.get("stand_in"):
         notes.append(
@@ -404,30 +443,26 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
         notes.append(f"{_n(snap['held'])} kept after a failed review")
     if snap.get("given_up"):
         notes.append(f"{_n(snap['given_up'])} given up on after answers with no judgment (`bodh safety`)")
-    if notes:
-        lines.append("  " + " · ".join(notes))
-    lines.append("")
+    return notes
 
+
+def _text_money(snap: dict) -> list[str]:
     t, w, a = snap["today"], snap["week"], snap["all_time"]
-    lines.append(
-        f"Today     arrived {_n(t['arrived'])} · judged {_n(t['judged'])} (+{_n(t['dupes'])} dupes) · "
-        f"reviews {_n(t['second_looks'])} · cut {_n(t['cut'])}"
-    )
-    lines.append(
-        f"7 days    arrived {_n(w['arrived'])} · judged {_n(w['judged'])} · reviews {_n(w['second_looks'])}"
-        f" · cut {_n(w['cut'])}"
-    )
-    lines.append(f"All time  judged {_n(a['judged'])} (+{_n(a['dupes'])} dupes) · cut {_n(a['cut'])}")
     per = f"${snap['per_1000']:.2f} per 1,000 judged" if snap["per_1000"] is not None else "no spend yet"
     cache = (
         f"cache hits {snap['cache_hit']:.0%} of prompt tokens"
         if snap["cache_hit"] is not None
         else "no cache data yet"
     )
-    lines.append(
+    lines = [
+        f"Today     arrived {_n(t['arrived'])} · judged {_n(t['judged'])} (+{_n(t['dupes'])} dupes) · "
+        f"reviews {_n(t['second_looks'])} · cut {_n(t['cut'])}",
+        f"7 days    arrived {_n(w['arrived'])} · judged {_n(w['judged'])} · reviews {_n(w['second_looks'])}"
+        f" · cut {_n(w['cut'])}",
+        f"All time  judged {_n(a['judged'])} (+{_n(a['dupes'])} dupes) · cut {_n(a['cut'])}",
         f"Spend     today ${t['spend']:.2f} of ${snap['budget']:.2f} · 7 days ${w['spend']:.2f} · "
-        f"all time ${a['spend']:.2f} · {per} · {cache}"
-    )
+        f"all time ${a['spend']:.2f} · {per} · {cache}",
+    ]
     if snap.get("series"):
         lines.append(
             "Last 3 h  "
@@ -435,11 +470,13 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
             + f"  (judged per {snap['series_bin_minutes']} min, max "
             f"{max(snap['series'])})"
         )
-    lines.append("")
+    return lines
 
-    lines.append(
+
+def _text_folders(snap: dict) -> list[str]:
+    lines = [
         f"{'By folder':<32}{'unread':>8}{'judged':>8}{'pending':>9}{'model':>8}{'≥70':>6}{'cut':>7}  cut-off"
-    )
+    ]
     for f in snap["folders"][:30]:
         if not f["unread"] and not f["cut"]:
             continue
@@ -448,37 +485,24 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
             f"  {f['folder'][:29]:<30}{_n(f['unread']):>8}{_n(f['judged']):>8}{_n(f['pending']):>9}"
             f"{_n(f['inflight']):>8}{_n(f['good']):>6}{_n(f['cut']):>7}  {cutoff}"
         )
-    lines.append("")
+    return lines
 
-    if snap["batches"]:
-        lines.append("Batches")
-        for b in snap["batches"]:
-            state = b["status"]
-            if state == "submitted":
-                state = f"in progress, {b['age']} ago"
-            elif b.get("took"):
-                state = f"{state}, finished {b['took']} ago"
-            lines.append(
-                f"  {b['id'][:22]:<24}{b['purpose']:<12}{_n(b['n_articles']):>6} articles in "
-                f"{_n(b['n_requests']):>3} requests  {state}"
-            )
-            if b.get("note"):
-                lines.append(f"{'':<26}{b['note']}")
-        lines.append("")
 
-    if snap.get("log"):
-        lines.append("Log")
-        lines += [f"  {line}" for line in snap["log"][-6:]]
-        lines.append("")
-
-    if snap["runs"]:
-        lines.append("Last runs")
-        for r in snap["runs"]:
-            ok = "ok " if r["ok"] else "ERR"
-            lines.append(
-                f"  {(r['started_at'] or '')[:16]} {ok} {r['kind']:<10} {(r['summary'] or r['error'] or '')}"
-            )
-    return "\n".join(lines)
+def _text_batches(snap: dict) -> list[str]:
+    lines = ["Batches"]
+    for b in snap["batches"]:
+        state = b["status"]
+        if state == "submitted":
+            state = f"in progress, {b['age']} ago"
+        elif b.get("took"):
+            state = f"{state}, finished {b['took']} ago"
+        lines.append(
+            f"  {b['id'][:22]:<24}{b['purpose']:<12}{_n(b['n_articles']):>6} articles in "
+            f"{_n(b['n_requests']):>3} requests  {state}"
+        )
+        if b.get("note"):
+            lines.append(f"{'':<26}{b['note']}")
+    return lines
 
 
 def _sparkline(series: list[int]) -> str:

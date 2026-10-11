@@ -110,6 +110,47 @@ def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
     return int(length or 0) > cfg.judge.text_chars + 200
 
 
+class _ReviewFeeder:
+    """Keeps at most ``workers`` reviews running and nothing queued behind them, so a budget
+    or a deadline stops the submissions, never a review already paid for."""
+
+    def __init__(
+        self,
+        judge: Judge,
+        pool: ThreadPoolExecutor,
+        todo: list[sqlite3.Row],
+        run_id: int | None,
+        workers: int,
+        stop_after: float | None,
+    ) -> None:
+        self.judge = judge
+        self.pool = pool
+        self.queue = list(todo)
+        self.run_id = run_id
+        self.workers = workers
+        self.stop_after = stop_after
+        self.futures: dict[Any, sqlite3.Row] = {}
+        self.running: set[Any] = set()
+        self.budget_hit = False
+
+    def feed(self) -> None:
+        while self.queue and len(self.running) < self.workers:
+            if self.judge.llm.budget_left() <= 0:
+                self.budget_hit = True
+                self.queue.clear()
+                return
+            if self.stop_after is not None and time.monotonic() > self.stop_after:
+                self.queue.clear()
+                return
+            row = self.queue.pop(0)
+            full = store.article(self.judge.conn, row["id"])
+            if full is None:
+                continue
+            fut = self.pool.submit(self.judge.review, full, self.run_id)
+            self.futures[fut] = row
+            self.running.add(fut)
+
+
 class Judge:
     def __init__(
         self,
@@ -408,43 +449,48 @@ class Judge:
         back to pending (first pass) or count as examined and stay unread (review)."""
         stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "empty": 0, "open": 0, "notes": []}
         for b in store.open_batches(self.conn):
-            try:
-                status = self.llm.batch_status(b["id"])
-            except BatchNotFound as exc:
-                self._give_up(b, f"vanished from the API ({exc})", stats)
-                continue
-            except ModelConfigError:
-                raise
-            except Exception:
-                log.exception("judge: could not poll batch %s", b["id"])
-                stats["open"] += 1
-                continue
-            if status != "ended":
-                if self._lost(b):
-                    self._give_up(b, f"still {status} after {BATCH_LOST_HOURS}h", stats)
-                else:
-                    stats["open"] += 1
-                continue
-            try:
-                results = self.llm.batch_results(b["id"])
-            except BatchNotFound as exc:
-                self._give_up(b, f"vanished from the API ({exc})", stats)
-                continue
-            except ModelConfigError:
-                raise
-            except Exception:
-                log.exception("judge: could not fetch results of batch %s", b["id"])
-                if self._lost(b):  # ended, but its results will not come: the same deadline applies
-                    self._give_up(
-                        b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats
-                    )
-                else:
-                    stats["open"] += 1
+            results = self._finished_results(b, stats)
+            if results is None:
                 continue
             self._absorb(b, results, run_id, client, stats)
             if on_progress is not None:
                 on_progress(stats)
         return stats
+
+    def _finished_results(self, b: sqlite3.Row, stats: dict) -> list[Any] | None:
+        """The results of one batch when it has ended and they can be fetched; None when it is
+        still open (counted) or has been given up on (closed as lost). A rejected key or model
+        is raised: nothing else can go right after it."""
+        try:
+            status = self.llm.batch_status(b["id"])
+        except BatchNotFound as exc:
+            self._give_up(b, f"vanished from the API ({exc})", stats)
+            return None
+        except ModelConfigError:
+            raise
+        except Exception:  # the API or the network; the batch is polled again next run
+            log.exception("judge: could not poll batch %s", b["id"])
+            stats["open"] += 1
+            return None
+        if status != "ended":
+            if self._lost(b):
+                self._give_up(b, f"still {status} after {BATCH_LOST_HOURS}h", stats)
+            else:
+                stats["open"] += 1
+            return None
+        try:
+            return self.llm.batch_results(b["id"])
+        except BatchNotFound as exc:
+            self._give_up(b, f"vanished from the API ({exc})", stats)
+        except ModelConfigError:
+            raise
+        except Exception:  # the results stream failed; tried again next run, given up after the deadline
+            log.exception("judge: could not fetch results of batch %s", b["id"])
+            if self._lost(b):  # ended, but its results will not come: the same deadline applies
+                self._give_up(b, f"ended but its results could not be fetched for {BATCH_LOST_HOURS}h", stats)
+            else:
+                stats["open"] += 1
+        return None
 
     def _give_up(self, b: sqlite3.Row, why: str, stats: dict) -> None:
         """Close a batch whose results will never come; its articles are pending again (first
@@ -654,64 +700,44 @@ class Judge:
             log.info("judge: %d close calls; looking at %d this run", len(rows), cap)
         workers = max(1, workers or self.cfg.limits.parallel_calls)
         pool = ThreadPoolExecutor(max_workers=workers)
-        budget_hit = False
+        feeder = _ReviewFeeder(self, pool, todo, run_id, workers, stop_after)
         try:
-            futures: dict[Any, sqlite3.Row] = {}
-            queue = list(todo)
-            running: set = set()
-
-            def feed() -> None:
-                nonlocal budget_hit
-                while queue and len(running) < workers:
-                    if self.llm.budget_left() <= 0:
-                        budget_hit = True
-                        queue.clear()
-                        return
-                    if stop_after is not None and time.monotonic() > stop_after:
-                        queue.clear()
-                        return
-                    row = queue.pop(0)
-                    full = store.article(self.conn, row["id"])
-                    if full is None:
-                        continue
-                    fut = pool.submit(self.review, full, run_id)
-                    futures[fut] = row
-                    running.add(fut)
-
-            feed()
-            while running:
-                done = next(as_completed(list(running)))
-                running.discard(done)
-                row = futures[done]
-                aid = row["id"]
-                try:
-                    second = done.result()
-                except BudgetExceeded:
-                    budget_hit = True
-                    second = None
-                    skip = True
-                except ModelConfigError:
-                    raise
-                except Exception:
-                    log.exception("judge: review failed for %s", aid)
-                    second, skip = None, False
-                else:
-                    skip = False
-                if skip:
-                    pass  # unexamined: the budget ran out while it waited
-                elif second is None:
-                    store.record_review_failure(self.conn, aid)
-                    results[aid] = None
-                else:
-                    results[aid] = self.apply_review(
-                        aid, float(row["score"]), float(second), row["folder"], client
-                    )
-                feed()
+            feeder.feed()
+            while feeder.running:
+                done = next(as_completed(list(feeder.running)))
+                feeder.running.discard(done)
+                row = feeder.futures[done]
+                self._absorb_review_result(done, row, client, results, feeder)
+                feeder.feed()
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
-        if budget_hit:
+        if feeder.budget_hit:
             log.warning("judge: budget reached during reviews; unexamined close calls stay unread")
         return results
+
+    def _absorb_review_result(
+        self, done: Any, row: sqlite3.Row, client: Any, results: dict[str, bool | None], feeder: _ReviewFeeder
+    ) -> None:
+        """One finished review: recorded at once as a save, a confirmed cut or a failure. An
+        article the budget ran out on stays unexamined (absent from the results)."""
+        aid = row["id"]
+        try:
+            second = done.result()
+        except BudgetExceeded:
+            feeder.budget_hit = True
+            return  # unexamined: the budget ran out while it waited
+        except ModelConfigError:
+            raise
+        except (
+            Exception
+        ):  # one review failed; recorded so it is not retried every run, the article stays unread
+            log.exception("judge: review failed for %s", aid)
+            second = None
+        if second is None:
+            store.record_review_failure(self.conn, aid)
+            results[aid] = None
+        else:
+            results[aid] = self.apply_review(aid, float(row["score"]), float(second), row["folder"], client)
 
     def review(self, row: sqlite3.Row, run_id: int | None) -> float | None:
         """Re-read one article with the full text on the stronger model, now. Returns the

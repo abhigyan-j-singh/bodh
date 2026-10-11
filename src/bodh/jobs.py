@@ -145,46 +145,23 @@ def _schedule_one(action: str, which: str) -> str:
     if mode == "daemon":
         return f"{label} runs as a daemon; pause it with: sudo launchctl bootout system/{label}"
     dom = _domain(mode)
-    if action == "pause":
-        res = subprocess.run(
-            ["launchctl", "bootout", f"{dom}/{label}"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        return (
-            f"paused {label}"
-            if res.returncode == 0
-            else f"{label} already paused ({res.stderr.strip() or 'not loaded'})"
-        )
-    if action == "resume":
-        res = subprocess.run(
-            ["launchctl", "bootstrap", dom, str(path)],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        return (
-            f"resumed {label}"
-            if res.returncode == 0
-            else f"could not load {label}: {res.stderr.strip() or res.stdout.strip()}"
-        )
-    if action == "kick":
-        res = subprocess.run(
+    commands = {
+        "pause": (["launchctl", "bootout", f"{dom}/{label}"], f"paused {label}", f"{label} already paused"),
+        "resume": (["launchctl", "bootstrap", dom, str(path)], f"resumed {label}", f"could not load {label}"),
+        "kick": (
             ["launchctl", "kickstart", "-k", f"{dom}/{label}"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        )
-        return (
-            f"started {label} now"
-            if res.returncode == 0
-            else f"could not start {label}: {res.stderr.strip()}"
-        )
-    return f"unknown action {action}"
+            f"started {label} now",
+            f"could not start {label}",
+        ),
+    }
+    if action not in commands:
+        return f"unknown action {action}"
+    argv, done, failed = commands[action]
+    res = subprocess.run(argv, capture_output=True, text=True, timeout=20, check=False)
+    if res.returncode == 0:
+        return done
+    why = res.stderr.strip() or res.stdout.strip() or ("not loaded" if action == "pause" else "")
+    return f"{failed} ({why})" if action == "pause" else f"{failed}: {why}"
 
 
 # -- the console's own state ------------------------------------------------
@@ -285,8 +262,26 @@ def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
         before = yaml.safe_load(text) or {}
     except (OSError, yaml.YAMLError) as exc:
         return False, f"config.yaml could not be read: {exc}"
+    new_text, section_key, why = _flagged_config(text, before, on)
+    if new_text is None:
+        return False, why
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"config.yaml could not be written: {exc}"
+    state = (
+        "true: autocut cuts below the cut-off from the next run"
+        if on
+        else "false: scoring-only mode, nothing is cut"
+    )
+    return True, f"{section_key} is now {state}"
+
+
+def _flagged_config(text: str, before: object, on: bool) -> tuple[str | None, str, str]:
+    """config.yaml's text with the flag set and checked, as (new text, "section.key", "") or
+    (None, "", why it was refused)."""
     if not isinstance(before, dict):
-        return False, "config.yaml does not hold a mapping of sections; edit it by hand"
+        return None, "", "config.yaml does not hold a mapping of sections; edit it by hand"
     section, key = "autocut", "enabled"
     if "autocut" not in before and isinstance(before.get("cut"), dict) and "enforce" in before["cut"]:
         section, key = "cut", "enforce"  # the layout before October 2026, read for one release
@@ -294,26 +289,15 @@ def set_autocut(root: Path, on: bool) -> tuple[bool, str]:
     try:
         after = yaml.safe_load(new_text) or {}
     except yaml.YAMLError as exc:
-        return False, f"the edit would break config.yaml ({exc}); edit it by hand"
+        return None, "", f"the edit would break config.yaml ({exc}); edit it by hand"
     expected = copy.deepcopy(before)
     expected.setdefault(section, {})
     if not isinstance(expected[section], dict):
-        return False, f"the `{section}:` section is not a mapping; edit config.yaml by hand"
+        return None, "", f"the `{section}:` section is not a mapping; edit config.yaml by hand"
     expected[section][key] = on
     if after != expected:
-        return False, f"could not find a place for {section}.{key} in config.yaml; edit it by hand"
-    try:
-        path.write_text(new_text, encoding="utf-8")
-    except OSError as exc:
-        return False, f"config.yaml could not be written: {exc}"
-    return True, (
-        f"{section}.{key} is now "
-        + (
-            "true: autocut cuts below the cut-off from the next run"
-            if on
-            else "false: scoring-only mode, nothing is cut"
-        )
-    )
+        return None, "", f"could not find a place for {section}.{key} in config.yaml; edit it by hand"
+    return new_text, f"{section}.{key}", ""
 
 
 set_enforce = set_autocut  # the name before October 2026

@@ -4,15 +4,14 @@ It reads only the SQLite file; if it breaks, nothing else does."""
 
 from __future__ import annotations
 
-import html
 import json
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 from zoneinfo import ZoneInfo
 
+from . import html as ui
 from . import store
 from .config import Config
 
@@ -212,19 +211,12 @@ def health(conn: sqlite3.Connection, cfg: Config) -> dict:
 
 # -- rendering ------------------------------------------------------------------
 
-
-def _e(s: Any) -> str:
-    return html.escape(str(s if s is not None else ""))
+_e = ui.esc
+_href = ui.href
 
 
 def _pct(x: float | None) -> str:
     return "–" if x is None else f"{x * 100:.0f}%"
-
-
-def _href(url: str | None) -> str:
-    """A feed's link, escaped, and only ever http(s): escaping does not stop `javascript:`."""
-    u = (url or "").strip()
-    return _e(u) if u.lower().startswith(("http://", "https://")) else "#"
 
 
 def _bars_svg(rows: list[dict], keys: list[str], colors: list[str]) -> str:
@@ -246,222 +238,275 @@ def _bars_svg(rows: list[dict], keys: list[str], colors: list[str]) -> str:
                 f"fill='{colors[j]}'><title>{_e(r['day'])} {k}: {v}</title></rect>"
             )
         parts.append(
-            f"<text x='{x0 + gw / 2:.1f}' y='{h - pad + 14}' font-size='10' text-anchor='middle' fill='#666'>"
+            f"<text x='{x0 + gw / 2:.1f}' y='{h - pad + 14}' font-size='10' text-anchor='middle' fill='var(--muted)'>"
             f"{_e(r['day'][5:])}</text>"
         )
-    parts.append(f"<text x='{pad}' y='{pad - 10}' font-size='11' fill='#666'>max {maxv}</text>")
+    parts.append(f"<text x='{pad}' y='{pad - 10}' font-size='11' fill='var(--muted)'>max {maxv}</text>")
     legend_x = pad
     for j, k in enumerate(keys):
         parts.append(
             f"<rect x='{legend_x}' y='{h - 12}' width='10' height='10' fill='{colors[j]}'/>"
-            f"<text x='{legend_x + 14}' y='{h - 3}' font-size='11' fill='#444'>{_e(k)}</text>"
+            f"<text x='{legend_x + 14}' y='{h - 3}' font-size='11' fill='var(--fg)'>{_e(k)}</text>"
         )
         legend_x += 14 + 7 * len(k) + 16
     parts.append("</svg>")
     return "".join(parts)
 
 
-CSS = """
-body{font:15px/1.45 -apple-system,system-ui,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;color:#222}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
-table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #eee;vertical-align:top}
-th{color:#555;font-weight:600}.num{text-align:right;font-variant-numeric:tabular-nums}.muted{color:#777}
-pre{white-space:pre-wrap;background:#f6f6f6;padding:10px;border-radius:6px;font-size:12.5px}
-.kpis{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0}.kpi{background:#f6f6f6;border-radius:8px;padding:8px 12px;min-width:110px}
-.kpi b{display:block;font-size:20px}.ok{color:#2a7}.bad{color:#c33}
-"""
+FLOW_KEYS = ["arrived", "cut by autocut", "cut by prune", "read", "starred"]
+FLOW_COLORS = ["var(--pending)", "var(--flight)", "var(--prune)", "var(--read)", "var(--star)"]
 
 
-def render(cfg: Config, conn: sqlite3.Connection) -> Path:
+def data(cfg: Config, conn: sqlite3.Connection) -> dict:
+    """Every number the page shows, in one dict: the sections render from it and `data.json`
+    carries a part of it."""
     tz = ZoneInfo(cfg.timezone)
-    now = datetime.now(tz)
-    fl = flow(conn, tz)
-    cal = calibration(conn)
-    verd = verdicts(conn)
-    disagree = disagreements(conn)
-    misses = near_misses(conn)
-    fd = feeds(conn)
-    lessons = learnings(conn)
     covered, frontier = concept_map(conn, cfg)
-    hl = health(conn, cfg)
-    learned_text = cfg.read_learned()
     versions = store.learned_versions(conn, 2)
     learned_diff = ""
     if len(versions) == 2:
         from .profiler import diff
 
         learned_diff = diff(versions[1]["text"], versions[0]["text"])
+    return {
+        "now": datetime.now(tz),
+        "flow": flow(conn, tz),
+        "calibration": calibration(conn),
+        "verdicts": verdicts(conn),
+        "disagreements": disagreements(conn),
+        "near_misses": near_misses(conn),
+        "feeds": feeds(conn),
+        "learnings": learnings(conn),
+        "covered": covered,
+        "frontier": frontier,
+        "health": health(conn, cfg),
+        "learned_text": cfg.read_learned(),
+        "learned_diff": learned_diff,
+    }
 
-    from . import progress
 
-    parts = [
-        f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
-        f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
-        f"unread {hl['unread']} · prune keeps {cfg.prune.keep} · cut-off {cfg.autocut.cutoff}</div>",
-    ]
-
-    # KPIs
+def _section_head(cfg: Config, d: dict) -> str:
+    hl = d["health"]
     last_ok = hl["last_ok"]
     status = (
         f"<span class='ok'>alive</span> last good run {_e(last_ok['finished_at'][:16])}"
         if last_ok
         else "<span class='bad'>no successful run yet</span>"
     )
-    parts.append(
-        "<div class='kpis'>"
-        f"<div class='kpi'><span class='muted'>unread now</span><b>{hl['unread']}</b></div>"
-        + "".join(
-            f"<div class='kpi'><span class='muted'>{_e(b)}</span><b>{n}</b></div>"
-            for b, n in sorted(hl["by_band"].items(), reverse=True)
-        )
-        + f"<div class='kpi'><span class='muted'>spend today</span><b>${hl['spend_today']:.2f}</b></div>"
-        f"<div class='kpi'><span class='muted'>spend 7 days</span><b>${hl['spend_week']:.2f}</b></div>"
-        f"<div class='kpi'><span class='muted'>runner</span><div>{status}</div></div></div>"
+    tiles = [ui.kpi("unread now", str(hl["unread"]))]
+    tiles += [ui.kpi(str(b), str(n)) for b, n in sorted(hl["by_band"].items(), reverse=True)]
+    tiles += [
+        ui.kpi("spend today", f"${hl['spend_today']:.2f}"),
+        ui.kpi("spend 7 days", f"${hl['spend_week']:.2f}"),
+        f"<div class='kpi'><span class='muted'>runner</span><div>{status}</div></div>",
+    ]
+    return (
+        f"<h1>bodh</h1><div class='muted'>as of {d['now'].strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
+        f"unread {hl['unread']} · prune keeps {cfg.prune.keep} · cut-off {cfg.autocut.cutoff}</div>"
+        f"<div class='kpis'>{''.join(tiles)}</div>"
     )
+
+
+def _section_progress(cfg: Config, conn: sqlite3.Connection) -> str:
+    from . import progress
 
     try:
-        parts.append(progress.render_html(progress.snapshot(conn, cfg)))
+        return progress.render_html(progress.snapshot(conn, cfg))
     except Exception:
-        parts.append("<p class='bad'>the progress section failed to render</p>")
+        return "<p class='bad'>the progress section failed to render</p>"
 
-    parts.append("<h2>Flow, last 14 days</h2>")
-    parts.append(
-        _bars_svg(
-            fl,
-            ["arrived", "cut by autocut", "cut by prune", "read", "starred"],
-            ["#bbb", "#e39b5d", "#c9664a", "#4a90c9", "#e0b800"],
-        )
-    )
-    parts.append(
-        "<p class='muted'>Read and starred are inferred from BazQux read state; a burst of more than "
-        f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading.</p>"
-    )
 
-    parts.append(
-        "<h2>Calibration: how often each band gets read</h2><table><tr><th>Band</th><th class='num'>Left unread</th>"
-        "<th class='num'>Read</th><th class='num'>Starred</th></tr>"
+def _section_flow(cfg: Config, d: dict) -> str:
+    note = (
+        "Read and starred are inferred from BazQux read state; a burst of more than "
+        f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading."
     )
-    for c in cal:
-        parts.append(
-            f"<tr><td>{_e(c['band'])}</td><td class='num'>{c['n']}</td><td class='num'>{_pct(c['read_share'])}</td>"
-            f"<td class='num'>{_pct(c['star_share'])}</td></tr>"
-        )
-    parts.append(
-        "</table><p class='muted'>Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
-        "the mix of sub-scores in config.yaml is wrong.</p>"
+    return ui.section("Flow, last 14 days", _bars_svg(d["flow"], FLOW_KEYS, FLOW_COLORS) + ui.muted(note))
+
+
+def _section_calibration(d: dict) -> str:
+    rows = [
+        [_e(c["band"]), str(c["n"]), _pct(c["read_share"]), _pct(c["star_share"])] for c in d["calibration"]
+    ]
+    note = (
+        "Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
+        "the mix of sub-scores in config.yaml is wrong."
+    )
+    return ui.section(
+        "Calibration: how often each band gets read",
+        ui.table(["Band", ("Left unread", "num"), ("Read", "num"), ("Starred", "num")], rows)
+        + ui.muted(note),
     )
 
-    parts.append("<h2>Your verdicts, last 30 days</h2>")
-    if any(r["n"] for r in verd):
-        parts.append(
-            "<table><tr><th>The judge's band</th><th class='num'>great</th><th class='num'>good</th>"
-            "<th class='num'>meh</th><th class='num'>bad</th></tr>"
-        )
-        for r in verd:
-            parts.append(
-                f"<tr><td>{_e(r['band'])}</td><td class='num'>{r['great']}</td><td class='num'>{r['good']}</td>"
-                f"<td class='num'>{r['meh']}</td><td class='num'>{r['bad']}</td></tr>"
-            )
-        parts.append("</table>")
-        if disagree:
-            parts.append(
-                "<p>Where you and the judge disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
-                "<th>Article</th><th>Concept</th></tr>"
-            )
-            for r in disagree:
-                parts.append(
-                    f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
-                    f"<td><a href='{_href(r['url'])}'>{_e((r['title'] or '')[:80])}</a> <span class='muted'>{_e((r['feed_title'] or '')[:30])}</span></td>"
-                    f"<td>{_e(r['concept'] or '')}</td></tr>"
-                )
-            parts.append("</table>")
-        parts.append(
-            "<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
-            "missed; more or less to steer the judge by this article's concept. The Sunday rewrite reads them all; "
-            "disagreements are what it learns from most.</p>"
-        )
-    else:
-        parts.append(
-            "<p class='muted'>No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
-            "when the level missed; more or less to steer the judge by its concept.</p>"
-        )
 
-    parts.append(
-        "<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
-        "<th>Lesson</th><th>Concept</th></tr>"
-    )
-    for r in misses:
-        parts.append(
-            f"<tr><td class='num'>{r['score']:.0f}</td><td><a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
-            f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div></td>"
-            f"<td>{_e(r['lesson'])}</td><td>{_e(r['concept'])}</td></tr>"
+def _section_verdicts(d: dict) -> str:
+    verd = d["verdicts"]
+    if not any(r["n"] for r in verd):
+        return ui.section(
+            "Your verdicts, last 30 days",
+            ui.muted(
+                "No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
+                "when the level missed; more or less to steer the judge by its concept."
+            ),
         )
-    parts.append(
-        "</table><p class='muted'>To rescue one, mark it unread in BazQux or your reader; the next run records the rescue.</p>"
+    rows = [[_e(r["band"]), str(r["great"]), str(r["good"]), str(r["meh"]), str(r["bad"])] for r in verd]
+    inner = ui.table(
+        ["The judge's band", ("great", "num"), ("good", "num"), ("meh", "num"), ("bad", "num")], rows
+    )
+    if d["disagreements"]:
+        drows = [
+            [
+                _e(r["kind"]),
+                f"{r['score']:.0f}",
+                f"<a href='{_href(r['url'])}'>{_e((r['title'] or '')[:80])}</a> "
+                f"<span class='muted'>{_e((r['feed_title'] or '')[:30])}</span>",
+                _e(r["concept"] or ""),
+            ]
+            for r in d["disagreements"]
+        ]
+        inner += "<p>Where you and the judge disagree most:</p>" + ui.table(
+            ["You", ("Score", "num"), "Article", "Concept"], drows
+        )
+    inner += ui.muted(
+        "Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
+        "missed; more or less to steer the judge by this article's concept. The Sunday rewrite reads them all; "
+        "disagreements are what it learns from most."
+    )
+    return ui.section("Your verdicts, last 30 days", inner)
+
+
+def _section_near_misses(d: dict) -> str:
+    rows = [
+        [
+            f"{r['score']:.0f}",
+            f"<a href='{_href(r['url'])}'>{_e(r['title'][:90])}</a>"
+            f"<div class='muted'>{_e(r['feed_title'])} · {_e(r['cut_mode'])}</div>",
+            _e(r["lesson"]),
+            _e(r["concept"]),
+        ]
+        for r in d["near_misses"]
+    ]
+    return ui.section(
+        "Near misses: the best of what was cut this week",
+        ui.table([("Score", "num"), "Article", "Lesson", "Concept"], rows)
+        + ui.muted(
+            "To rescue one, mark it unread in BazQux or your reader; the next run records the rescue."
+        ),
     )
 
-    parts.append(
-        "<h2>Feeds, last 30 days</h2><table><tr><th>Feed</th><th>Folder</th><th class='num'>Articles</th>"
-        "<th class='num'>Mean score</th><th class='num'>Cut</th><th class='num'>Read</th><th class='num'>Starred</th>"
-        "<th class='num'>Rescued</th></tr>"
-    )
-    for r in fd:
-        ms = f"{r['mean_score']:.0f}" if r["mean_score"] is not None else "–"
-        parts.append(
-            f"<tr><td>{_e(r['feed_title'][:40])}</td><td>{_e(r['folder'] or '')}</td><td class='num'>{r['n']}</td>"
-            f"<td class='num'>{ms}</td><td class='num'>{_pct(r['cut_share'])}</td><td class='num'>{_pct(r['read_share'])}</td>"
-            f"<td class='num'>{_pct(r['star_share'])}</td><td class='num'>{_pct(r['rescue_share'])}</td></tr>"
-        )
-    parts.append("</table>")
 
-    parts.append("<h2>Learnings this week</h2>")
+def _section_feeds(d: dict) -> str:
+    rows = [
+        [
+            _e(r["feed_title"][:40]),
+            _e(r["folder"] or ""),
+            str(r["n"]),
+            f"{r['mean_score']:.0f}" if r["mean_score"] is not None else "–",
+            _pct(r["cut_share"]),
+            _pct(r["read_share"]),
+            _pct(r["star_share"]),
+            _pct(r["rescue_share"]),
+        ]
+        for r in d["feeds"]
+    ]
+    columns = [
+        "Feed",
+        "Folder",
+        ("Articles", "num"),
+        ("Mean score", "num"),
+        ("Cut", "num"),
+        ("Read", "num"),
+        ("Starred", "num"),
+        ("Rescued", "num"),
+    ]
+    return ui.section("Feeds, last 30 days", ui.table(columns, rows))
+
+
+def _section_learnings(d: dict) -> str:
+    lessons = d["learnings"]
     if not lessons:
-        parts.append("<p class='muted'>No reads recorded yet this week.</p>")
+        return ui.section("Learnings this week", ui.muted("No reads recorded yet this week."))
+    parts = []
     for concept, rows in lessons.items():
-        parts.append(f"<h3>{_e(concept)}</h3><ul>")
-        for r in rows:
-            parts.append(f"<li><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a>: {_e(r['lesson'])}</li>")
-        parts.append("</ul>")
-
-    parts.append("<h2>Map: concepts read in the last 90 days</h2>")
-    if covered:
-        parts.append("<p>" + " · ".join(f"<b>{_e(c)}</b> {n}" for c, n in covered) + "</p>")
-    else:
-        parts.append("<p class='muted'>Nothing recorded yet.</p>")
-    parts.append("<h3>Frontier: high-scoring arrivals in fields you have not been reading</h3><table>")
-    for r in frontier:
-        parts.append(
-            f"<tr><td class='num'>{r['score']:.0f}</td><td>{_e(r['concept'])}</td>"
-            f"<td><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>"
+        items = "".join(
+            f"<li><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a>: {_e(r['lesson'])}</li>" for r in rows
         )
-    parts.append("</table>")
+        parts.append(f"<h3>{_e(concept)}</h3><ul>{items}</ul>")
+    return ui.section("Learnings this week", "".join(parts))
 
-    parts.append("<h2>Learned profile</h2><pre>" + _e(learned_text) + "</pre>")
-    if learned_diff:
-        parts.append("<h3>Change from the previous version</h3><pre>" + _e(learned_diff) + "</pre>")
 
-    parts.append(
-        "<h2>Health: last 20 runs</h2><table><tr><th>Started</th><th>Kind</th><th>OK</th><th>Summary</th></tr>"
+def _section_map(d: dict) -> str:
+    covered = d["covered"]
+    inner = (
+        "<p>" + " · ".join(f"<b>{_e(c)}</b> {n}" for c, n in covered) + "</p>"
+        if covered
+        else ui.muted("Nothing recorded yet.")
     )
-    for r in hl["runs"]:
-        ok = "<span class='ok'>yes</span>" if r["ok"] else "<span class='bad'>no</span>"
-        parts.append(
-            f"<tr><td>{_e((r['started_at'] or '')[:16])}</td><td>{_e(r['kind'])}</td><td>{ok}</td>"
-            f"<td>{_e(r['summary'] or r['error'] or '')}</td></tr>"
-        )
-    parts.append("</table></body></html>")
+    rows = [
+        [
+            f"{r['score']:.0f}",
+            _e(r["concept"]),
+            f"<a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span>",
+        ]
+        for r in d["frontier"]
+    ]
+    inner += "<h3>Frontier: high-scoring arrivals in fields you have not been reading</h3>" + ui.table(
+        [("Score", "num"), "Concept", "Article"], rows
+    )
+    return ui.section("Map: concepts read in the last 90 days", inner)
 
+
+def _section_profile(d: dict) -> str:
+    inner = f"<pre>{_e(d['learned_text'])}</pre>"
+    if d["learned_diff"]:
+        inner += f"<h3>Change from the previous version</h3><pre>{_e(d['learned_diff'])}</pre>"
+    return ui.section("Learned profile", inner)
+
+
+def _section_health(d: dict) -> str:
+    rows = [
+        [
+            _e((r["started_at"] or "")[:16]),
+            _e(r["kind"]),
+            "<span class='ok'>yes</span>" if r["ok"] else "<span class='bad'>no</span>",
+            _e(r["summary"] or r["error"] or ""),
+        ]
+        for r in d["health"]["runs"]
+    ]
+    return ui.section("Health: last 20 runs", ui.table(["Started", "Kind", "OK", "Summary"], rows))
+
+
+def render(cfg: Config, conn: sqlite3.Connection) -> Path:
+    """dashboard/index.html and data.json, from one pass over the database."""
+    from . import progress
+
+    d = data(cfg, conn)
+    body = "\n".join(
+        [
+            _section_head(cfg, d),
+            _section_progress(cfg, conn),
+            _section_flow(cfg, d),
+            _section_calibration(d),
+            _section_verdicts(d),
+            _section_near_misses(d),
+            _section_feeds(d),
+            _section_learnings(d),
+            _section_map(d),
+            _section_profile(d),
+            _section_health(d),
+        ]
+    )
     out_dir = cfg.root / cfg.dashboard_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "index.html"
-    path.write_text("\n".join(parts), encoding="utf-8")
+    path.write_text(ui.page("bodh", body, css_extra=progress.PROGRESS_CSS), encoding="utf-8")
+    hl = d["health"]
     (out_dir / "data.json").write_text(
         json.dumps(
             {
-                "flow": fl,
-                "calibration": cal,
-                "verdicts": verd,
+                "flow": d["flow"],
+                "calibration": d["calibration"],
+                "verdicts": d["verdicts"],
                 "unread": hl["unread"],
                 "spend_today": hl["spend_today"],
             },

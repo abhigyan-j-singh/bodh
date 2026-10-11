@@ -195,6 +195,8 @@ class Console:
             log.warning("console: config.yaml not reloaded: %s", exc)
 
     def run_action(self, action: str, params: dict) -> dict:
+        """One button of the page: the levers the console works itself (stop, the schedule,
+        autocut) or a bodh command run as a child process."""
         if action == "stop":
             msg = (
                 self.child.stop()
@@ -223,17 +225,22 @@ class Console:
             return {"ok": False, "message": f"unknown action {action}"}
         args, background = ACTIONS[action]
         args = list(args) + _extra_args(action, params)
-        cmd = self.command + args
-        if background:
-            if self.child.alive():
-                return {"ok": False, "message": "a command is already running; stop it first"}
-            if locks.running_process(self.cfg.root / self.cfg.data_dir):
-                return {"ok": False, "message": "a run holds the lock (started elsewhere); stop it or wait"}
-            self.child.start(cmd, self.cfg.root, self.env)
-            return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
+        return self._start_command(args) if background else self._run_command(args)
+
+    def _start_command(self, args: list[str]) -> dict:
+        """A long command (a run, a catch-up) as a child whose output streams into the page."""
+        if self.child.alive():
+            return {"ok": False, "message": "a command is already running; stop it first"}
+        if locks.running_process(self.cfg.root / self.cfg.data_dir):
+            return {"ok": False, "message": "a run holds the lock (started elsewhere); stop it or wait"}
+        self.child.start(self.command + args, self.cfg.root, self.env)
+        return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
+
+    def _run_command(self, args: list[str]) -> dict:
+        """A short command, waited for; its output goes back with the answer."""
         try:
             res = subprocess.run(
-                cmd,
+                self.command + args,
                 cwd=str(self.cfg.root),
                 env=self.env,
                 capture_output=True,
