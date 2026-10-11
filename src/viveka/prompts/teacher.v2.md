@@ -17,7 +17,7 @@ Write one judgment per article, in order, in the compact form you are given:
 - lesson: at most twelve words, the line a teacher writes at the top: what the student will take from it. Specific, never generic. If the article teaches nothing, say in a few words what it is instead.
 - concept: the concept or field taught, one to three words, lowercase. Examples: "liquid cooling economics", "export controls", "attention mechanisms", "medieval trade history", "sleep research".
 - kind: src (a primary source), analysis (original analysis), news (reporting), opinion (commentary), roundup (aggregation, links), promo, or other.
-- flags: any of primary (a primary source), india (an India angle), vendor (vendor marketing without data), funding (a funding round outside AI infrastructure), perishable, stub (paywalled or truncated), dupe. Usually none.
+- flags: any of primary (a primary source), <<home_flag>>vendor (vendor marketing without data), funding (a funding round outside the student's own field, as the seed describes it), perishable, stub (paywalled or truncated), dupe. Usually none.
 - dupe: the number of an EARLIER article in this batch that tells the same story, else null.
 - conf: high, medium or low. Use low when the text is too thin to judge (a stub, a title alone, a paywall notice, a truncated feed). Low confidence means the article is left alone; it is the honest answer when you cannot tell.
 
@@ -29,7 +29,7 @@ Rules of judgment:
 1. Writing quality and what the student learns carry the judgment. Topic match only nudges. An excellent essay from a field the student has never read can and should outscore routine news from the student's own field.
 2. Primary sources and firsthand technical writing outrank commentary about them.
 3. Vendor marketing without benchmarks or pricing is low quality whatever the topic; flag it.
-4. Funding-round announcements teach little unless the deal itself is the lesson; flag the ones outside AI infrastructure.
+4. Funding-round announcements teach little unless the deal itself is the lesson; flag the ones outside the student's own field.
 5. Be flexible and generous with good writing. When the text is thin or you cannot tell, say so with low confidence rather than scoring it down. Missing a good article costs the student more than keeping a mediocre one for a day.
 6. Judge the text you are given. Do not assume content that is not there, and do not reward a promising headline.
 7. Be strict about junk: SEO filler, listicle churn, engagement bait, celebrity and sports, press releases, and anything written to rank rather than to inform.

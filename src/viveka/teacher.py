@@ -33,16 +33,24 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 KINDS = ["primary_source", "original_analysis", "reporting", "commentary", "aggregation", "promo", "other"]
-FLAGS = ["primary_source", "india_angle", "vendor_marketing_no_data", "funding_round_non_infra",
+FLAGS = ["primary_source", "home_angle", "vendor_marketing_no_data", "funding_offfield",
          "perishable", "paywalled_stub", "duplicate"]
 
 # the compact codes the model writes (one token each) and what they mean in the database
 KIND_CODES = {"src": "primary_source", "analysis": "original_analysis", "news": "reporting",
               "opinion": "commentary", "roundup": "aggregation", "promo": "promo", "other": "other"}
-FLAG_CODES = {"primary": "primary_source", "india": "india_angle", "vendor": "vendor_marketing_no_data",
-              "funding": "funding_round_non_infra", "perishable": "perishable", "stub": "paywalled_stub",
-              "dupe": "duplicate"}
+FLAG_CODES = {"primary": "primary_source", "home": "home_angle", "vendor": "vendor_marketing_no_data",
+              "funding": "funding_offfield", "perishable": "perishable", "stub": "paywalled_stub",
+              "dupe": "duplicate",
+              "india": "home_angle"}  # the code the prompt used before home_angle was configurable
+# flag names written by earlier versions, read as today's
+FLAG_ALIASES = {"india_angle": "home_angle", "funding_round_non_infra": "funding_offfield"}
 SUBSCORES = ("quality", "learning", "fit", "breadth", "relevance")
+
+
+def normalize_flags(flags: list[str] | None) -> list[str]:
+    """Flag names as the code knows them today, whatever version wrote them."""
+    return [FLAG_ALIASES.get(f, f) for f in (flags or [])]
 
 BATCH_WAIT_MINUTES = 60   # a half-empty batch is still submitted once its oldest article has waited this long
 BATCH_LOST_HOURS = 26     # the API expires a batch after 24h; one never seen to end by then is given up on
@@ -66,7 +74,7 @@ class Verdict(BaseModel):
 
 
 KindCode = Literal["src", "analysis", "news", "opinion", "roundup", "promo", "other"]
-FlagCode = Literal["primary", "india", "vendor", "funding", "perishable", "stub", "dupe"]
+FlagCode = Literal["primary", "home", "vendor", "funding", "perishable", "stub", "dupe"]
 
 
 class JudgmentOut(BaseModel):
@@ -78,7 +86,7 @@ class JudgmentOut(BaseModel):
     lesson: str = Field(description="at most 12 words: what the student takes from it, or what the piece is instead")
     concept: str = Field(description="one to three lowercase words: the concept or field taught")
     kind: KindCode = Field(description="src, analysis, news, opinion, roundup, promo or other")
-    flags: list[FlagCode] = Field(description="any of primary, india, vendor, funding, perishable, stub, dupe; usually empty")
+    flags: list[FlagCode] = Field(description="any of primary, home, vendor, funding, perishable, stub, dupe; usually empty")
     dupe: int | None = Field(description="the number of an earlier article in this batch telling the same story, else null")
     conf: Literal["high", "medium", "low"] = Field(description="low when the text is too thin to judge")
 
@@ -191,6 +199,14 @@ def load_prompt(name: str, root: Path | None = None) -> str:
     raise TeacherError(f"prompt {name!r} not found in {[str(c) for c in candidates]}")
 
 
+def fill_prompt(text: str, cfg: Config) -> str:
+    """The prompt's placeholders: `<<home_flag>>` names the student's home ground when one is
+    configured (the model then writes the `home` flag) and disappears when none is."""
+    home = cfg.scoring.home_angle.strip()
+    home_flag = f"home (an angle on the student's home ground, {home}), " if home else ""
+    return text.replace("<<home_flag>>", home_flag)
+
+
 def parse_judgments(text: str) -> list[Verdict] | None:
     """JSON text (structured output or the plain fallback) to verdicts. Malformed
     judgments are dropped, never guessed; unparsable text returns None."""
@@ -242,12 +258,12 @@ def compose(v: Verdict | dict, cfg: Config, expansion_topics: list[str] | None =
     d = v.model_dump() if isinstance(v, Verdict) else dict(v)
     w = cfg.scoring.weights
     s = sum(w[k] * float(d.get(k, 0)) for k in w)
-    flags = set(d.get("flags") or [])
-    if "india_angle" in flags:
-        s += 10
+    flags = set(normalize_flags(d.get("flags")))
+    if "home_angle" in flags and cfg.scoring.home_angle:
+        s += cfg.scoring.home_bonus
     if "vendor_marketing_no_data" in flags or d.get("kind") == "promo":
         s = min(s, 30)
-    if "funding_round_non_infra" in flags:
+    if "funding_offfield" in flags:
         s = min(s, 40)
     if d.get("dupe_of") or "duplicate" in flags:
         s = min(s, 20)
@@ -570,7 +586,7 @@ class Teacher:
         self.conn = conn
         self.prompt_version = cfg.scoring.prompt_version
         self.expansion_topics = expansion_topics or []
-        base = load_prompt(self.prompt_version, cfg.root)
+        base = fill_prompt(load_prompt(self.prompt_version, cfg.root), cfg)
         intro, _, rubric = base.partition("\n\n")
         seed = cfg.read_seed() or "(no seed written yet)"
         learner = (cfg.read_learner() if learner_text is None else learner_text) or "(no learner model yet)"

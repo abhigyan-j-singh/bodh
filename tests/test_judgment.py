@@ -23,7 +23,7 @@ def test_parser_tolerates_null_fields():
     out = parse_judgments(text)
     assert [v.n for v in out] == [1, 2]
     assert out[0].lesson == "" and out[0].kind == "other" and out[0].flags == [] and out[0].confidence == "medium"
-    assert out[1].quality == 70 and out[1].flags == ["india_angle"] and out[1].dupe_of == 1 and out[1].confidence == "low"
+    assert out[1].quality == 70 and out[1].flags == ["home_angle"] and out[1].dupe_of == 1 and out[1].confidence == "low"
     assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], dupe="³").to_verdict().dupe_of is None
 
 
@@ -67,3 +67,22 @@ def test_adapt_to_error_word_boundaries():
     assert not _mentions_cache_ttl("request throttled, try later")   # "throttled" contains "ttl"
     assert _mentions_structured_outputs("output_config.format is invalid")
     assert not _mentions_structured_outputs("the unstructured text was too long")
+
+
+def test_prompt_home_flag_follows_the_config(cfg, conn):
+    from viveka.teacher import Teacher, fill_prompt, load_prompt
+
+    class StubLLM:
+        plain_json = False
+
+        def request_params(self, *a, **k):
+            return {}
+
+    raw = load_prompt("teacher.v2", cfg.root)
+    assert "<<home_flag>>" in raw and "india" not in raw.lower() and "AI infrastructure" not in raw
+    cfg.scoring.home_angle = ""
+    assert "home (" not in fill_prompt(raw, cfg) and "<<" not in fill_prompt(raw, cfg)
+    cfg.scoring.home_angle = "India"
+    text = Teacher(cfg, StubLLM(), conn).system_text  # type: ignore[arg-type]
+    assert "home (an angle on the student's home ground, India)" in text and "<<" not in text
+    assert "outside the student's own field" in text

@@ -26,7 +26,7 @@ def test_parse_compact_judgments_maps_codes_and_clamps():
     assert [v.n for v in out] == [1, 2]  # the three-score judgment is dropped, never guessed
     v = out[0]
     assert (v.quality, v.learning, v.fit, v.breadth, v.relevance) == (100, 0, 60, 55, 40)
-    assert v.kind == "original_analysis" and v.flags == ["primary_source", "india_angle"]
+    assert v.kind == "original_analysis" and v.flags == ["primary_source", "home_angle"]   # "INDIA" is the old code
     assert v.concept == "liquid cooling economics" and v.confidence == "high"
     assert out[1].kind == "promo" and out[1].flags == ["vendor_marketing_no_data"] and out[1].dupe_of == 1
     assert parse_judgments("no json here") is None

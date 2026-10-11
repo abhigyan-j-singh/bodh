@@ -36,12 +36,18 @@ def base_verdict(**over) -> Verdict:
 def test_compose_weights_and_rules():
     cfg = Config()
     assert compose(base_verdict(), cfg) == 80.0
-    assert compose(base_verdict(flags=["india_angle"]), cfg) == 90.0
+    assert compose(base_verdict(flags=["home_angle"]), cfg) == 80.0          # no home ground configured: no bonus
+    cfg.scoring.home_angle = "India"
+    assert compose(base_verdict(flags=["home_angle"]), cfg) == 90.0
+    assert compose(base_verdict(flags=["india_angle"]), cfg) == 90.0         # the old name, read as today's
     assert compose(base_verdict(kind="promo"), cfg) == 30.0
     assert compose(base_verdict(flags=["vendor_marketing_no_data"]), cfg) == 30.0
+    assert compose(base_verdict(flags=["funding_offfield"]), cfg) == 40.0
     assert compose(base_verdict(flags=["funding_round_non_infra"]), cfg) == 40.0
     assert compose(base_verdict(dupe_of=3), cfg) == 20.0
-    assert compose(base_verdict(quality=100, learning=100, fit=100, breadth=100, relevance=100, flags=["india_angle"]), cfg) == 100.0
+    assert compose(base_verdict(quality=100, learning=100, fit=100, breadth=100, relevance=100, flags=["home_angle"]), cfg) == 100.0
+    cfg.scoring.home_bonus = 5
+    assert compose(base_verdict(flags=["home_angle"]), cfg) == 85.0
 
 
 def test_compose_expansion_bonus_and_topic_matching():

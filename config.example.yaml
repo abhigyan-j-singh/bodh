@@ -26,6 +26,9 @@ scoring:
   prompt_version: "teacher.v2"     # v2 writes the compact judgment (half the output tokens of v1)
   weights: { quality: 0.30, learning: 0.30, fit: 0.15, breadth: 0.15, relevance: 0.10 }
   expansion_bonus: 10              # points for an article on one of this week's expansion topics
+  home_angle: ""                   # your home ground ("India", "Brazil", "the Pacific Northwest"): an article with that
+                                   # angle gets home_bonus points; empty turns the flag off
+  home_bonus: 10
   batch_size: 20                   # articles per teacher call
   workers: 4                       # synchronous runs: teacher calls and second looks in flight at once
   max_per_run: 400                 # synchronous runs: articles scored per run

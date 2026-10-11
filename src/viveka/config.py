@@ -107,6 +107,9 @@ class Scoring(Strict):
         default_factory=lambda: {"quality": 0.30, "learning": 0.30, "fit": 0.15, "breadth": 0.15, "relevance": 0.10}
     )
     expansion_bonus: int = Field(default=10, ge=0, le=100)
+    home_angle: str = ""                                    # the student's home ground ("India", say): an article
+                                                            # with that angle gets home_bonus; empty turns the flag off
+    home_bonus: int = Field(default=10, ge=0, le=100)
     batch_size: int = Field(default=20, ge=1, le=100)        # articles per teacher call
     workers: int = Field(default=4, ge=1, le=64)             # synchronous runs: calls in flight at once
     max_per_run: int = Field(default=400, ge=0)              # synchronous runs: a backlog drains at this rate per run

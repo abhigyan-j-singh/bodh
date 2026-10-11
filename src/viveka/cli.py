@@ -554,9 +554,15 @@ def why(article_id: str, verbose: bool = VERBOSE) -> None:
     else:
         typer.echo(f"score {row['score']:.1f} (base {row['base_score']:.1f}"
                    + (f", second look {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "") + ")")
+        from .teacher import normalize_flags
+
+        try:
+            flags = normalize_flags(json.loads(row["flags"] or "[]"))
+        except (TypeError, ValueError):
+            flags = [str(row["flags"])]
         typer.echo(f"quality {row['quality']} · learning {row['learning']} · fit {row['fit']} · breadth {row['breadth']}"
-                   f" · relevance {row['relevance']} · confidence {row['confidence']} · kind {row['kind']} · flags {row['flags']}"
-                   f" · judged by {row['model']} ({row['prompt_version']})")
+                   f" · relevance {row['relevance']} · confidence {row['confidence']} · kind {row['kind']} · flags "
+                   f"{', '.join(flags) or 'none'} · judged by {row['model']} ({row['prompt_version']})")
         typer.echo(f"concept: {row['concept']}\nlesson: {row['lesson']}")
     typer.echo(f"state: {row['status']}" + (f" ({row['cut_mode']} at {row['cut_at']})" if row["cut_mode"] else "")
                + (" · starred" if row["starred"] else "") + (" · protected" if row["protected"] else "")
