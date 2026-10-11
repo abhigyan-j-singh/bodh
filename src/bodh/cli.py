@@ -11,11 +11,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import click
 import typer
 
 from . import __version__, api, store
-from .config import Config, load_config, system_timezone
+from .config import Config, load_config
 from .errors import BodhError, ConfigError, LockedError
 from .locks import AlreadyRunning
 
@@ -112,6 +111,36 @@ def _interactive() -> bool:
         return False
 
 
+def _clear() -> None:
+    """Clear the terminal for a redraw: an escape sequence where terminals take one, `cls` on Windows."""
+    import os
+    import subprocess
+
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "cls"], check=False)
+    else:
+        typer.echo("\033[2J\033[H", nl=False)
+
+
+def _edit(text: str) -> str | None:
+    """Open `text` in $VISUAL or $EDITOR (vi, or notepad on Windows) and return what came back,
+    or None when nothing changed."""
+    import os
+    import subprocess
+    import tempfile
+
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or ("notepad" if os.name == "nt" else "vi")
+    fd, path = tempfile.mkstemp(suffix=".md", prefix="bodh-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        subprocess.run([*editor.split(), path], check=True)
+        edited = Path(path).read_text(encoding="utf-8")
+    finally:
+        Path(path).unlink(missing_ok=True)
+    return None if edited == text else edited
+
+
 def _renamed(old: str, new: str) -> None:
     """The one line an old command name prints before running the new one (one release)."""
     typer.echo(
@@ -186,51 +215,14 @@ def init(
       bodh init --yes --bazqux-email EMAIL --key KEY --who "..." --knows "..." \\
                 --goal "..." --decisions "..." --never "..." --no-live
     """
-    import os
-
     from . import init as initmod
 
-    def ask(text: str, given: str | None, default: str = "", hide: bool = False) -> str:
-        if given is not None:
-            return given
-        if yes or not _interactive():
-            return default
-        return str(typer.prompt(text, default=default, hide_input=hide, show_default=bool(default)))
-
-    answers = initmod.Answers(
-        directory=Path(
-            ask(
-                "Where does the project go?",
-                str(directory) if directory else None,
-                str(initmod.default_directory()),
-            )
-        )
-    )
-    answers.bazqux_email = ask("BazQux e-mail", bazqux_email)
-    answers.bazqux_password = ask(
-        "BazQux password", bazqux_password or os.environ.get("BAZQUX_PASSWORD"), hide=True
-    )
-    answers.provider = ask(
-        "Model provider (anthropic, openai, gemini, openrouter, openai-compatible)", provider, "anthropic"
-    )
-    key_prompt = (
-        "The service's base URL (e.g. http://localhost:11434/v1)"
-        if answers.provider == "openai-compatible"
-        else f"{answers.provider} API key"
-    )
-    answers.key = ask(key_prompt, key, hide=answers.provider != "openai-compatible")
-    answers.judge = ask("The judge (provider/model-id)", judge, initmod.default_judge(answers.provider))
-    given = {"who": who, "knows": knows, "goal": goal, "decisions": decisions, "never": never}
-    for name, question in initmod.QUESTIONS:
-        answers.about[name] = ask(question, given[name])
-    answers.timezone = ask("Timezone (IANA name)", timezone, system_timezone())
+    flags = {name: value for name, value in locals().items() if name in initmod.FLAG_NAMES}
+    asking = not yes and _interactive()
+    answers = initmod.gather(_asker(asking), flags)
     answers.live = live
     if install_schedule is None:
-        install_schedule = (
-            False
-            if (yes or not _interactive())
-            else typer.confirm("Schedule the jobs on this machine?", default=True)
-        )
+        install_schedule = asking and typer.confirm("Schedule the jobs on this machine?", default=True)
     answers.install_schedule = install_schedule
     _secret_values[:] = [v for v in (answers.bazqux_password, answers.key, answers.bazqux_email) if v]
     outcome = initmod.init(answers, say=typer.echo)
@@ -241,6 +233,20 @@ def init(
         "`bodh run --shadow` for a first scoring-only pass"
         + ("" if answers.install_schedule else ", `bodh schedule install` to schedule the jobs")
     )
+
+
+def _asker(asking: bool) -> Any:
+    """The wizard's one question shape: a flag given wins, else a prompt when someone is at the
+    keyboard (hidden for a secret), else the default."""
+
+    def ask(text: str, given: str | None, default: str = "", hide: bool = False) -> str:
+        if given is not None:
+            return given
+        if not asking:
+            return default
+        return str(typer.prompt(text, default=default, hide_input=hide, show_default=bool(default)))
+
+    return ask
 
 
 @app.command()
@@ -450,19 +456,13 @@ def catch_up(
     workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
     chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
     all_ages: bool = typer.Option(False, "--all-ages", help="Also articles older than limits.max_age_days."),
-    model: str | None = typer.Option(
-        None, "--model", help="The model to judge with; default catch_up.model."
-    ),
+    model: str | None = typer.Option(None, "--model", help="The judge to use; default catch_up.model."),
     budget: float | None = typer.Option(None, "--budget", help="Raise today's budget to this many dollars."),
     max_seconds: float | None = typer.Option(
         None, "--max-seconds", help="Start no new call after this long; run again to continue."
     ),
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
-    rejudge: bool = typer.Option(
-        False,
-        "--rejudge",
-        help="The judge (not the quick judge) also reads what other models judged, whatever they rated.",
-    ),
+    rejudge: bool = typer.Option(False, "--rejudge", help="The judge also reads what other models judged."),
     verbose: bool = VERBOSE,
 ) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous, many
@@ -488,20 +488,7 @@ def catch_up(
             "nothing pending" + ("" if all_ages else " within the age window (--all-ages for the rest)")
         )
         return
-    again = (
-        f" The judge reads again what it rates {plan.rejudge_at:.0f} or more, on the next runs."
-        if plan.quick and plan.rejudge_at is not None
-        else ""
-    )
-    typer.echo(
-        f"{plan.pending:,} articles pending{' (any age)' if all_ages else ''}; about ${plan.estimate_usd:.2f} "
-        f"with {plan.judge}, {workers} calls at once.{again}"
-    )
-    if plan.over_budget and budget is None:
-        typer.echo(
-            f"today's budget has ${plan.budget_left:.2f} left; pass --budget {plan.budget_needed:.0f} "
-            "to let the catch-up finish"
-        )
+    _catch_up_preview(plan, workers, budget)
     if not yes and not typer.confirm("Start the catch-up?"):
         raise typer.Exit(0)
     show = _catch_up_progress_line(plan.pending, time.monotonic())
@@ -521,6 +508,24 @@ def catch_up(
         return
     typer.echo("")
     _catch_up_report(total)
+
+
+def _catch_up_preview(plan: api.CatchUpPlan, workers: int, budget: float | None) -> None:
+    """What the pass will do and cost, and what --budget must say when today's is short."""
+    again = (
+        f" The judge reads again what it rates {plan.rejudge_at:.0f} or more, on the next runs."
+        if plan.quick and plan.rejudge_at is not None
+        else ""
+    )
+    typer.echo(
+        f"{plan.pending:,} articles pending{' (any age)' if plan.all_ages else ''}; about ${plan.estimate_usd:.2f} "
+        f"with {plan.judge}, {workers} calls at once.{again}"
+    )
+    if plan.over_budget and budget is None:
+        typer.echo(
+            f"today's budget has ${plan.budget_left:.2f} left; pass --budget {plan.budget_needed:.0f} "
+            "to let the catch-up finish"
+        )
 
 
 def _catch_up_progress_line(pending: int, started: float) -> Any:
@@ -666,7 +671,7 @@ def progress(
             return
         text = progressmod.render_text(snap)
         if watch:
-            click.clear()
+            _clear()
             typer.echo(text + f"\n\n(redraws every {every}s; Ctrl-C to stop)")
             try:
                 time.sleep(max(2, every))
@@ -1035,7 +1040,7 @@ def profile(
     if action == "edit":
         path = found.cfg.about_path
         before = path.read_text(encoding="utf-8") if path.exists() else ""
-        edited = click.edit(before, extension=".md")
+        edited = _edit(before)
         if edited is None or edited == before:
             typer.echo("unchanged")
             return

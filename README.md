@@ -47,32 +47,83 @@ worked example in `profile/about.md` with yourself, and name your own folders in
 
 ## What runs
 
+Thirty-two commands in seven groups, named by when they are used; `bodh --help` lists them the
+same way and every command's `--help` ends with examples. `--json` prints one object
+(`docs/json.md`), `--dry-run` shows and changes nothing, `--yes` skips the question, `-v` adds
+debug lines. Exit codes: 1 an error, 2 configuration, 3 BazQux, 4 the model, 5 a run in
+progress, 130 stopped. `bodh --install-completion` sets up the shell.
+
+**Set up**
+
 | Command | What it does |
 | --- | --- |
-| `bodh run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues, verdicts), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag judged ones `score-90` … `score-0`, apply autocut (with an Opus 5.5 review of close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `autocut.enabled: false`. `--sync` waits for every model call instead of batching; `--shadow` is one run without cutting even with autocut on. |
-| `bodh catch-up` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending, with the quick judge (`catch_up.model`, Haiku: 20x cheaper; it never touches the judge's judgments, and the judge reads again what it rates 50 or more on the next runs, `catch_up.rejudge_at`). `--model` names another model, the judge itself for a full-price pass. `--all-ages` includes the articles older than `limits.max_age_days`; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes. Judges and tags, cuts nothing; Ctrl-C and run again to continue. |
-| `bodh progress [--watch]` | How far the judge has got: judged, with the model, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
-| `bodh prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). It shows the boundary and what would go, then asks (`--yes` skips the question; `--dry-run` only shows). Run it again to cut deeper. |
-| `bodh undo` | Reverse the last cut. What comes back is left alone by autocut from then on. |
-| `bodh safety [reset]` | The safety limit (a run whose autocut would cut nearly everything newly judged trips it, and autocut stays off until a person resets it) and the articles the judge gave up on. |
-| `bodh clear-old --days 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
-| `bodh status`, `bodh why ID` | The whole system at a glance: what is running, the launchd jobs, the console, the unread list, spend, the last runs; why one article got its score. |
-| `bodh console` | The console in the browser (`http://127.0.0.1:8766`, kept alive by launchd): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
-| `bodh stop [--all]` | Stop the run, prune or catch-up in progress, the same as Ctrl-C in its terminal. Fail open: what was judged stays; a cut half-written to BazQux is finished by the next run. `--all` stops everything: pauses all four launchd jobs, interrupts the run in progress, ends every other bodh process including the console; `bodh schedule resume` brings the jobs back. |
-| `bodh schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume, the console included; `--job run` for one), resume, or kick a run now (refused while a run holds the lock). |
-| `bodh autocut on\|off` | Flip autocut in config.yaml: on cuts under the cut-off from the next run, off is scoring-only mode. |
-| `bodh mark ID great\|good\|meh\|bad\|basic\|heavy\|more\|less\|rescue` | Your verdict on an article from the terminal, the same as the tags in BazQux; `rescue` brings a cut article back. |
-| `bodh steer more\|less "x"` | Steer the judge now instead of waiting for Sunday: a dated line in the learned profile (the `more` and `less` tags do the same from BazQux). |
-| `bodh profile [show\|revert]` | The learned profile and its versions; `revert` restores the previous one. |
-| `bodh weekly` | Sunday: the profiler rewrites the learned profile from the week's reading (kept only if the eval gate passes), writes the weekly note, runs the drift check. |
-| `bodh report` | Monthly feed report with proposals (unsubscribe, move to the strictest folder, protect). |
-| `bodh doctor [--live] [--values]` | Configuration and connectivity checks, the database's integrity and backups; exit code 1 when one fails. Run after every update. `--values` prints every setting in effect with its source (config.yaml or the default). |
-| `bodh backup` | Copy the database to `data/backups/bodh-<date>.db` (`VACUUM INTO`); seven kept. The run does this once a day on its own. |
-| `bodh rebuild [--dry-run]` | After a lost database: read the band tags, the cut tag and the stars back from BazQux, so nothing already judged is paid for again and nothing already cut is cut again. Rebuilt scores carry the band's threshold and a low confidence (autocut leaves them alone); the unread ones rated 50 or more are read again by the judge on the next runs. |
-| `bodh eval [--model] [--cap 0.50]` | Judge the sixty-article evaluation set (`evals/`) for the example student and print the agreement by band and the cost. A few cents; the figure below comes from it. |
+| `bodh init [DIR]` | A new project in one sitting: the directory, your BazQux login and a provider's key (each checked live), five questions that become `profile/about.md`, the timezone; then `doctor` runs and the schedule is offered. Every answer has a flag, for scripts. |
+| `bodh doctor [--live] [--values]` | Configuration and connectivity checks, the database's integrity and backups; exit code 1 when one fails. Run after every update. `--live` logs in and calls each role's model once (a few cents); `--values` prints every setting in effect with its source. |
 | `bodh keys [list\|set <provider>]` | Which provider keys are set (never a value); `set` asks for one with hidden input and writes `.env` owner-only (`--keychain` for the system keychain). |
 | `bodh models [list\|compare --with provider/model]` | The four roles with their models, prices and capabilities, and the providers with keys; `compare` judges a sample of already-judged unread articles with the judge and a second model and prints the band agreement, the largest disagreements, the cost per 1,000 and the seconds per article for both. Nothing stored changes. |
-| `bodh run --rejudge`, `bodh catch-up --rejudge` | After a switch of `models.judge`: the judge reads again everything the previous judge rated, whatever the score (by default only what it rated 50 or more is re-judged, `catch_up.rejudge_at`). |
+| `bodh version [--check]` | The version; `--check` asks PyPI for the newest. |
+
+**Every run**
+
+| Command | What it does |
+| --- | --- |
+| `bodh run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues, verdicts), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag judged ones `score-90` … `score-0`, apply autocut (with an Opus 5.5 review of close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `autocut.enabled: false`. `--sync` waits for every model call instead of batching; `--shadow` is one run without cutting even with autocut on; `--rejudge` has the judge read again everything another model judged. |
+| `bodh catch-up` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending, with the quick judge (`catch_up.model`, Haiku: 20x cheaper; it never touches the judge's judgments, and the judge reads again what it rates 50 or more on the next runs, `catch_up.rejudge_at`). `--model` names another model, the judge itself for a full-price pass. `--all-ages` includes the articles older than `limits.max_age_days`; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes; `--rejudge` is the judge's pass over everything other models judged. Judges and tags, cuts nothing; Ctrl-C and run again to continue. |
+| `bodh serve [--every 30]` | The schedule and the console in one process: a run every 30 minutes, the weekly rewrite on Sunday mornings, the report on the first of the month, the console on its port. For Docker, Windows, and any machine without launchd or systemd. |
+
+**Look**
+
+| Command | What it does |
+| --- | --- |
+| `bodh status [--json]` | The whole system at a glance: what is running, the launchd jobs, the console, the unread list, spend, the last runs. |
+| `bodh progress [--watch] [--json]` | How far the judge has got: judged, with the model, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
+| `bodh why ID\|URL [--json]` | One article: its score and sub-scores, the lesson, the concept, its state, your record. The explanation of the system, one article at a time. |
+| `bodh find "words" [--unread] [--json]` | Articles whose title or lesson holds every word: id, score, band, state, feed, so nobody types a forty-character id. |
+| `bodh list [--band 70] [--folder X] [--json]` | Today's reading list: the unread articles at the band and above, best first, with lesson, concept and feed (the console's list, in text). |
+
+**Cut**
+
+| Command | What it does |
+| --- | --- |
+| `bodh prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). It shows the boundary, the counts by band and folder and the ten best that would go with their lessons, then asks, naming the run it will create (`--yes` skips the question; `--dry-run` only shows). Run it again to cut deeper. |
+| `bodh undo [--run ID]` | Reverse the last cut, or one run's. What comes back is left alone by autocut from then on. |
+| `bodh clear-old --days 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
+
+**Teach**
+
+| Command | What it does |
+| --- | --- |
+| `bodh mark ID\|URL great\|good\|meh\|bad\|basic\|heavy\|more\|less\|rescue` | Your verdict on an article from the terminal, the same as the tags in BazQux; `rescue` brings a cut article back. |
+| `bodh steer more\|less "x"` | Steer the judge now instead of waiting for Sunday: a dated line in the learned profile (the `more` and `less` tags do the same from BazQux). |
+| `bodh profile [show\|revert\|edit]` | The student profile: show it, go back one version of the learned part, or open `about.md` in `$EDITOR`. |
+| `bodh tags [--json]` | The vocabulary: every tag bodh writes and every tag you can add, and what each does. |
+| `bodh eval [--model] [--cap 0.50]` | Judge the sixty-article evaluation set (`evals/`) for the example student and print the agreement by band and the cost. A few cents; the figure below comes from it. |
+
+**Control**
+
+| Command | What it does |
+| --- | --- |
+| `bodh stop [--all]` | Stop the run, prune or catch-up in progress, the same as Ctrl-C in its terminal. Fail open: what was judged stays; a cut half-written to BazQux is finished by the next run. `--all` stops everything: pauses all four launchd jobs, interrupts the run in progress, ends every other bodh process including the console; `bodh schedule resume` brings the jobs back. |
+| `bodh schedule [status\|pause\|resume\|kick\|install\|uninstall]` | The scheduled jobs: show them, pause them all (nothing fires until resume, the console included; `--job run` for one), resume, kick a run now, or install and uninstall them: launchd agents on a Mac, systemd user units on Linux, one Task Scheduler entry running `bodh serve` on Windows (`--dry-run` shows everything first). |
+| `bodh autocut on\|off` | Flip autocut in config.yaml: on cuts under the cut-off from the next run, off is scoring-only mode. |
+| `bodh safety [reset]` | The safety limit (a run whose autocut would cut nearly everything newly judged trips it, and autocut stays off until a person resets it) and the articles the judge gave up on. |
+| `bodh console` | The console in the browser (`http://127.0.0.1:8766`, kept alive by the schedule): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
+
+**Housekeeping**
+
+| Command | What it does |
+| --- | --- |
+| `bodh backup` | Copy the database to `data/backups/bodh-<date>.db` (`VACUUM INTO`); seven kept. The run does this once a day on its own. |
+| `bodh rebuild [--dry-run]` | After a lost database: read the band tags, the cut tag and the stars back from BazQux, so nothing already judged is paid for again and nothing already cut is cut again. Rebuilt scores carry the band's threshold and a low confidence (autocut leaves them alone); the unread ones rated 50 or more are read again by the judge on the next runs. |
+| `bodh weekly [--dry-run]` | Sunday: the profiler rewrites the learned profile from the week's reading (kept only if the eval gate passes), writes the weekly note, runs the drift check. |
+| `bodh report [--days 30]` | The feed report with proposals (unsubscribe, move to the strictest folder, protect). |
+| `bodh dashboard` | Regenerate the dashboard now. |
+| `bodh upgrade [--run]` | The upgrade for the way this bodh was installed (pipx, uv, Homebrew, a one-file executable, a checkout, pip): printed, or run. |
+
+The old names (`score`, `blast`, `bankruptcy`, `halt`, `enforce`, `panel`, `label`, `want`, `meh`,
+and `triage` itself) run for one release and print the new name. Everything a command does is a
+method of `bodh.api.App`, which the console and scripts call too (`docs/json.md`, "Reading it
+from Python").
 
 ## Install
 
@@ -80,6 +131,15 @@ Requirements: macOS, Python 3.10+ (`brew install python`), git. Tailscale only f
 Keep the checkout somewhere plain such as `~/bodh`: launchd cannot run jobs that live in `~/Documents`,
 `~/Desktop` or `~/Downloads` (macOS privacy protection denies them with "Operation not permitted"), and a
 path with spaces makes pip wrap the command in `/bin/sh`, which is denied first. The installer refuses both.
+
+With pipx or uv, `bodh init` does the whole set-up from the terminal, questions and all:
+
+```bash
+pipx install bodh                 # or: uv tool install bodh
+bodh init ~/bodh                  # the login, a key, five questions about you, the timezone; doctor; the schedule
+```
+
+From a checkout:
 
 ```bash
 git clone https://github.com/abhigyan-j-singh/bodh ~/bodh && cd ~/bodh
@@ -92,6 +152,10 @@ $EDITOR config.yaml               # your folders, what the prune keeps, the cut-
 ./install-launchd.sh              # laptop: agents, run while logged in, no sudo
 ./install-launchd.sh --daemon     # an always-on Mac: daemons, run without login (asks for sudo)
 ```
+
+`bodh schedule install` does what `install-launchd.sh` does from any install (and writes systemd
+user units on Linux, a Task Scheduler entry on Windows); `bodh serve` runs the schedule and the
+console in one process where there is no scheduler at all.
 
 `doctor` exits 1 until `.env` and `about.md` are yours; `install.sh` runs it last and says so.
 

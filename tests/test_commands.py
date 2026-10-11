@@ -14,7 +14,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import click
 import pytest
 from conftest import seed_scored
 from fakes import FakeLLM, FakeReader, make_item
@@ -382,21 +381,29 @@ def test_clear_old_confirmation_names_the_run(tmp_path, monkeypatch):
 
 
 def test_profile_edit_opens_the_editor_and_writes_what_changed(tmp_path, monkeypatch):
+    from bodh.cli import _edit as real_edit
+
     root = _project(tmp_path, monkeypatch)
     seen = {}
 
-    def edit(text, extension=".md"):
+    def edit(text):
         seen["before"] = text
         return text.replace("Student: test.", "Student: me, a tester.")
 
-    monkeypatch.setattr(click, "edit", edit)
+    monkeypatch.setattr("bodh.cli._edit", edit)
     result = invoke(["profile", "edit"])
     assert result.exit_code == 0 and "wrote" in result.output and "about.md" in result.output
     assert seen["before"].startswith("# About the student")
     assert "Student: me, a tester." in (root / "profile" / "about.md").read_text(encoding="utf-8")
-    monkeypatch.setattr(click, "edit", lambda text, extension=".md": None)
+    monkeypatch.setattr("bodh.cli._edit", lambda text: None)
     result = invoke(["profile", "edit"])
     assert result.exit_code == 0 and "unchanged" in result.output
+    # the real round trip through $EDITOR: a one-line editor that appends a line
+    editor = tmp_path / "editor.py"
+    editor.write_text("import sys; open(sys.argv[1], 'a').write('\\nAppended.\\n')", encoding="utf-8")
+    monkeypatch.setenv("EDITOR", f"{sys.executable} {editor}")
+    monkeypatch.delenv("VISUAL", raising=False)
+    assert real_edit("one\n") == "one\n\nAppended.\n"
 
 
 # -- init ------------------------------------------------------------------------------------

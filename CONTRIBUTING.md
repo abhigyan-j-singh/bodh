@@ -38,6 +38,15 @@ A prompt change changes `tests/snapshots/`; accept it with `BODH_UPDATE_SNAPSHOT
 tests/test_judgment.py` and say in `CHANGELOG.md` whether it re-judges (a new
 `judge.prompt_version` does; a rewording under the same version only rewrites the cached prefix).
 
+## Adding a command
+
+A command is a method of `bodh.api.App` first (the work, the lock, a value or a dataclass
+back) and a function in `cli.py` second (the options, the printing, `--json` through
+`api.with_schema`). Put it in its group in the epilog of `bodh --help`, end its docstring with
+two or three examples under `\b` (so the help keeps the lines), give it `-v`, and add it to
+`tests/test_commands.py` (the help test walks every visible command) and, with `--json`, to
+`docs/json.md`. No colour, no box drawing: the help must read the same in a Windows terminal.
+
 ## Adding a reader or a provider
 
 A reader is anything that lists unread and starred ids, serves contents and label streams,

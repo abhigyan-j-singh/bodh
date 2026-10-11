@@ -81,6 +81,22 @@ the real client, so it cannot drift. `tests/test_drills.py` plays the failures a
 one test each. `tests/snapshots/` holds the rendered prompts: a prompt change shows as a diff,
 `BODH_UPDATE_SNAPSHOTS=1` accepts it, and `CHANGELOG.md` says whether it re-judges.
 
+## One implementation, every surface
+
+`bodh.api.App` is the only place a command's work is done: it opens the project (the
+configuration, the secrets, the database), takes the run lock where a lock is due
+(`App.lock`), calls the engine, and returns values and dataclasses (`Hit`, `ListRow`,
+`ArticleView`, `TagInfo`, `PrunePlan`, `CatchUpPlan`), never text. `cli.py` parses arguments
+and prints; the console runs the command line as child processes; the MCP server (Phase 8)
+calls the API in process. A new command is an `App` method first and a `cli` function second,
+and its `--json` is the method's result through `api.with_schema` and `api.dumps`
+(`docs/json.md`). The doctor's checks live in `doctor.py` and report through a `say`
+callback, so a terminal prints them as they are found and a test reads them as a list;
+Sunday's job is `weekly.py`. The wizard is `init.py` (`gather` asks, `init` validates, checks
+live, writes, runs doctor); the schedulers are `installers.py` (launchd, systemd, Task
+Scheduler, each with a dry run); `serve.py` is the one-process schedule (`Scheduler.tick` is
+the whole logic, driven by a clock); `upgrade.py` detects the install channel.
+
 ## Providers
 
 `llm.LLM` is the one door to every model: it checks at construction that the three roles'

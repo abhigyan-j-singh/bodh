@@ -131,27 +131,27 @@ def run_eval(
             break
         batch = rows[start : start + size]
         verdicts = judge.judge_batch(batch, None)  # type: ignore[arg-type]  # dicts carry the row's keys
-        for row in batch:
-            item = by_id[row["id"]]
-            v = verdicts.get(row["id"])
-            score = compose(v, cfg) if v is not None else None
-            results.append(
-                {
-                    "id": item["id"],
-                    "title": item["title"],
-                    "expected": item["expected"],
-                    "got": cfg.tags.band_for(score) if score is not None else None,
-                    "score": score,
-                    "lesson": v.lesson if v is not None else "",
-                    "kind": v.kind if v is not None else "",
-                    "flags": list(v.flags) if v is not None else [],
-                    "why": item["why"],
-                }
-            )
+        results.extend(_result(cfg, by_id[row["id"]], verdicts.get(row["id"])) for row in batch)
         if on_progress is not None:
             on_progress(len(results), len(rows))
     spent = ctx.llm.spent_today() - spent_before
     return summarise(results, cfg, judge_model, spent, len(rows))
+
+
+def _result(cfg: Config, item: dict[str, Any], v: Any) -> dict[str, Any]:
+    """One article's line: what the set expected, what the judge gave."""
+    score = compose(v, cfg) if v is not None else None
+    return {
+        "id": item["id"],
+        "title": item["title"],
+        "expected": item["expected"],
+        "got": cfg.tags.band_for(score) if score is not None else None,
+        "score": score,
+        "lesson": v.lesson if v is not None else "",
+        "kind": v.kind if v is not None else "",
+        "flags": list(v.flags) if v is not None else [],
+        "why": item["why"],
+    }
 
 
 def _band_rank(cfg: Config) -> dict[str, int]:

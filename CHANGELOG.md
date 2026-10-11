@@ -77,6 +77,10 @@ of the aliases go away in the release after 1.0.0.
 
 ### Changed
 
+- The status and progress JSON use the glossary's names: `console` (was `panel`), `keep` and
+  `cutoff` under `config` (were `target` and `floor`), `judge` (was `teacher`), and
+  `folders[].cutoff` (was `floor`); `dashboard/progress.json` carries `schema: 1`.
+
 - A run the daily budget cut short cuts nothing and says so ("daily budget reached: nothing
   cut this run"): a half-judged run's close calls could not have their reviews. Before, the
   judged junk of such a run was still cut. The next day's runs cut as usual.
@@ -143,6 +147,34 @@ of the aliases go away in the release after 1.0.0.
 
 ### Added
 
+- The commands in seven groups named by when they are used (set up, every run, look, cut,
+  teach, control, housekeeping): `bodh --help` lists them in that order as plain text, every
+  command's help ends with examples, shell completion is on (`bodh --install-completion`),
+  and `--json` prints one object with `schema` first on `version`, `keys`, `run`, `status`,
+  `progress`, `why`, `find`, `list` and `tags` (`docs/json.md`). Behind every command is
+  `bodh.api.App`, the one implementation the console and scripts call too; the command line
+  parses and prints.
+- `bodh init [DIR]`: a new project in one sitting. The directory, the BazQux login and a
+  provider's key (each checked live unless `--no-live`), five questions that become
+  `profile/about.md`, the timezone; then `doctor` runs and the schedule is offered. Every
+  answer has a flag, so a script can do it; the example files ship inside the package.
+- `bodh serve [--every 30]`: the schedule and the console in one process (a run every N
+  minutes, the weekly on Sunday mornings, the report on the first of the month, each a child
+  process), for Docker, Windows and any machine without launchd or systemd.
+- `bodh schedule install|uninstall [--dry-run]`: launchd agents on a Mac, systemd user units
+  on Linux, one Task Scheduler entry running `bodh serve` on Windows; every entry runs the
+  interpreter bodh was installed with, so pipx, uv, a venv and a checkout schedule alike.
+- `bodh find "words" [--unread]` (titles and lessons: id, score, band, state, feed),
+  `bodh list [--band --folder]` (today's reading list in text), `bodh tags` (the vocabulary
+  and what each tag does), `bodh undo --run ID`, `bodh profile edit` (about.md in `$EDITOR`),
+  `bodh upgrade [--run]` (the upgrade for the channel detected: pipx, uv, Homebrew, a
+  one-file executable, a checkout, pip) and `bodh version --check` (the newest on PyPI).
+  `bodh why` and `bodh mark` take the article's URL as well as its id.
+- `bodh prune --dry-run` prints the boundary, the counts by band and by folder, and the ten
+  best that would go with their lessons; the questions a prune and a clear-old ask state the
+  number, the mode, that `bodh undo` reverses it, and the run id it will create.
+- A folder with no project says so and names `bodh init`; a data folder is never created
+  where there is no config.yaml.
 - Models from five providers. Every role (`models.judge`, `models.reviewer`, `models.profiler`,
   `catch_up.model`) takes `provider/model-id`: `anthropic` (a bare id still means Anthropic, so
   an old `config.yaml` reads the same), `openai` (the Responses API, the Batch API, structured

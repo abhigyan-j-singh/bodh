@@ -109,6 +109,53 @@ def rebuild(ctx: Any, dry_run: bool = False) -> dict[str, Any]:
     if dry_run:
         stats["scores"] = sum(1 for aid in found if aid not in scored)
         return stats
+    _write_rebuild(ctx, found, cut_ids, unread, starred, missing, stats)
+    log.info("rebuild: %s", summary(stats))
+    return stats
+
+
+def _rebuilt_verdict(threshold: int) -> dict[str, Any]:
+    return {
+        "quality": threshold,
+        "learning": threshold,
+        "fit": threshold,
+        "breadth": threshold,
+        "relevance": threshold,
+        "lesson": "(rebuilt from the band tag in BazQux)",
+        "concept": "",
+        "kind": "other",
+        "flags": [],
+        "dupe_of": None,
+        "confidence": "low",
+    }
+
+
+def summary(stats: dict[str, Any]) -> str:
+    head = "would write" if stats["dry_run"] else "wrote"
+    again = (
+        f"; the judge reads {stats['rejudge']} unread of them again on the next runs (catch_up.rejudge_at)"
+        if stats["rejudge"]
+        else ""
+    )
+    return (
+        f"{stats['tagged']} band-tagged, {stats['cut_tagged']} cut-tagged and {stats['starred']} starred in BazQux; "
+        f"{stats['unknown']} unknown here ({stats['fetched']} fetched, {stats['vanished']} vanished); "
+        f"{head} {stats['scores']} scores, {stats['cuts']} cuts, {stats['stars']} stars{again}"
+    )
+
+
+def _write_rebuild(
+    ctx: Any,
+    found: dict[str, tuple[int, str]],
+    cut_ids: set[str],
+    unread: set[str],
+    starred: set[str],
+    missing: list[str],
+    stats: dict[str, Any],
+) -> None:
+    """The write: the unknown articles fetched, then in one transaction the rebuilt scores,
+    the cuts and the stars, and the run row."""
+    cfg, conn, client = ctx.cfg, ctx.conn, ctx.client
     items: list[Any] = []
     folders: dict[str, str | None] = {}
     if missing:
@@ -147,35 +194,3 @@ def rebuild(ctx: Any, dry_run: bool = False) -> dict[str, Any]:
         store.set_flags(conn, stars, starred=1)
         stats.update(scores=len(rebuilt), cuts=len(cuts), stars=len(stars))
         store.finish_run(conn, run_id, True, summary=summary(stats))
-    log.info("rebuild: %s", summary(stats))
-    return stats
-
-
-def _rebuilt_verdict(threshold: int) -> dict[str, Any]:
-    return {
-        "quality": threshold,
-        "learning": threshold,
-        "fit": threshold,
-        "breadth": threshold,
-        "relevance": threshold,
-        "lesson": "(rebuilt from the band tag in BazQux)",
-        "concept": "",
-        "kind": "other",
-        "flags": [],
-        "dupe_of": None,
-        "confidence": "low",
-    }
-
-
-def summary(stats: dict[str, Any]) -> str:
-    head = "would write" if stats["dry_run"] else "wrote"
-    again = (
-        f"; the judge reads {stats['rejudge']} unread of them again on the next runs (catch_up.rejudge_at)"
-        if stats["rejudge"]
-        else ""
-    )
-    return (
-        f"{stats['tagged']} band-tagged, {stats['cut_tagged']} cut-tagged and {stats['starred']} starred in BazQux; "
-        f"{stats['unknown']} unknown here ({stats['fetched']} fetched, {stats['vanished']} vanished); "
-        f"{head} {stats['scores']} scores, {stats['cuts']} cuts, {stats['stars']} stars{again}"
-    )

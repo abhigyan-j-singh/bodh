@@ -219,6 +219,8 @@ class _Run:
         follows unless it was written in the last second (a snapshot walks the whole store)."""
         progress.set_phase(self.conn, text)
         progress.write_live(self.cfg, self.conn, min_interval=0.0 if not text else 1.0)
+        if text:
+            log.info("run %d: %s", self.run_id, text)  # `bodh run -v` shows the phases as they happen
 
 
 def run(
@@ -500,23 +502,7 @@ def catch_up(
     one) judges what nobody has judged yet and leaves the judge's judgments alone; the
     judge later re-judges what the quick judge rated promising (catch_up.rejudge_at)."""
     cfg, conn = ctx.cfg, ctx.conn
-    if all_ages:
-        cfg.limits.max_age_days = None
-    if budget is not None:
-        cfg.models.daily_budget_usd = max(cfg.models.daily_budget_usd, budget)
-    quick = bool(model) and not same_model(model, cfg.models.judge)
-    if model:
-        cfg.models.judge = model
-    judge = ctx.judge()
-    judge.batch_mode = False
-    if quick:
-        judge.rejudge = None
-    elif rejudge:
-        judge.rejudge = (
-            model_name(cfg.models.judge),
-            0.0,
-        )  # everything another model judged, whatever it rated
-    ctx.llm.retries(8)
+    judge = _catch_up_judge(ctx, model, all_ages, budget, rejudge)
     run_id = store.begin_run(conn, "catch-up")
     total = _catch_up_totals(run_id, judge.pending_count(exclude_inflight=True))
     deadline = total["started"] + max_seconds if max_seconds else None
@@ -546,6 +532,32 @@ def catch_up(
     finally:
         _catch_up_close(ctx, judge, run_id, total)
     return total
+
+
+def _catch_up_judge(
+    ctx: Context, model: str | None, all_ages: bool, budget: float | None, rejudge: bool
+) -> Judge:
+    """The judge of a catch-up: synchronous, patient with rate limits, the quick judge leaving
+    the judge's judgments alone, the judge itself re-judging everything with ``rejudge``."""
+    cfg = ctx.cfg
+    if all_ages:
+        cfg.limits.max_age_days = None
+    if budget is not None:
+        cfg.models.daily_budget_usd = max(cfg.models.daily_budget_usd, budget)
+    quick = bool(model) and not same_model(model, cfg.models.judge)
+    if model:
+        cfg.models.judge = model
+    judge = ctx.judge()
+    judge.batch_mode = False
+    if quick:
+        judge.rejudge = None
+    elif rejudge:
+        judge.rejudge = (
+            model_name(cfg.models.judge),
+            0.0,
+        )  # everything another model judged, whatever it rated
+    ctx.llm.retries(8)
+    return judge
 
 
 def _catch_up_totals(run_id: int, pending: int) -> dict[str, Any]:

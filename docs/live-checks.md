@@ -18,6 +18,11 @@ checkout, with the virtualenv's `bodh` (or the `bodh` alias). Each costs cents a
 | `bodh models` | the four roles with their prices and capabilities (`batch, schema, cache` for Anthropic), the providers with keys, the price table, the budget line |
 | `bodh models compare --with <provider/model> --sample 5 --yes` (after `bodh keys set <provider>` and a price in `config.yaml`) | a progress count to 10, then `compared 5 of 5 articles`, the agreement lines, the cost per 1,000 and seconds per article for both, and `nothing stored changed`; a few cents |
 | `bodh status` | the console up, the four `bodh.*` jobs, the last run's summary |
+| `bodh list`, `bodh find "<a word from a recent title>"`, `bodh why <the URL of one of them>` | the reading list with lessons; the hit with its id, score, band and state; the article's story. Each with `--json`: valid JSON, `"schema": 1` first |
+| `bodh tags` | the vocabulary: the five band tags, `cut`, `rescue`, `prune`, the eight verdict tags, the `Must read` stream |
+| `bodh schedule install --dry-run` | `would write ~/Library/LaunchAgents/bodh.*.plist` for the four jobs, each running `.venv/bin/python -m bodh.cli ...`, and `would run: launchctl bootstrap gui/<uid> ...`; nothing changes |
+| `bodh init /tmp/bodh-try --no-install-schedule` (then delete the folder) | the questions one by one (the password and the key hidden), `bazqux login: ok, N unread`, `anthropic (claude-sonnet-5-5): ok`, the files written, the doctor's lines, `doctor: ok`, `ready: /tmp/bodh-try` |
+| `bodh upgrade`, `bodh version --check` | `a checkout` and the `git -C ... pull --ff-only` line; the version and the newest on PyPI (`unknown` until the first release) |
 | the console, once each: run, stop, schedule pause and resume, autocut off and on, prune (dry run), undo, clear-old (dry run), catch-up (stop it), weekly, report, doctor, dashboard | each button streams its output and ends with the command's exit code; `autocut off` shows in `bodh doctor --values` at once |
 | `tail -f ~/Library/Logs/bodh/bodh.log` during a run | one line per phase, the summary line at the end, no secret anywhere |
 

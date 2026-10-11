@@ -44,7 +44,11 @@ brackets; the old names keep working for one release and are listed in `CHANGELO
 | the safety limit | A run whose autocut would cut nearly everything newly judged stops before any write and cuts nothing until a person resets it (was the breaker) | `safety.max_cut_share`, `bodh safety reset` |
 | the console | The local page with the levers and the dashboard, kept alive by the schedule (was the control room, `bodh panel`) | `bodh console`, `bodh.console` |
 | the dashboard | The page the console shows and `bodh run` exports: today, the list, the verdicts, the learning, the feeds, the money | `dashboard/index.html` |
-| the schedule | The operating system's jobs that run bodh: launchd on a Mac (systemd, Task Scheduler and `bodh serve` elsewhere, from Phase 9) | `bodh schedule`, `bodh.run` |
+| the schedule | The operating system's jobs that run bodh: launchd agents on a Mac, systemd user timers on Linux, a Task Scheduler entry on Windows; `bodh schedule install` writes them | `bodh schedule`, `bodh.run` |
+| serve | One process that runs the schedule and the console together, where there is no scheduler | `bodh serve` |
+| the reading list | The unread articles at a band and above, best first, each with its lesson | `bodh list`, the console |
+| the wizard | `bodh init`: a new project from its questions, or from flags | `bodh init` |
+| the API | `bodh.api.App`: the one implementation every surface calls; its JSON is `docs/json.md` | `bodh.api`, `--json` |
 | the heartbeat | A ping to healthchecks.io after every run, so silence raises an alert | `HEALTHCHECK_URL` |
 | the budget | The day's spending cap on model calls; judging pauses when it is reached, nothing is cut because of it | `models.daily_budget_usd` |
 | the home angle | A phrase from the configuration; an article with an angle on it gets a bonus | `judge.home_angle`, `judge.home_bonus` |

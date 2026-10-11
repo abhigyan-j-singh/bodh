@@ -14,6 +14,7 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
@@ -41,6 +42,10 @@ QUESTIONS = (
     ("decisions", "Which decisions are in front of you this quarter?"),
     ("never", "What is never worth your attention?"),
 )
+FLAG_NAMES = (
+    "directory", "bazqux_email", "bazqux_password", "provider", "key", "judge",
+    "who", "knows", "goal", "decisions", "never", "timezone",
+)  # fmt: skip
 HEADINGS = {
     "who": "Student:",
     "knows": "Already knows well, at a practitioner level:",
@@ -226,3 +231,33 @@ def init(
 
 def default_directory() -> Path:
     return Path(DEFAULT_HOME).expanduser()
+
+
+def gather(ask: Callable[..., str], given: dict[str, Any]) -> Answers:
+    """The answers, from the flags given and `ask(text, given, default, hide)` for the rest:
+    the command line's prompt, or a script's defaults."""
+    where = given.get("directory")
+    directory = Path(
+        ask("Where does the project go?", str(where) if where else None, str(default_directory()))
+    )
+    answers = Answers(directory=directory)
+    answers.bazqux_email = ask("BazQux e-mail", given.get("bazqux_email"))
+    answers.bazqux_password = ask(
+        "BazQux password", given.get("bazqux_password") or os.environ.get("BAZQUX_PASSWORD"), hide=True
+    )
+    answers.provider = ask(
+        "Model provider (anthropic, openai, gemini, openrouter, openai-compatible)",
+        given.get("provider"),
+        "anthropic",
+    )
+    key_prompt = (
+        "The service's base URL (e.g. http://localhost:11434/v1)"
+        if answers.provider == "openai-compatible"
+        else f"{answers.provider} API key"
+    )
+    answers.key = ask(key_prompt, given.get("key"), hide=answers.provider != "openai-compatible")
+    answers.judge = ask("The judge (provider/model-id)", given.get("judge"), default_judge(answers.provider))
+    for name, question in QUESTIONS:
+        answers.about[name] = ask(question, given.get(name))
+    answers.timezone = ask("Timezone (IANA name)", given.get("timezone"), system_timezone())
+    return answers

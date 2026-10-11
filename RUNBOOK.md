@@ -29,6 +29,12 @@ Once `./install-launchd.sh` has been run, launchd does the daily work while you 
 A laptop that is asleep simply misses runs and catches up on wake. Nothing needs to be typed for
 new articles to be judged; the rest of this file is for looking, cutting, teaching and fixing.
 
+`bodh schedule install` writes the same four jobs from any install (`pipx`, `uv`, a checkout),
+and on Linux writes systemd user timers instead; `bodh schedule uninstall` removes them. On a
+machine with no scheduler, `bodh serve` is one process that runs the schedule (a run every 30
+minutes, the weekly on Sunday mornings, the report on the first) and the console together;
+on Windows `bodh schedule install` makes a Task Scheduler entry that starts it at logon.
+
 
 ## 2. The daily routine
 
@@ -60,6 +66,16 @@ want the unread list judged right now:
 
     bodh run --sync                # every model call now, full price, up to 400 articles
     bodh progress --watch          # live: judged, with the model, pending, rate per minute, ETA
+
+The reading list in the terminal, and one article's story:
+
+    bodh list                      # unread at 70 and above, best first, each with its lesson and feed
+    bodh list --band 50 --folder Essays
+    bodh find "liquid cooling"     # by words in the title or the lesson: id, score, band, state, feed
+    bodh why https://example.org/post   # the score, the sub-scores, the lesson, the state, your record
+
+Every one of these takes `--json` for a script (`docs/json.md`). The first time, `bodh tags`
+prints the vocabulary and what each tag does.
 
 
 ## 3. What one run does (`bodh run`)
@@ -231,6 +247,7 @@ disagreements shrink week by week, it is learning you.
 | `bodh status` | the same in the terminal |
 | `bodh safety` | the safety limit, and the articles the judge gave up on |
 | `bodh progress [--watch]` | the judge's progress: judged, with the model, pending, by folder, batches, spend, cache hits, cost per 1,000, the log |
+| `bodh list`, `bodh find "words"`, `bodh why ID\|URL` | the reading list, a search over titles and lessons, one article's story; `--json` on each |
 | `dashboard/index.html` | the dashboard: flow, calibration, near misses, feeds, learnings, knowledge map, the learned profile, health (no log: the page may be published) |
 | `~/Library/Logs/bodh/bodh.log` | the run log (`tail -f`); `launchd.*.log`, `console.err.log` next to it |
 | `data/console.log` | why the console could not start, if ever |
