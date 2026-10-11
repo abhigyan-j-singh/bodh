@@ -40,11 +40,11 @@ def make_item(n: int, feed: str = "Feed A", title: str | None = None, url: str |
 @pytest.fixture(autouse=True)
 def _no_real_launchd(monkeypatch):
     """The suite runs on the owner's Mac too: never touch the real launchd jobs or processes."""
-    from bodh import control
+    from bodh import jobs
 
-    monkeypatch.setattr(control, "_plist_path", lambda label: (None, ""))
-    monkeypatch.setattr(control, "launchctl_available", lambda: False)
-    monkeypatch.setattr(control, "stray_processes", lambda root=None: [])
+    monkeypatch.setattr(jobs, "_plist_path", lambda label: (None, ""))
+    monkeypatch.setattr(jobs, "launchctl_available", lambda: False)
+    monkeypatch.setattr(jobs, "stray_processes", lambda root=None: [])
 
 
 @pytest.fixture
@@ -53,8 +53,8 @@ def cfg(tmp_path: Path) -> Config:
     c.root = tmp_path
     (tmp_path / "data").mkdir()
     (tmp_path / "profile").mkdir()
-    (tmp_path / "profile" / "seed.md").write_text("# Seed\nStudent: test.\n", encoding="utf-8")
-    (tmp_path / "profile" / "learner.md").write_text(
+    (tmp_path / "profile" / "about.md").write_text("# About the student\nStudent: test.\n", encoding="utf-8")
+    (tmp_path / "profile" / "learned.md").write_text(
         "## What the student has been learning\nnothing\n\n## Expansion topics for next week\n- nuclear power: why\n- medieval history, because\n",
         encoding="utf-8",
     )
@@ -124,7 +124,7 @@ class FakeClient:
         self.unread_marked: list[list[str]] = []
 
     def unread_ids(self):
-        from bodh.bazqux import ItemRef
+        from bodh.readers.bazqux import ItemRef
 
         return [ItemRef(id=i, timestamp_usec=None) for i in self.unread]
 

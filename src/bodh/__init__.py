@@ -1,6 +1,6 @@
 """bodh: keeps a BazQux unread list worth reading.
 
-A teacher (a strong model) scores every unread article once; the worst are
+A judge (a strong model) reads every unread article once; the worst are
 marked read in BazQux; you choose how deep the cut goes. BazQux is the only
 source of truth, any reader that syncs with it simply follows, and every machine action is a tag.
 """

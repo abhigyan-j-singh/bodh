@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- bodh control room: a small local web server (http://127.0.0.1:8766), kept alive.
+    <!-- the bodh console: a small local web server (http://127.0.0.1:8766), kept alive.
          Publish it on your tailnet with tailscale serve (port 8766). -->
     <key>Label</key>
     <string>bodh.console</string>
@@ -10,7 +10,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>__BODH_DIR__/.venv/bin/bodh</string>
-        <string>panel</string>
+        <string>console</string>
         <string>--port</string>
         <string>8766</string>
     </array>
@@ -34,14 +34,14 @@ __USERNAME__
     <key>KeepAlive</key>
     <true/>
 
-    <!-- a port already taken (another control room) would otherwise restart it every 10 s -->
+    <!-- a port already taken (another console) would otherwise restart it every 10 s -->
     <key>ThrottleInterval</key>
     <integer>60</integer>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/bodh/panel.out.log</string>
+    <string>__HOME__/Library/Logs/bodh/console.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/bodh/panel.err.log</string>
+    <string>__HOME__/Library/Logs/bodh/console.err.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>

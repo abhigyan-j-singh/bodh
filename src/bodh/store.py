@@ -1,6 +1,6 @@
 """SQLite store: the system's memory of what it judged, cut and learned, next to BazQux,
 which stays the only source of truth for what is read and tagged. (A rebuild of the
-scored set from the bucket tags in BazQux is planned, not written: `bodh rebuild`.)"""
+scored set from the band tags in BazQux is planned, not written: `bodh rebuild`.)"""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT, started_at TEXT, finished_at TEXT, ok INTEGER,
   unread_upstream INTEGER, new INTEGER, scored INTEGER, second_looks INTEGER,
-  cut_floor INTEGER, cut_prune INTEGER, rescues INTEGER, reads INTEGER,
+  cut_autocut INTEGER, cut_prune INTEGER, rescues INTEGER, reads INTEGER,
   spend_usd REAL, boundary REAL, error TEXT, summary TEXT
 );
 CREATE TABLE IF NOT EXISTS costs (
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   article_id TEXT, kind TEXT, at TEXT,
   UNIQUE(article_id, kind)
 );
-CREATE TABLE IF NOT EXISTS learner_versions (
+CREATE TABLE IF NOT EXISTS learned_versions (
   version INTEGER PRIMARY KEY AUTOINCREMENT,
   text TEXT, reason TEXT, created_at TEXT
 );
@@ -114,8 +114,16 @@ def connect(path: Path) -> sqlite3.Connection:
 # existed); each numbered step below brings it one version on, inside one transaction, and
 # is written so that running it on a database that already has the change is harmless.
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCHEMA_VERSION_KEY = "schema_version"
+
+# The kv keys, named by the glossary. The names before October 2026 are moved by _migrate_4.
+PHASE_KEY = "run_phase"                   # what the run in progress is doing, for the live views
+PLAIN_JSON_KEY = "provider.plain_json"    # "1" once the judge's model rejected structured outputs
+CACHE_TTL_KEY = "provider.cache_ttl"      # "5m" once the API rejected the 1-hour prompt cache
+SAFETY_KEY = "safety_tripped"             # the run whose autocut tripped the safety limit; set until `bodh safety reset`
+LEGACY_SAFETY_KEY = "breaker_tripped"     # the key before October 2026, kept in step: a rollback to the old code must still see the trip
+OLD_KV_KEYS = {"phase": PHASE_KEY, "plain_json": PLAIN_JSON_KEY}
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -123,7 +131,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _migrate_2(conn: sqlite3.Connection) -> None:
-    """state.exempt: an undone cut must not be repeated by the next automatic floor."""
+    """state.exempt: an undone cut must not be repeated by the next autocut."""
     if "exempt" not in _columns(conn, "state"):
         conn.execute("ALTER TABLE state ADD COLUMN exempt INTEGER DEFAULT 0")
 
@@ -135,7 +143,24 @@ def _migrate_3(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE state ADD COLUMN judge_failures INTEGER DEFAULT 0")
 
 
-MIGRATIONS = {2: _migrate_2, 3: _migrate_3}
+def _migrate_4(conn: sqlite3.Connection) -> None:
+    """The kv keys carry the glossary's names. `breaker_tripped` is copied, not moved: the code
+    before October 2026 reads it, and a rollback must not find the safety limit reset."""
+    for old, new in OLD_KV_KEYS.items():
+        value = kv_get(conn, old)
+        if value is not None:
+            if kv_get(conn, new) is None:
+                kv_set(conn, new, value)
+            kv_delete(conn, old)
+    if kv_get(conn, "cache_ttl_fallback") == "1":
+        kv_set(conn, CACHE_TTL_KEY, "5m")
+    kv_delete(conn, "cache_ttl_fallback")
+    tripped = kv_get(conn, LEGACY_SAFETY_KEY)
+    if tripped is not None and kv_get(conn, SAFETY_KEY) is None:
+        kv_set(conn, SAFETY_KEY, tripped)
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4}
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -275,7 +300,7 @@ def bump_judge_failures(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
 
 
 def given_up(conn: sqlite3.Connection) -> int:
-    """Unread articles the teacher has stopped asking about."""
+    """Unread articles the judge has stopped asking about."""
     return int(conn.execute(
         "SELECT COUNT(*) FROM state st LEFT JOIN scores s ON s.article_id = st.article_id "
         "WHERE st.status = 'unread' AND st.judge_failures >= ? AND s.article_id IS NULL", (MAX_JUDGE_FAILURES,)
@@ -288,8 +313,8 @@ def reset_judge_failures(conn: sqlite3.Connection) -> int:
 
 def _unscored_where(prompt_version: str, max_age_days: int | None, skip_folders: Iterable[str],
                     exclude_inflight: bool, rejudge: tuple[str, float] | None = None) -> tuple[list[str], list[Any]]:
-    """``rejudge`` = (teacher model, min score): a judgment by another model at or above the
-    score counts as still pending for the teacher."""
+    """``rejudge`` = (judge model, min score): a judgment by another model at or above the
+    score counts as still pending for the judge."""
     params: list[Any] = [prompt_version]
     if rejudge is not None:
         where = ["st.status = 'unread'",
@@ -337,9 +362,9 @@ def unscored_unread_folders(conn: sqlite3.Connection, prompt_version: str, max_a
 def unscored_unread(conn: sqlite3.Connection, prompt_version: str, max_age_days: int | None = None,
                     skip_folders: Iterable[str] = (), exclude_inflight: bool = False,
                     limit: int | None = None, rejudge: tuple[str, float] | None = None) -> list[sqlite3.Row]:
-    """Unread articles the teacher still has to judge: no score for this prompt version (or a
+    """Unread articles the judge still has to judge: no score for this prompt version (or a
     promising one from another model, see ``rejudge``), not older than the window (articles of
-    unknown age count as new), not in a folder the teacher never reads, and, if asked, not
+    unknown age count as new), not in a folder the judge never reads, and, if asked, not
     already sitting in a submitted batch."""
     where, params = _unscored_where(prompt_version, max_age_days, skip_folders, exclude_inflight, rejudge)
     tail = ""
@@ -373,7 +398,7 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_score: float,
                  score: float, bucket: str, prompt_version: str, model: str) -> str | None:
-    """Insert or replace a judgment. Returns the bucket tag the article carried in BazQux
+    """Insert or replace a judgment. Returns the band tag the article carried in BazQux
     before, when a re-score moved it to another bucket, so the caller can remove it."""
     old = conn.execute("SELECT bucket, bucket_tagged FROM scores WHERE article_id = ?", (article_id,)).fetchone()
     stale = old["bucket"] if old is not None and old["bucket_tagged"] and old["bucket"] != bucket else None
@@ -403,7 +428,7 @@ def record_score(conn: sqlite3.Connection, article_id: str, verdict: dict, base_
     return stale
 
 
-def record_second_look(conn: sqlite3.Connection, article_id: str, second: float, model: str,
+def record_review(conn: sqlite3.Connection, article_id: str, second: float, model: str,
                        new_score: float, bucket: str) -> None:
     conn.execute(
         """UPDATE scores SET second_look_score = ?, second_look_model = ?, score = ?,
@@ -413,21 +438,21 @@ def record_second_look(conn: sqlite3.Connection, article_id: str, second: float,
     )
 
 
-def record_second_look_failure(conn: sqlite3.Connection, article_id: str) -> None:
-    """The second look could not be had (a failed request, text that will not parse). The
-    article counts as examined so it is not retried every run; the floor leaves it unread."""
+def record_review_failure(conn: sqlite3.Connection, article_id: str) -> None:
+    """The review could not be had (a failed request, text that will not parse). The
+    article counts as examined so it is not retried every run; autocut leaves it unread."""
     conn.execute("UPDATE scores SET second_look_model = 'failed' WHERE article_id = ? AND second_look_score IS NULL",
                  (article_id,))
 
 
-def untagged_buckets(conn: sqlite3.Connection) -> dict[str, list[str]]:
+def untagged_bands(conn: sqlite3.Connection) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for row in conn.execute("SELECT article_id, bucket FROM scores WHERE bucket_tagged = 0 AND bucket IS NOT NULL"):
         out.setdefault(row["bucket"], []).append(row["article_id"])
     return out
 
 
-def mark_bucket_tagged(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
+def mark_band_tagged(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
     conn.executemany("UPDATE scores SET bucket_tagged = 1 WHERE article_id = ?", [(i,) for i in ids])
 
 
@@ -488,7 +513,7 @@ def run_cut_ids(conn: sqlite3.Connection, run_id: int) -> list[str]:
 
 def restore_unread(conn: sqlite3.Connection, ids: Iterable[str], rescued: bool, exempt: bool = False) -> None:
     """Back to unread. ``rescued`` stamps the student's rescue (the article is never cut again,
-    by any path); ``exempt`` (an undo) keeps it clear of the automatic floor, so the next run
+    by any path); ``exempt`` (an undo) keeps it clear of autocut, so the next run
     does not repeat the cut that was just reversed; a prune may still take it."""
     now = utcnow_iso()
     conn.executemany(
@@ -573,11 +598,11 @@ def feedback_kind_name(kind: str | None) -> str:
 
 # -- feedback and concepts ----------------------------------------------------
 
-# The kinds of feedback, and what they mean to the teacher and the weekly rewrite.
+# The kinds of feedback, and what they mean to the judge and the weekly rewrite.
 # Stars and reads come from BazQux state; the rest are the student's tags.
 GRADES = ("great", "good", "meh", "bad")      # one per article; the harsher wins when two are present
 LEVELS = ("basic", "heavy")                   # the level missed: too elementary, too dense
-STEERS = ("more", "less")                     # steer the teacher by this article's concept, now
+STEERS = ("more", "less")                     # steer the judge by this article's concept, now
 LOVED_KINDS = ("star", "great", "wrong")      # the strongest positives: the eval gate checks against these
 POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong")
 NEGATIVE_KINDS = ("bad", "meh", "dismiss", "prune")
@@ -693,16 +718,16 @@ def recent_batches(conn: sqlite3.Connection, n: int = 10) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM batches ORDER BY created_at DESC LIMIT ?", (n,)).fetchall()
 
 
-# -- learner versions and kv --------------------------------------------------
+# -- learned profile versions and kv --------------------------------------------------
 
-def save_learner_version(conn: sqlite3.Connection, text: str, reason: str) -> int:
-    cur = conn.execute("INSERT INTO learner_versions (text, reason, created_at) VALUES (?, ?, ?)",
+def save_learned_version(conn: sqlite3.Connection, text: str, reason: str) -> int:
+    cur = conn.execute("INSERT INTO learned_versions (text, reason, created_at) VALUES (?, ?, ?)",
                        (text, reason, utcnow_iso()))
     return int(cur.lastrowid or 0)
 
 
-def learner_versions(conn: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:
-    return conn.execute("SELECT * FROM learner_versions ORDER BY version DESC LIMIT ?", (n,)).fetchall()
+def learned_versions(conn: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM learned_versions ORDER BY version DESC LIMIT ?", (n,)).fetchall()
 
 
 def kv_get(conn: sqlite3.Connection, key: str, default: str | None = None) -> str | None:

@@ -54,7 +54,7 @@ catch_up:
 limits:
   per_run_sync: 400                # synchronous runs: articles judged per run
   per_run_batch: 1200              # batch runs: articles submitted per run
-  parallel_calls: 4                # synchronous runs: judge calls and reviews in flight at once
+  parallel_calls: 4                # synchronous runs: judge calls and reviews running at once
   max_age_days: 14                 # unread articles older than this are never judged; `bodh clear-old` is for them
 
 autocut:

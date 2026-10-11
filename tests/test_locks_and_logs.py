@@ -7,16 +7,16 @@ import logging
 
 from conftest import seed_scored
 
-from bodh import dashboard, ops, progress
+from bodh import dashboard, locks, logs, progress
 
 
 def test_live_file_never_carries_env_values(conn, cfg, tmp_path, monkeypatch):
     """A log line with a secret in it must not reach progress.json or the dashboard, which
     README says to publish; the redactor cleans every line before it is written at all."""
     log_path = tmp_path / "logs" / "bodh.log"
-    monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
+    monkeypatch.setattr(logs, "log_file", lambda data_dir: log_path)
     email, url = "student@example.com", "https://hc-ping.com/0123abcd-secret-uuid"
-    ops.setup_logging(cfg.root / cfg.data_dir, verbose=True, secrets=[email, url, "hunter2"])
+    logs.setup_logging(cfg.root / cfg.data_dir, verbose=True, secrets=[email, url, "hunter2"])
     try:
         log = logging.getLogger("bodh.test")
         log.info("logged in as %s with %s", email, "hunter2")
@@ -56,15 +56,15 @@ def test_setup_logging_rotates_and_skips_stderr_when_not_a_terminal(cfg, tmp_pat
     from logging.handlers import RotatingFileHandler
 
     log_path = tmp_path / "logs" / "bodh.log"
-    monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
-    monkeypatch.setattr(ops, "_stderr_is_a_terminal", lambda: False)
-    ops.setup_logging(cfg.root / cfg.data_dir)
+    monkeypatch.setattr(logs, "log_file", lambda data_dir: log_path)
+    monkeypatch.setattr(logs, "_stderr_is_a_terminal", lambda: False)
+    logs.setup_logging(cfg.root / cfg.data_dir)
     try:
         handlers = logging.getLogger().handlers
         assert len(handlers) == 1 and isinstance(handlers[0], RotatingFileHandler)
         assert handlers[0].maxBytes == 5_000_000 and handlers[0].backupCount == 3
         old = list(logging.getLogger().handlers)
-        ops.setup_logging(cfg.root / cfg.data_dir, verbose=True)
+        logs.setup_logging(cfg.root / cfg.data_dir, verbose=True)
         for handler in old:
             handler.close()
         assert len(logging.getLogger().handlers) == 2  # -v always shows the log in the terminal
@@ -84,7 +84,7 @@ def test_run_lock_is_not_refused_by_status_probes(cfg):
     def probe():
         while not stop.is_set():
             probes["n"] += 1
-            probes["true"] += ops.run_in_progress(data_dir)
+            probes["true"] += locks.run_in_progress(data_dir)
 
     t = threading.Thread(target=probe)
     t.start()
@@ -92,9 +92,9 @@ def test_run_lock_is_not_refused_by_status_probes(cfg):
         refused = 0
         for _ in range(300):
             try:
-                with ops.run_lock(data_dir, "run"):
+                with locks.run_lock(data_dir, "run"):
                     pass
-            except ops.AlreadyRunning:
+            except locks.AlreadyRunning:
                 refused += 1
     finally:
         stop.set()
@@ -105,21 +105,21 @@ def test_run_lock_is_not_refused_by_status_probes(cfg):
 def test_pid_file_and_liveness(cfg, monkeypatch):
     data_dir = cfg.root / cfg.data_dir
     pid_path = data_dir / "bodh.pid"
-    with ops.run_lock(data_dir, "blast"):
+    with locks.run_lock(data_dir, "blast"):
         pid, kind, started = pid_path.read_text(encoding="utf-8").split()
         assert int(pid) == __import__("os").getpid() and kind == "blast"
-        assert ops.run_in_progress(data_dir) and ops.running_process(data_dir)["kind"] == "blast"
+        assert locks.run_in_progress(data_dir) and locks.running_process(data_dir)["kind"] == "blast"
         assert (data_dir / "bodh.lock").stat().st_size == 0   # never truncated, never written
-        with __import__("pytest").raises(ops.AlreadyRunning):
-            with ops.run_lock(data_dir, "run"):
+        with __import__("pytest").raises(locks.AlreadyRunning):
+            with locks.run_lock(data_dir, "run"):
                 pass
-    assert not pid_path.exists() and not ops.run_in_progress(data_dir)
+    assert not pid_path.exists() and not locks.run_in_progress(data_dir)
     # a stale pid file (a crash) names a process that no longer exists: not running
     pid_path.write_text("999999999 run 1700000000\n", encoding="utf-8")
-    assert not ops.run_in_progress(data_dir) and ops.running_process(data_dir) is None
+    assert not locks.run_in_progress(data_dir) and locks.running_process(data_dir) is None
     # a reused pid (alive, but not holding the lock): not running either
     pid_path.write_text(f"{__import__('os').getpid()} run 1700000000\n", encoding="utf-8")
-    assert not ops.run_in_progress(data_dir)
+    assert not locks.run_in_progress(data_dir)
 
 
 def test_running_process_never_signals_on_windows(monkeypatch):
@@ -128,8 +128,8 @@ def test_running_process_never_signals_on_windows(monkeypatch):
     calls = []
     monkeypatch.setattr(os, "name", "nt")
     monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append((pid, sig)))
-    monkeypatch.setattr(ops, "_pid_alive_windows", lambda pid: pid == 4242)
-    assert ops.pid_alive(4242) and not ops.pid_alive(4243) and calls == []
+    monkeypatch.setattr(locks, "_pid_alive_windows", lambda pid: pid == 4242)
+    assert locks.pid_alive(4242) and not locks.pid_alive(4243) and calls == []
 
 
 def test_sigterm_ends_a_run_like_ctrl_c(cfg):
@@ -145,7 +145,7 @@ def test_sigterm_ends_a_run_like_ctrl_c(cfg):
     src = str(Path(__file__).resolve().parents[1] / "src")
     code = (
         f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path\n"
-        "from bodh.ops import run_lock, graceful_sigterm\n"
+        "from bodh.locks import run_lock, graceful_sigterm\n"
         f"with run_lock(Path({str(data_dir)!r}), 'run'), graceful_sigterm():\n"
         "    print('locked', flush=True)\n"
         "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        print('interrupted', flush=True)\n"
@@ -164,7 +164,7 @@ def test_time_limit_without_sigalrm_is_a_noop(monkeypatch):
     import signal
 
     monkeypatch.delattr(signal, "SIGALRM", raising=False)
-    with ops.time_limit(1):
+    with locks.time_limit(1):
         pass
 
 
@@ -172,9 +172,9 @@ def test_redactor_cleans_tracebacks_with_a_single_handler(cfg, tmp_path, monkeyp
     """With the file handler alone (launchd: no terminal), the filter runs before the formatter
     caches the traceback; the exception line used to reach the file unredacted."""
     log_path = tmp_path / "logs" / "bodh.log"
-    monkeypatch.setattr(ops, "log_file", lambda data_dir: log_path)
-    monkeypatch.setattr(ops, "_stderr_is_a_terminal", lambda: False)
-    ops.setup_logging(cfg.root / cfg.data_dir, secrets=["https://hc-ping.com/uuid-secret"])
+    monkeypatch.setattr(logs, "log_file", lambda data_dir: log_path)
+    monkeypatch.setattr(logs, "_stderr_is_a_terminal", lambda: False)
+    logs.setup_logging(cfg.root / cfg.data_dir, secrets=["https://hc-ping.com/uuid-secret"])
     try:
         assert len(logging.getLogger().handlers) == 1
         try:

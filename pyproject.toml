@@ -1,7 +1,7 @@
 [project]
 name = "bodh"
 dynamic = ["version"]
-description = "A teacher for your BazQux unread list: scores every article as reading material for you, tags it, cuts the worst, learns from what you read."
+description = "A judge for your BazQux unread list: reads every article as teaching material for you, tags it, cuts the worst, learns from what you read."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

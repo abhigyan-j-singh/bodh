@@ -38,7 +38,7 @@ class Models(Strict):
     profiler: str = "claude-opus-5-5"       # rewrites the learned profile on Sundays
     batch: bool = True              # Message Batches API: half price; judgments arrive on the next run
     batch_discount: float = Field(default=0.5, ge=0.0, le=1.0)
-    cache_ttl: str = "1h"           # "5m" or "1h": how long the teacher's cached prefix stays warm between runs
+    cache_ttl: str = "1h"           # "5m" or "1h": how long the judge's cached prefix stays warm between runs
     daily_budget_usd: float = Field(default=8.0, ge=0.0)
     est_usd_per_article: float = Field(default=0.001, ge=0.0)   # the budget check before a batch is submitted
     prices_per_mtok: dict[str, list[float]] = Field(
@@ -153,7 +153,7 @@ class CatchUp(Strict):
 class Limits(Strict):
     per_run_sync: int = Field(default=400, ge=0)          # synchronous runs: articles judged per run
     per_run_batch: int = Field(default=1200, ge=0)        # batch runs: articles submitted per run
-    parallel_calls: int = Field(default=4, ge=1, le=64)   # synchronous runs: model calls in flight at once
+    parallel_calls: int = Field(default=4, ge=1, le=64)   # synchronous runs: model calls running at once
     max_age_days: int | None = Field(default=14, ge=0)    # older unread articles are never judged; clear-old is for them
 
 
@@ -429,7 +429,7 @@ DEFAULT_HOME = "~/bodh"   # tried last, when nothing above the working directory
 def find_root(start: Path | None = None) -> Path:
     """The project root: BODH_HOME, else the first ancestor of the working directory that
     holds config.yaml, else ~/bodh when it holds one. Never a guess: a run in a folder with no
-    config.yaml must not invent one with default folders and floors and start cutting."""
+    config.yaml must not invent one with default folders and cut-offs and start cutting."""
     env_root = os.environ.get("BODH_HOME")
     if not env_root and os.environ.get("TRIAGE_HOME"):
         env_root = os.environ["TRIAGE_HOME"]

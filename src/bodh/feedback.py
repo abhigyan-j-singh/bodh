@@ -2,7 +2,7 @@
 chores: stars, inferred reads, rescues (a cut article marked unread again, or tagged
 `rescue`), and a `prune` tag asking for one more step. With a tag, the student's verdict:
 a grade (`great`, `good`, `meh`, `bad`), the level missed (`basic`, `heavy`), or a steer
-(`more`, `less`) that the teacher sees from the next run. Verdict tags stay on the article
+(`more`, `less`) that the judge sees from the next run. Verdict tags stay on the article
 as the student's own record; each is recorded once."""
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from . import store
-from .bazqux import BazQuxClient
 from .config import Config
+from .readers.bazqux import BazQuxClient
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
     # back to unread: what we recorded as read, dismissed or expired that the student marked
     # unread again belongs to the pool once more (no feedback: nothing is known about why). One
     # the student had read (a `read` row) and kept to finish later is exempt from the automatic
-    # floor, which would only cut it for its old score; a prune may still take it. A reversed
+    # autocut, which would only cut it for its old score; a prune may still take it. A reversed
     # dismissal or expiry (BazQux's answer was wrong for an hour) earns no exemption: nothing
     # about those articles changed.
     returned: set[str] = set()
@@ -110,7 +110,7 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
     stats.update(v)
 
     # prune: any article tagged `prune` asks for one more step. The request is kept until an
-    # enforcing run applies it: shadow mode or a failed run must not drop it on the floor.
+    # run with autocut on applies it: scoring-only mode or a failed run must not lose it.
     prune_ids = client.label_ids(cfg.tags.prune)
     if prune_ids:
         client.untag(prune_ids, cfg.tags.prune)
@@ -157,7 +157,7 @@ def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config
     and is recorded once. Within a group one verdict holds per article: a different tag added
     later replaces it (when both are present, the later one in the group's order wins, so
     `bad` beats `good`); removing a tag alone retracts nothing. `more` and `less` also write a
-    dated nudge, with the article's concept, into the learner model, which the teacher reads
+    dated steer, with the article's concept, into the learned profile, which the judge reads
     from the next run."""
     stats = {"verdicts": 0, "steers": 0}
     tags = cfg.tags.verdict_tags()
@@ -168,7 +168,7 @@ def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config
                 present.setdefault(aid, set()).add(kind)
     if not present:
         return stats
-    nudges: list[tuple[str, str]] = []
+    steers: list[tuple[str, str]] = []
     for group in (store.GRADES, store.LEVELS, store.STEERS):
         recorded = store.verdicts(conn, group)
         for aid, kinds in present.items():
@@ -179,12 +179,12 @@ def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config
             if store.set_verdict(conn, aid, kind, group):
                 stats["verdicts"] += 1
                 if group is store.STEERS:
-                    nudges.append((kind, _steer_phrase(conn, aid)))
-    if nudges:
-        from . import learner  # here, not at the top: learner imports the teacher
+                    steers.append((kind, _steer_phrase(conn, aid)))
+    if steers:
+        from . import profiler  # here, not at the top: the profiler imports the judge
 
-        learner.nudges(cfg, conn, [("want" if kind == "more" else "meh", phrase) for kind, phrase in nudges])
-        stats["steers"] = len(nudges)
+        profiler.steers(cfg, conn, [("want" if kind == "more" else "meh", phrase) for kind, phrase in steers])
+        stats["steers"] = len(steers)
     return stats
 
 
@@ -226,9 +226,9 @@ def _steer_phrase(conn: sqlite3.Connection, article_id: str) -> str:
 
 
 def rescue_rate_week(conn: sqlite3.Connection, min_cuts: int = MIN_CUTS_FOR_RESCUE_RATE) -> float:
-    """Rescues as a share of the week's floor and prune cuts (the cuts still standing plus the
-    rescued ones). Bankruptcy cuts and undone runs do not count: the student's own sweep and
-    reversal say nothing about the floor; nor does a week with fewer than ``min_cuts`` cuts."""
+    """Rescues as a share of the week's autocut and prune cuts (the cuts still standing plus the
+    rescued ones). Clear-old cuts and undone runs do not count: the student's own sweep and
+    reversal say nothing about autocut; nor does a week with fewer than ``min_cuts`` cuts."""
     since = store.days_ago_iso(7)
     cuts = conn.execute(
         "SELECT COUNT(*) FROM state WHERE (cut_at >= ? AND cut_mode IN ('autocut', 'floor', 'prune')) OR rescued_at >= ?",

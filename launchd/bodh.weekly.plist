@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- bodh weekly: Sunday 07:00 local time. Rewrites the learner model (gated), writes the
+    <!-- bodh weekly: Sunday 07:00 local time. Rewrites the learned profile (gated), writes the
          weekly note, runs the drift check. install-launchd.sh fills in the placeholders. -->
     <key>Label</key>
     <string>bodh.weekly</string>

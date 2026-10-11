@@ -4,8 +4,8 @@ import pytest
 
 from bodh.config import Config
 from bodh.ids import long_to_short, normalize_item_id, resolve_ordinal, short_to_long
-from bodh.learner import expansion_topics
-from bodh.teacher import Verdict, canonical_url, compose, matches_topic
+from bodh.judge import Verdict, canonical_url, compose, matches_topic
+from bodh.profiler import expansion_topics
 
 
 def test_id_round_trip():

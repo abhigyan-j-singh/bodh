@@ -10,7 +10,7 @@ from conftest import make_item
 
 from bodh import store
 from bodh.config import Secrets
-from bodh.teacher import ModelConfigError, Teacher, Verdict
+from bodh.judge import Judge, ModelConfigError, Verdict
 
 
 class CountingLLM:
@@ -55,14 +55,14 @@ def test_score_pending_at_most_workers_in_flight_and_deadline_starts_no_new_call
     cfg.judge.articles_per_call = 1
     _pending(conn, 12)
     llm = CountingLLM(delay=0.03)
-    teacher = Teacher(cfg, llm, conn)  # type: ignore[arg-type]
+    teacher = Judge(cfg, llm, conn)  # type: ignore[arg-type]
     teacher.batch_mode = False
     stats = teacher.score_pending(None, workers=3)
     assert stats["scored"] == 12 and llm.peak <= 3
     # a deadline already past: nothing new starts, and what was never started stays pending
     _pending(conn, 20)
     llm = CountingLLM(delay=0.01)
-    teacher = Teacher(cfg, llm, conn)  # type: ignore[arg-type]
+    teacher = Judge(cfg, llm, conn)  # type: ignore[arg-type]
     teacher.batch_mode = False
     stats = teacher.score_pending(None, workers=4, stop_after=time.monotonic() - 1)
     assert stats["stopped_early"] and llm.calls == 0 and stats["pending_after"] == 8
@@ -74,7 +74,7 @@ def test_score_pending_model_config_error_cancels_queue(cfg, conn):
     cfg.judge.articles_per_call = 1
     _pending(conn, 10)
     llm = CountingLLM(delay=0.01, fail_with=ModelConfigError("rejected"))
-    teacher = Teacher(cfg, llm, conn)  # type: ignore[arg-type]
+    teacher = Judge(cfg, llm, conn)  # type: ignore[arg-type]
     teacher.batch_mode = False
     with pytest.raises(ModelConfigError):
         teacher.score_pending(None, workers=2)
@@ -107,22 +107,22 @@ def test_second_looks_record_each_result_as_it_lands(cfg, conn):
         def request_params(self, *a, **k):
             return {}
 
-    teacher = Teacher(cfg, Interrupting(), conn)  # type: ignore[arg-type]
+    teacher = Judge(cfg, Interrupting(), conn)  # type: ignore[arg-type]
     with pytest.raises(KeyboardInterrupt):
-        teacher.second_looks(rows, None, workers=1)
+        teacher.reviews(rows, None, workers=1)
     looked = [r for r in store.unread_scored(conn) if r["second_look_score"] is not None]
     assert len(looked) == 1 and looked[0]["score"] == 70.0 and looked[0]["second_look_score"] == 70.0
     assert ids and calls["n"] == 2
     # the cap: with a limit of one look per run the other close calls are left unexamined, unread
-    teacher = Teacher(cfg, CountingLLM(delay=0.0), conn)  # type: ignore[arg-type]
+    teacher = Judge(cfg, CountingLLM(delay=0.0), conn)  # type: ignore[arg-type]
     rows = [r for r in store.unread_scored(conn) if r["second_look_score"] is None]
-    results = teacher.second_looks(rows, None, max_looks=1)
+    results = teacher.reviews(rows, None, max_looks=1)
     assert len(results) == 1 and list(results.values()) == [True]   # 60 clears the floor of 35
     assert len([r for r in store.unread_scored(conn) if r["second_look_score"] is None]) == 1
 
 
 def test_secrets_shape_for_llm(cfg, conn):
-    from bodh.teacher import LLM, TeacherError
+    from bodh.judge import LLM, JudgeError
 
-    with pytest.raises(TeacherError):
+    with pytest.raises(JudgeError):
         LLM(cfg, Secrets(), conn)

@@ -1,59 +1,64 @@
 # bodh
 
-Bodh (बोध: understanding, insight) keeps your BazQux unread list worth reading. A teacher (Claude
-Sonnet 5.5) scores every unread article once as teaching material for you: writing quality, what
-you learn, level fit, breadth, relevance. The worst are marked read in BazQux itself; you choose how
-deep the cut goes and can run it again. Any reader that syncs with BazQux (NetNewsWire, Reeder, the
-BazQux apps) simply follows. Every machine action is a tag, every cut can be undone, and nothing but
-mark-as-read ever changes in your reader.
+Bodh (बोध: understanding, insight) keeps your BazQux unread list worth reading. A judge (Claude
+Sonnet 5.5) reads every unread article once as teaching material for you and writes its judgment:
+writing quality, what you learn, level fit, breadth, relevance. The worst are marked read in BazQux
+itself; you choose how deep the cut goes and can run it again. Any reader that syncs with BazQux
+(NetNewsWire, Reeder, the BazQux apps) simply follows. Every machine action is a tag, every cut can
+be undone, and nothing but mark-as-read ever changes in your reader.
 
-This file is the overview and the install; `RUNBOOK.md` is the operator's sheet. The project was
-called `triage` until October 2026; the `triage` command keeps working for one release.
+This file is the overview and the install; `RUNBOOK.md` is the operator's sheet; `docs/glossary.md`
+has one word per thing. The project was called `triage` until October 2026, and several things were
+renamed with it (the floor is the cut-off, the panel is the console, the learner model is the learned
+profile); the old commands, keys and tags keep working for one release, and `CHANGELOG.md` lists every
+old name against its new one.
 
 ## What is in this repository
 
 | Path | What | Committed? |
 | --- | --- | --- |
 | `RUNBOOK.md` | The operator's sheet: what runs by itself, the daily routine, every command, every knob, what to do when something looks wrong | yes |
+| `docs/glossary.md` | One word per thing: the judge, the review, the cut-off, autocut, the prune, the console, with the old names in brackets | yes |
 | `CHANGELOG.md`, `LICENSE` | What changed, by release; the MIT licence | yes |
 | `PLAN.md` | The complete prompt: the three plans combined in the order they run, with the gates between them | yes, until the release |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
 | `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
 | `DASHBOARD_PLAN.md` | The specification of the dashboard: the five questions, the design system, every panel, the chart rules, the data contract, the quality bar; replaces Phase 7 of the open-source plan | yes, until the release |
-| `src/bodh/` | The package: BazQux client, store, teacher, cut, feedback, learner, dashboard, progress, control room | yes |
-| `src/bodh/prompts/` | The teacher, second-look and learner prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
+| `src/bodh/` | The package: the BazQux client, the store, the judge, the cut, the feedback, the profiler, the dashboard, the progress page, the console | yes |
+| `src/bodh/prompts/` | The judge's, the reviewer's and the profiler's prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
 | `tests/` | the test suite, with fakes for BazQux and the models; `pytest -q` runs in seconds | yes |
 | `launchd/`, `install.sh`, `install-launchd.sh` | Install and schedule on a Mac | yes |
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates; `./install.sh` copies them to `config.yaml`, `.env`, `profile/` | yes |
 | `contrib/` | Scripts outside the package: `replay_archive.py` judges another filter's archive offline | yes |
 | `shortcuts/` | The Prune button: an Apple Shortcut over SSH | yes |
-| `config.yaml` | Your folders, floors, models, budget | never (yours; `config.example.yaml` is the template) |
+| `config.yaml` | Your folders, cut-offs, models, budget | never (yours; `config.example.yaml` is the template) |
 | `.env` | BazQux password, Anthropic key, heartbeat URL | never |
-| `profile/` | Your seed and learner model, with their own git history | never |
+| `profile/` | Your student profile: `about.md` (yours) and `learned.md` (the profiler's), with their own git history | never |
 | `data/`, `dashboard/` | The SQLite cache, logs, the rendered dashboard | never |
 
 Nothing in the code is tied to one account: clone it, run `./install.sh`, fill in `.env`, replace the
-worked example in `profile/seed.md` with yourself, and name your own folders in `config.yaml`.
+worked example in `profile/about.md` with yourself, and name your own folders in `config.yaml`.
 
 ## What runs
 
 | Command | What it does |
 | --- | --- |
-| `bodh run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag scored ones `score-90` … `score-0`, apply the automatic floor (with an Opus 5.5 second look on close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `cut.enforce: false`. `--sync` waits for every model call instead of batching. |
-| `bodh blast` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending. `--model claude-haiku-5-5` uses the fastest model as a stand-in (20x cheaper; it never touches the teacher's judgments, and the teacher re-judges what it rates 50 or more on the next runs, `scoring.rejudge_min_score`). `--all-ages` includes the articles older than the scoring window; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes. Scores and tags, cuts nothing; Ctrl-C and run again to continue. |
-| `bodh progress [--watch]` | How far the teacher has got: judged, in flight, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
+| `bodh run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues, verdicts), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag judged ones `score-90` … `score-0`, apply autocut (with an Opus 5.5 review of close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `autocut.enabled: false`. `--sync` waits for every model call instead of batching; `--shadow` is one run without cutting even with autocut on. |
+| `bodh catch-up` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending, with the quick judge (`catch_up.model`, Haiku: 20x cheaper; it never touches the judge's judgments, and the judge reads again what it rates 50 or more on the next runs, `catch_up.rejudge_at`). `--model` names another model, the judge itself for a full-price pass. `--all-ages` includes the articles older than `limits.max_age_days`; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes. Judges and tags, cuts nothing; Ctrl-C and run again to continue. |
+| `bodh progress [--watch]` | How far the judge has got: judged, with the model, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
 | `bodh prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). It shows the boundary and what would go, then asks (`--yes` skips the question; `--dry-run` only shows). Run it again to cut deeper. |
-| `bodh undo` | Reverse the last cut. What comes back is left alone by the automatic floor from then on. |
-| `bodh safety [reset]` | The breaker (a floor that would cut nearly everything newly judged trips it, and the floor stays off until a person resets it) and the articles the teacher gave up on. |
-| `bodh bankruptcy --older-than 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
-| `bodh status`, `bodh why ID` | The whole system at a glance: what is running, the launchd jobs, the control room, the pile, spend, the last runs; why one article got its score. |
-| `bodh panel` | The control room in the browser (`http://127.0.0.1:8766`, kept alive by launchd): the same status live, buttons for run, stop, pause/resume the schedule, enforce on/off, prune (dry run first), undo, bankruptcy, blast, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
-| `bodh stop` | Stop the run, prune or blast in progress, the same as Ctrl-C in its terminal. Fail open: what was judged stays; a cut half-written to BazQux is finished by the next run. |
-| `bodh halt` | Stop everything: pause all four launchd jobs, interrupt the run in progress, end every other bodh process including the control room. `bodh schedule resume` brings the jobs back. |
-| `bodh schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume, the control room included; `--job run` for one), resume, or kick a run now (refused while a run holds the lock). |
-| `bodh enforce on\|off` | Flip the automatic floor in config.yaml: on cuts from the next run, off is shadow mode. |
-| `bodh want "x"`, `bodh meh "x"` | Nudge the learner model now instead of waiting for Sunday (the `more` and `less` tags do the same from BazQux). |
-| `bodh weekly` | Sunday: rewrite the learner model from the week's reading (kept only if the eval gate passes), write the weekly note, run the drift check. |
+| `bodh undo` | Reverse the last cut. What comes back is left alone by autocut from then on. |
+| `bodh safety [reset]` | The safety limit (a run whose autocut would cut nearly everything newly judged trips it, and autocut stays off until a person resets it) and the articles the judge gave up on. |
+| `bodh clear-old --days 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
+| `bodh status`, `bodh why ID` | The whole system at a glance: what is running, the launchd jobs, the console, the unread list, spend, the last runs; why one article got its score. |
+| `bodh console` | The console in the browser (`http://127.0.0.1:8766`, kept alive by launchd): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
+| `bodh stop [--all]` | Stop the run, prune or catch-up in progress, the same as Ctrl-C in its terminal. Fail open: what was judged stays; a cut half-written to BazQux is finished by the next run. `--all` stops everything: pauses all four launchd jobs, interrupts the run in progress, ends every other bodh process including the console; `bodh schedule resume` brings the jobs back. |
+| `bodh schedule [status\|pause\|resume\|kick]` | The launchd jobs: show them, pause them all (nothing fires until resume, the console included; `--job run` for one), resume, or kick a run now (refused while a run holds the lock). |
+| `bodh autocut on\|off` | Flip autocut in config.yaml: on cuts under the cut-off from the next run, off is scoring-only mode. |
+| `bodh mark ID great\|good\|meh\|bad\|basic\|heavy\|more\|less\|rescue` | Your verdict on an article from the terminal, the same as the tags in BazQux; `rescue` brings a cut article back. |
+| `bodh steer more\|less "x"` | Steer the judge now instead of waiting for Sunday: a dated line in the learned profile (the `more` and `less` tags do the same from BazQux). |
+| `bodh profile [show\|revert]` | The learned profile and its versions; `revert` restores the previous one. |
+| `bodh weekly` | Sunday: the profiler rewrites the learned profile from the week's reading (kept only if the eval gate passes), writes the weekly note, runs the drift check. |
 | `bodh report` | Monthly feed report with proposals (unsubscribe, move to the strictest folder, protect). |
 | `bodh doctor [--live]` | Configuration and connectivity checks; exit code 1 when one fails. Run after every update. |
 
@@ -65,17 +70,17 @@ Keep the checkout somewhere plain such as `~/bodh`: launchd cannot run jobs that
 path with spaces makes pip wrap the command in `/bin/sh`, which is denied first. The installer refuses both.
 
 ```bash
-git clone <this repository> ~/bodh && cd ~/bodh
+git clone https://github.com/abhigyan-j-singh/bodh ~/bodh && cd ~/bodh
 ./install.sh                      # venv, package; config.yaml, .env and profile/ from the templates; doctor
 $EDITOR .env                      # BazQux email and password, Anthropic key (the file says where each comes from)
-$EDITOR profile/seed.md           # replace the worked example with fifteen lines about you
-$EDITOR config.yaml               # your folders, target, floor; leave enforce: false for the shadow days
-.venv/bin/bodh doctor --live    # logs in, lists folders, calls both models once (a few cents)
+$EDITOR profile/about.md          # replace the worked example with fifteen lines about you
+$EDITOR config.yaml               # your folders, what the prune keeps, the cut-off; leave autocut off for the first days
+.venv/bin/bodh doctor --live      # logs in, lists folders, calls both models once (a few cents)
 ./install-launchd.sh              # laptop: agents, run while logged in, no sudo
 ./install-launchd.sh --daemon     # an always-on Mac: daemons, run without login (asks for sudo)
 ```
 
-`doctor` exits 1 until `.env` and the seed are yours; `install.sh` runs it last and says so.
+`doctor` exits 1 until `.env` and `about.md` are yours; `install.sh` runs it last and says so.
 
 In BazQux, before relying on it:
 
@@ -83,51 +88,51 @@ In BazQux, before relying on it:
   label, and its unread members are never cut. Create it once: with **Latest** selected in the sidebar,
   search for the terms that mark an article you must see, for example
   `subject:("my company" OR "my town" OR "the grant programme")`, and in the results choose
-  **New smart stream**; name it `Must read` (or name yours in `cut.must_read_stream`). Keep it
+  **New smart stream**; name it `Must read` (or name yours in `protect.must_read_stream`). Keep it
   narrow: it is a guarantee, not a reading list. Edit it later under Settings → Filters & streams.
   `bodh doctor --live` says whether it exists; without it, a run judges and tags but cuts nothing.
 - **Folders.** Put the feeds you always read in a folder named **Always read**, the comics in
-  **Comics**, the general-news firehoses in **News**; `cut.folders` in `config.yaml` names them
-  (never cut; never judged; a stricter floor). Folder names are matched exactly, and moving a feed
+  **Comics**, the general-news firehoses in **News**; `folders` in `config.yaml` names them
+  (never cut; never judged; a stricter cut-off). Folder names are matched exactly, and moving a feed
   between folders in BazQux changes how it is treated.
 
 ## Day 0 to steady state
 
-1. **Bankruptcy or blast.** `bodh bankruptcy --older-than 14` clears the pile (`bodh undo` if you regret it); or `bodh blast --model claude-haiku-5-5 --all-ages` judges every unread article once, now, for a few dollars, so the pile can be pruned on merit (the teacher then re-judges the promising ones). Otherwise the backlog is scored 1,200 articles a run through the batch API, newest first.
+1. **Clear-old or catch-up.** `bodh clear-old --days 14` clears the old unread (`bodh undo` if you regret it); or `bodh catch-up --all-ages` judges every unread article once, now, for a few dollars, so the list can be pruned on merit (the judge then re-judges the promising ones). Otherwise the backlog is judged 1,200 articles a run through the batch API, newest first.
 2. **Coming from another filter?** `contrib/replay_archive.py` judges a sample of its archive
-   offline, plus everything you starred, and checks that no starred article falls below the floor;
+   offline, plus everything you starred, and checks that no starred article falls below the cut-off;
    its header says what archive it expects. About a dollar for 500 articles; it touches nothing live.
-3. **Shadow days.** With the launchd jobs installed and `cut.enforce: false`: For two or three days,
-   look at `bodh prune --dry-run` and the dashboard's near misses. Articles get scored and tagged;
+3. **Scoring-only days.** With the launchd jobs installed and `autocut.enabled: false`: for two or three
+   days, look at `bodh prune --dry-run` and the dashboard's near misses. Articles get judged and tagged;
    nothing is cut.
-4. **Enforce.** Set `cut.enforce: true` and `cut.default_floor: 25`. The floor removes clear junk; you
-   prune to 40 with the Shortcut or `bodh prune` whenever the list is long.
-5. **Raise the bar.** After a week, set the floor to the boundary you have been choosing (the dashboard
-   shows it), give the firehose folders their own floor in `cut.folders`, act on the first feed report. From then on: weekly note on Sundays,
-   feed report on the 1st, seed reviewed when your priorities change.
+4. **Autocut.** `bodh autocut on`, with `autocut.cutoff: 25`. Autocut removes clear junk; you prune to
+   40 with the Shortcut or `bodh prune` whenever the list is long.
+5. **Raise the bar.** After a week, set the cut-off to the boundary you have been choosing (the dashboard
+   shows it), give the firehose folders their own cut-off in `folders`, act on the first feed report. From
+   then on: weekly note on Sundays, feed report on the 1st, `about.md` reviewed when your priorities change.
 
 ## Cost
 
 Two readers, priced to run all day. The first pass goes through the **Message Batches API** (half
 price): a run submits what arrived, the next run, thirty minutes later, records the judgments and tags
-them. The teacher writes a compact judgment (five numbers, a twelve-word lesson, one-word codes), which
+them. The judge writes a compact judgment (five numbers, a twelve-word lesson, one-word codes), which
 halves its output tokens, the dear part. Its prompt prefix is cached for an hour, so runs share it. The
-**second look** (Opus, full text) is only taken when the article has more text than the opening the
-first pass saw, at most once per article, and travels through the same batch: a close call waits one
-run before it can be cut. Unread articles older than `scoring.max_age_days` (14) are never scored;
-`bodh bankruptcy` is for them. Folders with `score: false` are never sent to the teacher.
+**review** (Opus, full text) is only taken when the article has more text than the opening the first
+pass saw, at most once per article, and travels through the same batch: a close call waits one run
+before it can be cut. Unread articles older than `limits.max_age_days` (14) are never judged;
+`bodh clear-old` is for them. Folders with `judge: false` are never sent to the judge.
 
 At about 1,300 arrivals a day that comes to roughly $0.65 per 1,000 judged, under a dollar a day,
 against $1.90 per 1,000 before. `bodh progress` shows the actual rate and the cache hit share;
 `models.daily_budget_usd` still caps a bad day. Trade-offs: a judgment lands 30 to 60 minutes after an
 article arrives instead of at once (the Batches API finishes most batches within the hour), and a
 close call survives one extra run. `bodh run --sync` restores the immediate path when you want it
-(`doctor --live` always runs synchronously; `scoring.workers` model calls run at once).
+(`doctor --live` always runs synchronously; `limits.parallel_calls` model calls run at once).
 
 ## launchd
 
 `install-launchd.sh` renders the four templates in `launchd/` (the run, the Sunday rewrite, the monthly
-report, the control room) with this checkout's path and installs them:
+report, the console) with this checkout's path and installs them:
 as LaunchAgents (`~/Library/LaunchAgents`, no sudo, run while you are logged in; the laptop) or, with
 `--daemon`, as LaunchDaemons (`/Library/LaunchDaemons`, run without login; an always-on Mac). Run it
 again after moving the folder.
@@ -141,15 +146,15 @@ tail -f ~/Library/Logs/bodh/bodh.log
 
 The job takes a lock, so an overrun never overlaps the next start, and it kills itself after 15 minutes;
 the next run picks up what is left. A laptop that sleeps simply misses runs and catches up on wake; a
-backlog drains at `scoring.batch_max_per_run` (1,200) articles per run, or `scoring.max_per_run` (400)
-with `--sync`, where `scoring.workers` calls run in parallel. For an always-on Mac, also keep it
+backlog drains at `limits.per_run_batch` (1,200) articles per run, or `limits.per_run_sync` (400)
+with `--sync`, where `limits.parallel_calls` calls run in parallel. For an always-on Mac, also keep it
 awake and self-healing:
 
 ```bash
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1
 ```
 
-## Control room
+## The console
 
 `./install-launchd.sh` also installs `bodh.console`, a small local web server kept alive
 by launchd. Open `http://127.0.0.1:8766` on the Mac. For the iPhone, publish it on your tailnet once:
@@ -159,18 +164,18 @@ tailscale serve --bg 8766         # then https://<your-mac>.<tailnet>.ts.net
 ```
 
 The page shows the state of the system (idle or what is running and its phase, the mode, the next
-scheduled run), the launchd jobs, the pile, spend, today's counts, the last runs, the log, and the
+scheduled run), the launchd jobs, the unread list, spend, today's counts, the last runs, the log, and the
 dashboard underneath, refreshed every three seconds. The buttons start the same commands you would
 type, as child processes whose output streams into the page; the ones that change BazQux ask first.
 Stop interrupts whatever holds the run lock, started from the page or not. The server listens on
 127.0.0.1 only, answers only to a Host of 127.0.0.1, localhost or a `*.ts.net` name (a page that
 rebinds a DNS name to this machine gets nothing), and accepts actions only from its own page;
 Tailscale adds the identity check on the tailnet. From the terminal the same levers are `bodh
-status`, `stop`, `halt`, `schedule`, `enforce`, `safety`.
+status`, `stop`, `schedule`, `autocut`, `safety`.
 
 The installer waits up to 15 s for the page to answer and, if it does not, prints the job's state and
-the last lines of `~/Library/Logs/bodh/panel.err.log` and `data/panel.log`, where the server writes
-why it could not start (a port in use, say). Later, `bodh status` says the same; `bodh panel` in a
+the last lines of `~/Library/Logs/bodh/console.err.log` and `data/console.log`, where the server writes
+why it could not start (a port in use, say). Later, `bodh status` says the same; `bodh console` in a
 terminal runs it in the foreground with the error on screen.
 
 ## Heartbeat and alerts
@@ -191,17 +196,17 @@ tailscale serve --bg --set-path / "$(pwd)/dashboard"
 tailscale serve status            # shows the https URL, open it on the Mac or the iPhone
 ```
 
-The progress panel is live: the page polls `progress.json` every 4 seconds, which every run (and
-`bodh blast`) rewrites as it goes, so the bars, the rate, the ETA, the phase ("judging 400 of 1,200"),
+The progress section is live: the page polls `progress.json` every 4 seconds, which every run (and
+`bodh catch-up`) rewrites as it goes, so the bars, the rate, the ETA, the phase ("judging 400 of 1,200"),
 the folder table and the batches move while you watch; the dot pulses while a run holds the
-lock. The log stays out of this page and of `progress.json` (both may be published); the control
-room and `bodh progress` show it. The polling needs the page served over http (`tailscale serve`, or `python3 -m http.server 8765`
+lock. The log stays out of this page and of `progress.json` (both may be published); the console
+and `bodh progress` show it. The polling needs the page served over http (`tailscale serve`, or `python3 -m http.server 8765`
 in the `dashboard` folder); opened as a file it shows the numbers as of the last render.
 
-Panels: progress (judged, in flight, pending, by folder; batches; cost per 1,000), flow, calibration
-(read rate per score band; the check on the teacher), near misses (the best of what was cut, rescue by
+Sections: progress (judged, with the model, pending, by folder; batches; cost per 1,000), flow, calibration
+(read rate per score band; the check on the judge), near misses (the best of what was cut, rescue by
 marking unread), feeds (volume, mean score, cut, read, star, rescue rates), learnings (the week's
-lessons by concept), map (concepts read in 90 days and the frontier), learner model (current text and
+lessons by concept), map (concepts read in 90 days and the frontier), the learned profile (current text and
 its diff), health (runs, spend, heartbeat). The same progress numbers in the terminal: `bodh progress`.
 
 ## Tags in BazQux
@@ -209,18 +214,18 @@ its diff), health (runs, spend, heartbeat). The same progress numbers in the ter
 | Tag | Who writes it | Meaning |
 | --- | --- | --- |
 | `score-90`, `score-70`, `score-50`, `score-30`, `score-0` | bodh | The article's score band. Open a tag with the unread filter on and you have a ranked view. |
-| `cut` | bodh | Marked read by bodh (floor, prune or bankruptcy). Mark it unread anywhere to rescue it. |
-| `wrong` | you | A command, on a cut article you wanted: it is marked unread again, counts as a rescue and as the strongest positive. The run removes the tag when done. |
-| `prune` | you | A command, on any article: the next enforcing run prunes to the target. Removed when done. |
-| `great`, `good`, `meh`, `bad` | you | Your grade, one per article: the best kind (more like this; the Sunday rewrite may not lose it), worth the time, not worth it, junk the teacher should not have kept. |
+| `cut` | bodh | Marked read by bodh (autocut, prune or clear-old). Mark it unread anywhere to rescue it. |
+| `rescue` | you | A command, on a cut article you wanted: it is marked unread again, counts as a rescue and as the strongest positive, and is never cut again by any path. The run removes the tag when done (`wrong`, the old name, still works). |
+| `prune` | you | A command, on any article: the next run with autocut on prunes to what the prune keeps. Removed when done. |
+| `great`, `good`, `meh`, `bad` | you | Your grade, one per article: the best kind (more like this; the Sunday rewrite may not lose it), worth the time, not worth it, junk the judge should not have kept. |
 | `basic`, `heavy` | you | The level missed: too elementary for you, too dense or specialist for you now. |
-| `more`, `less` | you | A steer: more or less of this article's concept, written into the learner model as a dated nudge that the teacher reads from the next run. |
+| `more`, `less` | you | A steer: more or less of this article's concept, written into the learned profile as a dated line that the judge reads from the next run. |
 
 Stars are yours: a starred article is never cut and counts like `great`. Verdict tags stay on the
 article as your own record (open the `great` tag in BazQux and you have your best-of list) and are
 recorded once; add a different grade to change your mind (when two are on, the harsher wins), and
 removing a tag alone retracts nothing. `bodh why ID` shows what is recorded for an article; the
-dashboard's "Your verdicts" panel sets your grades against the teacher's bands and lists where you
+dashboard's "Your verdicts" section sets your grades against the judge's bands and lists where you
 disagree most. How all of this changes the judging is in RUNBOOK.md, "How it learns".
 
 ## Updating
@@ -231,7 +236,7 @@ cd ~/bodh && git pull && ./install.sh
 
 `install.sh` reinstalls the package and runs `bodh doctor`; after a change to the launchd templates,
 `./install-launchd.sh` too. The running launchd jobs pick up the new code on their next start. Prompts live in `src/bodh/prompts/`; a copy in `./prompts/` next to
-`config.yaml` overrides the packaged one. Changing `scoring.prompt_version` re-scores unread articles.
+`config.yaml` overrides the packaged one. Changing `judge.prompt_version` re-judges unread articles.
 
 ## When something breaks
 
@@ -240,21 +245,21 @@ cd ~/bodh && git pull && ./install.sh
 | Heartbeat alert, no error | Is the Mac on and online? `launchctl print gui/$(id -u)/bodh.run` (daemon: `sudo launchctl print system/bodh.run`) | Nothing is cut; unread grows |
 | launchd job: `last exit code = 126`, "Operation not permitted" in the logs | The checkout sits in Documents, Desktop or Downloads, or its path has spaces; move it (see Install) and reinstall | Nothing runs on the schedule; manual commands work |
 | "BazQux login failed (YearSubscriptionExpired)" | Renew BazQux | Run aborts before any write |
-| "daily model budget … reached" | `models.daily_budget_usd` in config.yaml | Scoring pauses until midnight; nothing is cut |
-| "in flight" stays high for hours | `bodh progress`: a batch still in progress; the API finishes most within the hour, all within 24 | Articles stay unread until judged; a batch not seen to end in 26 h is given up on and resubmitted |
-| "requests failed: … output_config" | The teacher model rejected structured outputs; bodh switches itself to plain JSON (`plain_json` in the kv table) | The failed requests are resubmitted next run |
-| "floor would cut … stopping before any write" | The prompt or model misbehaved; `bodh why` on a few new articles, then `bodh safety reset` | Nothing is cut, this run or the next, until the reset |
+| "daily model budget … reached" | `models.daily_budget_usd` in config.yaml | Judging pauses until midnight; nothing is cut |
+| "with the model" stays high for hours | `bodh progress`: a batch still in progress; the API finishes most within the hour, all within 24 | Articles stay unread until judged; a batch not seen to end in 26 h is given up on and resubmitted |
+| "requests failed: … output_config" | The judge's model rejected structured outputs; bodh switches itself to plain JSON (`plain_json` in the kv table) | The failed requests are resubmitted next run |
+| "autocut would cut … stopping before any write" | The prompt or model misbehaved; `bodh why` on a few new articles, then `bodh safety reset` | Nothing is cut, this run or the next, until the reset |
 | "came back with no judgment" in a batch note | The model answered without a judgment, three times for the same articles and they are left alone; `bodh safety` counts them | They stay unread, unjudged, until `bodh safety reset` |
 | "gone upstream at once; not believed" | BazQux answered with an empty or truncated unread list, or you marked everything read | Nothing recorded this run; the next run within three hours decides |
-| Rescues above 5% in a week | The floor is too high for your taste; it drops to 25 on its own and alerts | Manual prune unaffected |
-| Database lost | Restore `data/bodh.db` from a backup; without one, the next runs re-judge the unread pile (the bucket tags in BazQux stay, a `bodh rebuild` from them is planned) | Costs a few dollars |
+| Rescues above 5% in a week | The cut-off is too high for your taste; it drops to 25 on its own and alerts | Manual prune unaffected |
+| Database lost | Restore `data/bodh.db` from a backup; without one, the next runs re-judge the unread list (the band tags in BazQux stay, a `bodh rebuild` from them is planned) | Costs a few dollars |
 
 Logs: `~/Library/Logs/bodh/bodh.log`. State: `data/bodh.db` (an audit cache; BazQux is the
-record). Learner model history: `git log` in `profile/`.
+record). The learned profile's history: `git log` in `profile/`.
 
 ## Development
 
 ```bash
-.venv/bin/pytest -q        # the suite: ids, scoring rules, cuts, breakers, client, feedback, batches, blast, progress, locks, the panel, pipeline end to end
+.venv/bin/pytest -q        # the suite: ids, scoring rules, cuts, safety, client, feedback, batches, catch-up, progress, locks, the console, pipeline end to end
 .venv/bin/ruff check src tests
 ```

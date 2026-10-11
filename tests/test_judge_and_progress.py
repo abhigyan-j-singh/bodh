@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 from conftest import FakeClient, make_item, seed_scored
 
-from bodh import ops, progress, store
+from bodh import locks, progress, store
 from bodh.config import FolderPolicy, Secrets
-from bodh.teacher import LLM, JudgmentIn, Teacher, has_more_to_read, parse_judgments
+from bodh.judge import LLM, Judge, JudgmentIn, has_more_to_read, parse_judgments
 
 
 def test_parse_compact_judgments_maps_codes_and_clamps():
@@ -34,7 +34,7 @@ def test_parse_compact_judgments_maps_codes_and_clamps():
 
 
 def test_judgment_schema_has_no_unsupported_constraints():
-    from bodh.teacher import _output_format
+    from bodh.judge import _output_format
 
     fmt = _output_format()
     assert fmt["type"] == "json_schema"
@@ -93,7 +93,7 @@ def test_request_params_shapes(cfg, conn):
     p = llm.request_params("m", "SYS", "USER")
     assert "output_config" not in p and "JSON object" in p["messages"][0]["content"]
     assert p["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert store.kv_get(conn, "plain_json") == "1"
+    assert store.kv_get(conn, store.PLAIN_JSON_KEY) == "1"
     assert LLM(cfg, Secrets(anthropic_api_key="k"), conn).plain_json  # remembered across runs
     # a rejected 1-hour cache falls back to the default cache, and that is remembered too
     assert llm.adapt_to_error("m", "cache_control: ttl is not supported") and not llm.long_ttl_ok
@@ -116,7 +116,7 @@ def test_teacher_prefix_is_stable_and_concepts_travel_with_the_articles(cfg, con
         def request_params(self, model, system_text, user_text, ttl=None):
             return {"system": system_text, "user": user_text}
 
-    t = Teacher(cfg, StubLLM(), conn, context="Read: gpus: 3")  # type: ignore[arg-type]
+    t = Judge(cfg, StubLLM(), conn, context="Read: gpus: 3")  # type: ignore[arg-type]
     assert "gpus: 3" not in t.system_text and "# About the student" in t.system_text and "# Learned profile" in t.system_text
     text = t._user_text([{"id": "a", "text": "body", "url": "", "feed_title": "f", "folder": None, "title": "T",
                           "author": None, "published": None}], 100)
@@ -188,7 +188,7 @@ def test_live_file_and_activity(conn, cfg):
     # throttled writes
     assert progress.write_live(cfg, conn, min_interval=60) is None
     # a held lock shows as a run in progress, with its phase
-    with ops.run_lock(cfg.root / cfg.data_dir):
+    with locks.run_lock(cfg.root / cfg.data_dir):
         snap = progress.snapshot(conn, cfg)
         assert snap["running"] and snap["phase"] == "judging" and snap["run_started"]
         text = progress.render_text(snap)
@@ -254,9 +254,9 @@ def test_many_workers_share_the_database_safely(conn, cfg):
     cfg.judge.articles_per_call = 5
     llm = LLM(cfg, Secrets(anthropic_api_key="k"), conn)
     llm._client = StubClient()
-    teacher = Teacher(cfg, llm, conn)
-    teacher.batch_mode = False
-    stats = teacher.score_pending(1, workers=16, on_progress=progress.live_writer(cfg, conn, min_interval=0.0))
+    judge = Judge(cfg, llm, conn)
+    judge.batch_mode = False
+    stats = judge.score_pending(1, workers=16, on_progress=progress.live_writer(cfg, conn, min_interval=0.0))
     assert stats["scored"] == 240 and stats["failed_batches"] == 0
     assert llm._client.messages.calls == 48
     assert conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 48

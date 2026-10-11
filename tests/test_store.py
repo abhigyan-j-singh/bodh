@@ -15,12 +15,20 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     v1 = store.SCHEMA.replace("  exempt INTEGER DEFAULT 0,\n", "").replace("  judge_failures INTEGER DEFAULT 0,\n", "")
     old.executescript(v1)
     old.execute("INSERT INTO state (article_id, status) VALUES ('a', 'unread')")
+    # the kv keys before October 2026, as the old code left them
+    old.executemany("INSERT INTO kv (key, value) VALUES (?, ?)",
+                    [("phase", "judging"), ("plain_json", "1"), ("cache_ttl_fallback", "1"), ("breaker_tripped", "42")])
     old.commit()
     assert {"exempt", "judge_failures"}.isdisjoint(store._columns(old, "state"))
     old.close()
     conn = store.connect(path)
     assert store.schema_version(conn) == store.SCHEMA_VERSION
     assert tuple(conn.execute("SELECT exempt, judge_failures FROM state WHERE article_id = 'a'").fetchone()) == (0, 0)
+    # migration 4: the kv keys carry the glossary's names; the old safety key stays for a rollback
+    assert store.kv_get(conn, store.PHASE_KEY) == "judging" and store.kv_get(conn, "phase") is None
+    assert store.kv_get(conn, store.PLAIN_JSON_KEY) == "1" and store.kv_get(conn, "plain_json") is None
+    assert store.kv_get(conn, store.CACHE_TTL_KEY) == "5m" and store.kv_get(conn, "cache_ttl_fallback") is None
+    assert store.kv_get(conn, store.SAFETY_KEY) == "42" and store.kv_get(conn, store.LEGACY_SAFETY_KEY) == "42"
     assert store.migrate(conn) == store.SCHEMA_VERSION   # idempotent
     conn.close()
     fresh = store.connect(tmp_path / "fresh.db")

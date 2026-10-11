@@ -26,10 +26,13 @@ from typing import Any
 
 import typer
 
-from . import __version__, dashboard, feedback, learner, pipeline, report, store
+from . import __version__, dashboard, feedback, profiler, report, store
+from . import cutting as cutmod
+from . import run as runmod
 from .config import Config, ConfigError, load_config, load_secrets
 from .ids import normalize_item_id
-from .ops import AlreadyRunning, RunTimeout, graceful_sigterm, run_lock, setup_logging, time_limit
+from .locks import AlreadyRunning, RunTimeout, graceful_sigterm, run_lock, time_limit
+from .logs import setup_logging
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False)
 log = logging.getLogger(__name__)
@@ -50,12 +53,12 @@ def _config() -> Config:
         raise
 
 
-def _ctx(verbose: bool = False) -> pipeline.Context:
+def _ctx(verbose: bool = False) -> runmod.Context:
     cfg = _config()
     secrets = load_secrets(cfg.root)
     setup_logging(cfg.root / cfg.data_dir, verbose, secrets=secrets.values())
     conn = store.connect(cfg.db_path)
-    return pipeline.Context(cfg, secrets, conn)
+    return runmod.Context(cfg, secrets, conn)
 
 
 def _fail(msg: str, code: int = 1) -> None:
@@ -106,7 +109,7 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
     else:
         problem("about: MISSING (profile/about.md): the judge cannot judge for a student it knows nothing about")
     typer.echo(f"learned profile: {'found' if cfg.read_learned() else 'missing (will start empty)'}")
-    from .teacher import PROMPTS_DIR, load_prompt
+    from .judge import PROMPTS_DIR, load_prompt
 
     for name in (cfg.judge.prompt_version, "review.v1", "profiler.v1"):
         try:
@@ -138,7 +141,7 @@ def doctor(live: bool = typer.Option(False, "--live", help="Also log in to BazQu
 
 
 def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
-    ctx = pipeline.Context(cfg, secrets, conn)
+    ctx = runmod.Context(cfg, secrets, conn)
     try:
         ctx.client.user_info()
         typer.echo("bazqux login: ok")
@@ -165,23 +168,23 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
     except Exception as exc:  # noqa: BLE001
         problem(f"bazqux: FAILED ({exc})")
     try:
-        from .teacher import Teacher, concept_context
+        from .judge import Judge, concept_context
 
-        teacher = Teacher(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
+        judge = Judge(cfg, ctx.llm, conn, context=concept_context(conn, cfg))
         probe = {"id": "probe", "feed_title": "doctor", "folder": None, "title": "A short note on why liquid cooling retrofits cost more than greenfield builds",
                  "url": "https://example.com/probe", "author": "doctor", "published": None,
                  "text": "A probe article. Retrofitting an air-cooled hall for direct-to-chip liquid cooling means new manifolds, CDUs and leak detection in a live facility; greenfield designs size the plant once."}
-        verdicts = teacher.judge_batch([probe], None)  # type: ignore[list-item]
+        verdicts = judge.judge_batch([probe], None)  # type: ignore[list-item]
         v = verdicts.get("probe")
         if v:
-            typer.echo(f"teacher ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}")
+            typer.echo(f"judge ({cfg.models.judge}): ok, probe scored {v.quality}/{v.learning}/{v.fit}/{v.breadth}/{v.relevance}")
         else:
-            problem(f"teacher ({cfg.models.judge}): call ok, no verdict parsed")
-        second = teacher.second_look(probe, None)  # type: ignore[arg-type]
+            problem(f"judge ({cfg.models.judge}): call ok, no judgment parsed")
+        second = judge.review(probe, None)  # type: ignore[arg-type]
         if second is not None:
-            typer.echo(f"second look ({cfg.models.reviewer}): ok")
+            typer.echo(f"review ({cfg.models.reviewer}): ok")
         else:
-            problem(f"second look ({cfg.models.reviewer}): FAILED")
+            problem(f"review ({cfg.models.reviewer}): FAILED")
         typer.echo(f"spend today, this doctor run included: ${store.spent_since(conn, store.local_midnight_iso(cfg.timezone)):.4f}")
     except Exception as exc:  # noqa: BLE001
         problem(f"models: FAILED ({exc})")
@@ -191,18 +194,18 @@ def _doctor_live(cfg: Config, secrets, conn, problem) -> None:  # noqa: ANN001
 def run(shadow: bool = typer.Option(False, "--shadow", help="Judge and tag, cut nothing: scoring-only mode for this run."),
         limit: int | None = typer.Option(None, "--limit", help="Score (or submit) at most this many articles this run."),
         sync: bool = typer.Option(False, "--sync", help="Wait for every model call instead of using the Batches API."),
-        workers: int | None = typer.Option(None, "--workers", help="Model calls in flight at once (--sync); default from config."),
+        workers: int | None = typer.Option(None, "--workers", help="Model calls running at once (--sync); default from config."),
         verbose: bool = VERBOSE) -> None:
     """One full pass. This is what launchd runs every 30 minutes."""
     ctx = _ctx(verbose)
     try:
-        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), graceful_sigterm(), time_limit(pipeline.RUN_TIMEOUT_SECONDS):
-            res = pipeline.run(ctx, score_limit=limit, enforce=(ctx.cfg.autocut.enabled and not shadow),
+        with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "run"), graceful_sigterm(), time_limit(runmod.RUN_TIMEOUT_SECONDS):
+            res = runmod.run(ctx, score_limit=limit, enforce=(ctx.cfg.autocut.enabled and not shadow),
                                workers=workers, sync=sync)
     except AlreadyRunning:
         typer.echo("another run is in progress; skipping")
         raise typer.Exit(0) from None
-    except ConfigError as exc:   # the seed is still the worked example
+    except ConfigError as exc:   # about.md is still the worked example
         _fail(str(exc), EXIT_CONFIG)
         return
     except RunTimeout as exc:
@@ -234,12 +237,12 @@ def score(limit: int | None = typer.Option(None, "--limit"), sync: bool = typer.
 def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --every seconds until Ctrl-C."),
              every: int = typer.Option(5, "--every", help="Seconds between redraws with --watch."),
              verbose: bool = VERBOSE) -> None:
-    """How far the teacher has got: judged, in flight, pending, by folder; rate and ETA while a
+    """How far the judge has got: judged, with the model, pending, by folder; rate and ETA while a
     run is going; batches; spend; the log."""
     import time
 
     from . import progress as progressmod
-    from .ops import log_file
+    from .logs import log_file
 
     cfg = _config()
     conn = store.connect(cfg.db_path)
@@ -259,7 +262,7 @@ def progress(watch: bool = typer.Option(False, "--watch", help="Redraw every --e
 
 
 @app.command("catch-up")
-def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls in flight at once."),
+def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls running at once."),
              chunk: int = typer.Option(1000, "--chunk", help="Articles per round."),
              all_ages: bool = typer.Option(False, "--all-ages", help="Also the unread articles older than limits.max_age_days."),
              model: str | None = typer.Option(None, "--model", help="The model to use; default catch_up.model, the quick "
@@ -274,7 +277,7 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls in fl
     it with Ctrl-C and run it again to continue. Watch it with `bodh progress --watch`."""
     import time
 
-    from .teacher import Teacher
+    from .judge import Judge
 
     ctx = _ctx(verbose)
     if not verbose:  # the progress line owns the terminal; the log file keeps the detail
@@ -290,7 +293,7 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls in fl
         cfg.limits.max_age_days = None
     judge = model or cfg.catch_up.model
     quick = judge != cfg.models.judge
-    rejudge = None if quick else Teacher.rejudge_rule(cfg)
+    rejudge = None if quick else Judge.rejudge_rule(cfg)
     pending = store.unscored_unread_count(ctx.conn, cfg.judge.prompt_version, cfg.limits.max_age_days,
                                           cfg.unjudged_folders(), exclude_inflight=True, rejudge=rejudge)
     if pending == 0:
@@ -326,7 +329,7 @@ def catch_up(workers: int = typer.Option(8, "--workers", help="Model calls in fl
 
     try:
         with run_lock(cfg.root / cfg.data_dir, "catch-up"), graceful_sigterm():
-            total = pipeline.blast(ctx, workers=workers, chunk=chunk, all_ages=all_ages, budget=budget,
+            total = runmod.catch_up(ctx, workers=workers, chunk=chunk, all_ages=all_ages, budget=budget,
                                    on_progress=show, model=judge, max_seconds=max_seconds)
     except AlreadyRunning:
         _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again")
@@ -375,7 +378,7 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
     lock = ctx.cfg.root / ctx.cfg.data_dir
     try:
         with run_lock(lock, "prune"):
-            _, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=True)
+            _, sel = runmod.prune(ctx, keep=keep, fraction=fraction, below=below, dry_run=True)
         _show_prune(sel, dry_run=True)
         if dry_run or not sel.cut:
             return
@@ -383,14 +386,14 @@ def prune(keep: int | None = typer.Option(None, "--keep", help="Keep this many u
         if not yes and _interactive() and not typer.confirm(f"Cut these {len(sel.cut)} (undo reverses it)?"):
             raise typer.Exit(0)
         with run_lock(lock, "prune"), graceful_sigterm():
-            n, sel = pipeline.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
+            n, sel = runmod.prune(ctx, keep=keep, fraction=fraction, below=below, confirmed=set(sel.cut_ids))
     except AlreadyRunning:
         _fail("another run is in progress; `bodh stop` it or wait")
         return
     except KeyboardInterrupt:
         _fail("stopped; the next run finishes the tags and read marks, `bodh undo` reverses the prune", 130)
         return
-    except pipeline.cutmod.BreakerTripped as exc:
+    except cutmod.SafetyTripped as exc:
         _fail(str(exc))
         return
     if n:
@@ -423,7 +426,7 @@ def undo(verbose: bool = VERBOSE) -> None:
     ctx = _ctx(verbose)
     try:
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "undo"), graceful_sigterm():
-            run_id, n = pipeline.undo_last(ctx)
+            run_id, n = runmod.undo_last(ctx)
     except AlreadyRunning:
         _fail("another run is in progress; `bodh stop` it or wait")
         return
@@ -441,7 +444,7 @@ def clear_old(days: int = typer.Option(14, "--days", help="Everything unread old
     """Mark every unread article older than N days read and tag it `cut`. Stars, the must-read
     stream, protected folders and rescued articles are exempt. Reversible with `bodh undo`."""
     ctx = _ctx(verbose)
-    candidates, _ = pipeline.bankruptcy(ctx, days, dry_run=True)
+    candidates, _ = runmod.clear_old(ctx, days, dry_run=True)
     typer.echo(f"{candidates} unread articles older than {days} days (stars and protections exempt)")
     if dry_run or candidates == 0:
         return
@@ -449,7 +452,7 @@ def clear_old(days: int = typer.Option(14, "--days", help="Everything unread old
         raise typer.Exit(0)
     try:
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "clear-old"), graceful_sigterm():
-            _, done = pipeline.bankruptcy(ctx, days, dry_run=False)
+            _, done = runmod.clear_old(ctx, days, dry_run=False)
     except AlreadyRunning:
         _fail("another run is in progress; `bodh stop` it or wait")
         return
@@ -467,10 +470,10 @@ def bankruptcy(older_than: int = typer.Option(14, "--older-than"), yes: bool = t
 @app.command()
 def status(verbose: bool = VERBOSE) -> None:
     """The whole system at a glance: what is running, the schedule, the unread, spend, the last runs."""
-    from . import control
+    from . import jobs
 
     ctx = _ctx(verbose)
-    typer.echo(control.render_status_text(control.status(ctx.cfg, ctx.conn)))
+    typer.echo(jobs.render_status_text(jobs.status(ctx.cfg, ctx.conn)))
     typer.echo("\n(`bodh progress` for the unread by folder, `bodh console` for the console)")
 
 
@@ -480,12 +483,12 @@ def stop(everything: bool = typer.Option(False, "--all", help="Also pause every 
          verbose: bool = VERBOSE) -> None:
     """Stop the run, prune or catch-up in progress (the same as Ctrl-C in its terminal). With
     --all, stop everything: the run, the schedule and the console."""
-    from . import control
-    from .ops import stop_process
+    from . import jobs
+    from .locks import stop_process
 
     cfg = _config()
     if everything:
-        for line in control.halt(cfg):
+        for line in jobs.stop_all(cfg):
             typer.echo(line)
         return
     typer.echo(stop_process(cfg.root / cfg.data_dir))
@@ -496,22 +499,22 @@ def schedule(action: str = typer.Argument("status", help="status, pause, resume 
              job: str = typer.Option("all", "--job", help="run, weekly, report, console or all"),
              verbose: bool = VERBOSE) -> None:
     """The launchd jobs: show them, pause them all (nothing fires until resume), resume, or kick a run."""
-    from . import control
+    from . import jobs
 
     if job == "panel":   # the console's name before October 2026
         job = "console"
     if action == "status":
-        for name, label in control.JOBS.items():
-            j = control.job_state(label)
+        for name, label in jobs.JOBS.items():
+            j = jobs.job_state(label)
             extra = f" · last exit {j['last_exit']}" if j["last_exit"] not in (None, 0) else ""
             typer.echo(f"{name:<8}{j['state']}{extra}  {j['plist'] or label}")
         return
     if action not in ("pause", "resume", "kick"):
         _fail("action must be status, pause, resume or kick")
-    if job != "all" and job not in control.JOBS:
+    if job != "all" and job not in jobs.JOBS:
         _fail("--job must be run, weekly, report, console or all")
     cfg = _config()
-    typer.echo(control.schedule(action, job, cfg.root / cfg.data_dir))
+    typer.echo(jobs.schedule(action, job, cfg.root / cfg.data_dir))
 
 
 @app.command(hidden=True)
@@ -525,15 +528,14 @@ def halt(verbose: bool = VERBOSE) -> None:
 def safety(action: str = typer.Argument("status", help="status, or reset"), verbose: bool = VERBOSE) -> None:
     """The safety limit: an autocut that would cut nearly everything newly judged trips it, and
     autocut then cuts nothing until `bodh safety reset` says someone has looked."""
-    from . import cut as cutmod
 
     if action not in ("status", "reset"):
         _fail("say status or reset")
     ctx = _ctx(verbose)
-    tripped = cutmod.breaker_tripped(ctx.conn)
+    tripped = cutmod.safety_tripped(ctx.conn)
     given_up = store.given_up(ctx.conn)
     if action == "reset":
-        if cutmod.reset_breaker(ctx.conn):
+        if cutmod.reset_safety(ctx.conn):
             typer.echo(f"safety limit reset (it tripped in run {tripped}); autocut cuts again from the next run")
         else:
             typer.echo("the safety limit is not tripped")
@@ -557,12 +559,12 @@ def safety(action: str = typer.Argument("status", help="status, or reset"), verb
 def autocut(state: str = typer.Argument(..., help="on or off"), verbose: bool = VERBOSE) -> None:
     """The automatic cut: on = autocut cuts below the cut-off from the next run; off = scoring-only
     mode, everything is judged and tagged, nothing is cut. Edits config.yaml in place."""
-    from . import control
+    from . import jobs
 
     if state not in ("on", "off"):
         _fail("say on or off")
     cfg = _config()
-    ok, msg = control.set_autocut(cfg.root, state == "on")
+    ok, msg = jobs.set_autocut(cfg.root, state == "on")
     if not ok:
         _fail(msg)
     typer.echo(msg)
@@ -582,16 +584,16 @@ def console(port: int = typer.Option(8766, "--port"), host: str = typer.Option("
     """The console: status, run, stop, schedule, prune, undo, catch-up, log, dashboard, in one page."""
     import traceback
 
-    from .panel import Panel, panel_log
+    from .console import Console, console_log
 
     ctx = _ctx(verbose)
     typer.echo(f"console on http://{host}:{port}  (Ctrl-C stops it; launchd keeps it alive when installed)")
     try:
-        Panel(ctx.cfg, ctx.conn, host=host, port=port).serve()
+        Console(ctx.cfg, ctx.conn, host=host, port=port).serve()
     except KeyboardInterrupt:
         raise typer.Exit(0) from None
     except Exception as exc:  # noqa: BLE001 — leave the reason where `bodh status` can show it
-        panel_log(ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        console_log(ctx.cfg.root / ctx.cfg.data_dir, f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
         _fail(f"console failed: {exc}")
 
 
@@ -621,7 +623,7 @@ def why(article_id: str, verbose: bool = VERBOSE) -> None:
     else:
         typer.echo(f"score {row['score']:.1f} (base {row['base_score']:.1f}"
                    + (f", review {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "") + ")")
-        from .teacher import normalize_flags
+        from .judge import normalize_flags
 
         try:
             flags = normalize_flags(json.loads(row["flags"] or "[]"))
@@ -668,7 +670,7 @@ def mark(article_id: str, verdict: str = typer.Argument(..., help="great, good, 
             elif verdict in store.STEERS:
                 store.set_verdict(ctx.conn, aid, verdict, store.STEERS)
                 phrase = feedback.steer_phrase(ctx.conn, aid)
-                learner.nudges(ctx.cfg, ctx.conn, [("want" if verdict == "more" else "meh", phrase)])
+                profiler.steers(ctx.cfg, ctx.conn, [("want" if verdict == "more" else "meh", phrase)])
                 typer.echo(f"recorded {verdict} for: {row['title'][:70]} (steer: {phrase})")
             else:
                 group = store.GRADES if verdict in store.GRADES else store.LEVELS
@@ -715,7 +717,7 @@ def _steer(kind: str, phrase: str, verbose: bool) -> None:
     ctx = _ctx(verbose)
     try:
         with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "steer"), graceful_sigterm():   # learned.md is written: not under a run
-            typer.echo(learner.nudge(ctx.cfg, ctx.conn, kind, phrase))
+            typer.echo(profiler.steer(ctx.cfg, ctx.conn, kind, phrase))
     except AlreadyRunning:
         _fail("a run is in progress; try again in a minute (or tag the article `more`/`less` in BazQux)", 5)
 
@@ -727,7 +729,7 @@ def profile(action: str = typer.Argument("show", help="show or revert"), verbose
     if action == "revert":
         try:
             with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "revert"), graceful_sigterm():
-                v = learner.revert(ctx.cfg, ctx.conn)
+                v = profiler.revert(ctx.cfg, ctx.conn)
         except AlreadyRunning:
             _fail("a run is in progress; try again in a minute", 5)
             return
@@ -749,10 +751,10 @@ def weekly(dry_run: bool = typer.Option(False, "--dry-run"), verbose: bool = VER
         _fail("a run is in progress; the weekly job will be run again by launchd next Sunday, or run it by hand later", 5)
 
 
-def _weekly(ctx: pipeline.Context, dry_run: bool) -> None:
+def _weekly(ctx: runmod.Context, dry_run: bool) -> None:
     run_id = store.begin_run(ctx.conn, "weekly")
     try:
-        result = learner.weekly_rewrite(ctx.cfg, ctx.llm, ctx.conn, run_id, dry_run=dry_run)
+        result = profiler.weekly_rewrite(ctx.cfg, ctx.llm, ctx.conn, run_id, dry_run=dry_run)
         typer.echo(result["reason"])
         if result.get("diff"):
             typer.echo(result["diff"])
@@ -771,7 +773,7 @@ def _weekly(ctx: pipeline.Context, dry_run: bool) -> None:
         _fail(f"weekly failed: {exc}")
 
 
-def _drift_check(ctx: pipeline.Context, run_id: int) -> str:
+def _drift_check(ctx: runmod.Context, run_id: int) -> str:
     """Re-score 2% of the week's articles; a large shift means the model behind the API changed."""
     conn, cfg = ctx.conn, ctx.cfg
     rows = conn.execute(
@@ -781,17 +783,17 @@ def _drift_check(ctx: pipeline.Context, run_id: int) -> str:
     ).fetchall()
     if len(rows) < 10:
         return ""
-    teacher = ctx.teacher()
-    from .teacher import compose
+    judge = ctx.judge()
+    from .judge import compose
 
     diffs = []
     for i in range(0, len(rows), cfg.judge.articles_per_call):
         batch = rows[i: i + cfg.judge.articles_per_call]
-        verdicts = teacher.judge_batch(batch, run_id)
+        verdicts = judge.judge_batch(batch, run_id)
         for r in batch:
             v = verdicts.get(r["id"])
             if v is not None:
-                diffs.append(compose(v, cfg, teacher.expansion_topics) - float(r["base_score"]))
+                diffs.append(compose(v, cfg, judge.expansion_topics) - float(r["base_score"]))
     if not diffs:
         return ""
     mean_shift = sum(diffs) / len(diffs)

@@ -57,7 +57,7 @@ def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
     for i in range(days - 1, -1, -1):
         day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
         row = {"day": day}
-        for k in ("arrived", "cut by floor", "cut by prune", "read", "starred"):
+        for k in ("arrived", "cut by autocut", "cut by prune", "read", "starred"):
             row[k] = per[day][k]
         out.append(row)
     return out
@@ -90,7 +90,7 @@ def calibration(conn: sqlite3.Connection) -> list[dict]:
 
 
 def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
-    """The student's grades against the teacher's bands: for each band, how many articles the
+    """The student's grades against the judge's bands: for each band, how many articles the
     student marked great, good, meh or bad in the window. Calibration from the student's own hand."""
     since = store.days_ago_iso(days)
     marks = ",".join("?" * len(store.GRADES))
@@ -106,7 +106,7 @@ def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
 
 
 def disagreements(conn: sqlite3.Connection, days: int = 30, limit: int = 15) -> list[sqlite3.Row]:
-    """Where the student and the teacher disagree most: great, good or wrong under 50; bad or meh at 70 or more."""
+    """Where the student and the judge disagree most: great, good or wrong under 50; bad or meh at 70 or more."""
     since = store.days_ago_iso(days)
     return conn.execute(
         """SELECT a.id, a.title, a.url, a.feed_title, s.score, s.concept, s.lesson, f.kind, f.at
@@ -187,12 +187,12 @@ def health(conn: sqlite3.Connection, cfg: Config) -> dict:
     last_ok = next((r for r in runs if r["ok"] and r["kind"] == "run"), None)
     last_err = next((r for r in runs if not r["ok"] and r["error"]), None)
     unread = conn.execute("SELECT COUNT(*) FROM state WHERE status = 'unread'").fetchone()[0]
-    by_bucket = conn.execute(
+    by_band = conn.execute(
         "SELECT s.bucket, COUNT(*) FROM scores s JOIN state st ON st.article_id = s.article_id "
         "WHERE st.status = 'unread' GROUP BY s.bucket"
     ).fetchall()
     return {"runs": runs, "spend_today": today, "spend_week": week, "last_ok": last_ok, "last_error": last_err,
-            "unread": unread, "by_bucket": {r[0]: r[1] for r in by_bucket}}
+            "unread": unread, "by_band": {r[0]: r[1] for r in by_band}}
 
 
 # -- rendering ------------------------------------------------------------------
@@ -262,37 +262,37 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     lessons = learnings(conn)
     covered, frontier = concept_map(conn, cfg)
     hl = health(conn, cfg)
-    learner_text = cfg.read_learned()
-    versions = store.learner_versions(conn, 2)
-    learner_diff = ""
+    learned_text = cfg.read_learned()
+    versions = store.learned_versions(conn, 2)
+    learned_diff = ""
     if len(versions) == 2:
-        from .learner import diff
-        learner_diff = diff(versions[1]["text"], versions[0]["text"])
+        from .profiler import diff
+        learned_diff = diff(versions[1]["text"], versions[0]["text"])
 
     from . import progress
 
     parts = [f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
              f"<title>bodh</title><style>{CSS}{progress.PROGRESS_CSS}</style></head><body>",
              f"<h1>bodh</h1><div class='muted'>as of {now.strftime('%a %d %b %Y %H:%M')} {cfg.timezone} · "
-             f"unread {hl['unread']} · target {cfg.prune.keep} · floor {cfg.autocut.cutoff}</div>"]
+             f"unread {hl['unread']} · prune keeps {cfg.prune.keep} · cut-off {cfg.autocut.cutoff}</div>"]
 
     # KPIs
     last_ok = hl["last_ok"]
     status = f"<span class='ok'>alive</span> last good run {_e(last_ok['finished_at'][:16])}" if last_ok else "<span class='bad'>no successful run yet</span>"
     parts.append("<div class='kpis'>"
                  f"<div class='kpi'><span class='muted'>unread now</span><b>{hl['unread']}</b></div>"
-                 + "".join(f"<div class='kpi'><span class='muted'>{_e(b)}</span><b>{n}</b></div>" for b, n in sorted(hl['by_bucket'].items(), reverse=True))
+                 + "".join(f"<div class='kpi'><span class='muted'>{_e(b)}</span><b>{n}</b></div>" for b, n in sorted(hl['by_band'].items(), reverse=True))
                  + f"<div class='kpi'><span class='muted'>spend today</span><b>${hl['spend_today']:.2f}</b></div>"
                  f"<div class='kpi'><span class='muted'>spend 7 days</span><b>${hl['spend_week']:.2f}</b></div>"
                  f"<div class='kpi'><span class='muted'>runner</span><div>{status}</div></div></div>")
 
     try:
         parts.append(progress.render_html(progress.snapshot(conn, cfg)))
-    except Exception:  # noqa: BLE001 — the progress panel must never break the page
-        parts.append("<p class='bad'>progress panel failed to render</p>")
+    except Exception:  # noqa: BLE001 — the progress section must never break the page
+        parts.append("<p class='bad'>the progress section failed to render</p>")
 
     parts.append("<h2>Flow, last 14 days</h2>")
-    parts.append(_bars_svg(fl, ["arrived", "cut by floor", "cut by prune", "read", "starred"],
+    parts.append(_bars_svg(fl, ["arrived", "cut by autocut", "cut by prune", "read", "starred"],
                            ["#bbb", "#e39b5d", "#c9664a", "#4a90c9", "#e0b800"]))
     parts.append("<p class='muted'>Read and starred are inferred from BazQux read state; a burst of more than "
                  f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading.</p>")
@@ -307,14 +307,14 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
 
     parts.append("<h2>Your verdicts, last 30 days</h2>")
     if any(r["n"] for r in verd):
-        parts.append("<table><tr><th>Teacher's band</th><th class='num'>great</th><th class='num'>good</th>"
+        parts.append("<table><tr><th>The judge's band</th><th class='num'>great</th><th class='num'>good</th>"
                      "<th class='num'>meh</th><th class='num'>bad</th></tr>")
         for r in verd:
             parts.append(f"<tr><td>{_e(r['band'])}</td><td class='num'>{r['great']}</td><td class='num'>{r['good']}</td>"
                          f"<td class='num'>{r['meh']}</td><td class='num'>{r['bad']}</td></tr>")
         parts.append("</table>")
         if disagree:
-            parts.append("<p>Where you and the teacher disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
+            parts.append("<p>Where you and the judge disagree most:</p><table><tr><th>You</th><th class='num'>Score</th>"
                          "<th>Article</th><th>Concept</th></tr>")
             for r in disagree:
                 parts.append(f"<tr><td>{_e(r['kind'])}</td><td class='num'>{r['score']:.0f}</td>"
@@ -322,11 +322,11 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
                              f"<td>{_e(r['concept'] or '')}</td></tr>")
             parts.append("</table>")
         parts.append("<p class='muted'>Tags in BazQux: great, good, meh, bad (one grade per article); basic or heavy when the level "
-                     "missed; more or less to steer the teacher by this article's concept. The Sunday rewrite reads them all; "
+                     "missed; more or less to steer the judge by this article's concept. The Sunday rewrite reads them all; "
                      "disagreements are what it learns from most.</p>")
     else:
         parts.append("<p class='muted'>No verdict tags yet. In BazQux, tag an article great, good, meh or bad; basic or heavy "
-                     "when the level missed; more or less to steer the teacher by its concept.</p>")
+                     "when the level missed; more or less to steer the judge by its concept.</p>")
 
     parts.append("<h2>Near misses: the best of what was cut this week</h2><table><tr><th class='num'>Score</th><th>Article</th>"
                  "<th>Lesson</th><th>Concept</th></tr>")
@@ -366,9 +366,9 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
                      f"<td><a href='{_href(r['url'])}'>{_e(r['title'][:80])}</a> <span class='muted'>{_e(r['status'])}</span></td></tr>")
     parts.append("</table>")
 
-    parts.append("<h2>Learner model</h2><pre>" + _e(learner_text) + "</pre>")
-    if learner_diff:
-        parts.append("<h3>Change from the previous version</h3><pre>" + _e(learner_diff) + "</pre>")
+    parts.append("<h2>Learned profile</h2><pre>" + _e(learned_text) + "</pre>")
+    if learned_diff:
+        parts.append("<h3>Change from the previous version</h3><pre>" + _e(learned_diff) + "</pre>")
 
     parts.append("<h2>Health: last 20 runs</h2><table><tr><th>Started</th><th>Kind</th><th>OK</th><th>Summary</th></tr>")
     for r in hl["runs"]:
@@ -387,8 +387,8 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     return path
 
 
-def weekly_note(cfg: Config, conn: sqlite3.Connection, learner_result: dict | None = None) -> Path | None:
-    """The weekly digest as Markdown: learnings, map, near misses, the learner diff."""
+def weekly_note(cfg: Config, conn: sqlite3.Connection, learned_result: dict | None = None) -> Path | None:
+    """The weekly digest as Markdown: learnings, map, near misses, the learned profile's diff."""
     target = cfg.obsidian_path
     tz = ZoneInfo(cfg.timezone)
     now = datetime.now(tz)
@@ -409,10 +409,10 @@ def weekly_note(cfg: Config, conn: sqlite3.Connection, learner_result: dict | No
     lines += [f"- {r['score']:.0f} · {r['concept']} · [{r['title'][:80]}]({r['url']})" for r in frontier] or ["nothing yet"]
     lines += ["", "## Near misses: the best of what was cut"]
     lines += [f"- {r['score']:.0f} · [{r['title'][:80]}]({r['url']}) · {r['lesson']}" for r in misses] or ["nothing cut this week"]
-    if learner_result:
-        lines += ["", "## Learner model", learner_result.get("reason", "")]
-        if learner_result.get("diff"):
-            lines += ["```diff", learner_result["diff"], "```"]
+    if learned_result:
+        lines += ["", "## Learned profile", learned_result.get("reason", "")]
+        if learned_result.get("diff"):
+            lines += ["```diff", learned_result["diff"], "```"]
     text = "\n".join(lines) + "\n"
     out_dir = cfg.root / cfg.dashboard_dir
     out_dir.mkdir(parents=True, exist_ok=True)

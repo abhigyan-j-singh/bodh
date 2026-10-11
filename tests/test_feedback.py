@@ -49,10 +49,10 @@ def test_read_dismissed_expired_marked_unread_again_return_to_unread(conn, cfg):
     exempt = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE exempt = 1")}
     assert exempt == {ids[0]}
     # and they are in the pool the cuts select from
-    from bodh import cut
+    from bodh import cutting
 
     cfg.prune.keep = 0
-    assert set(cut.select_prune(conn, cfg).cut_ids) == set(ids)
+    assert set(cutting.select_prune(conn, cfg).cut_ids) == set(ids)
 
 
 def test_flip_larger_than_param_limit(conn, cfg):

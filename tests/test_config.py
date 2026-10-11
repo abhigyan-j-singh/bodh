@@ -222,20 +222,20 @@ def test_localtime_name_copied_file_falls_back_to_etc_timezone(tmp_path, monkeyp
     assert config.system_timezone() == "UTC"
 
 
-def test_the_example_seed_is_recognised_and_refused(tmp_path, cfg, conn):
-    """profile.example/seed.md describes an invented student: `doctor` reports it, the
-    teacher refuses to judge for it, and a real seed in the example's shape passes."""
-    from bodh.teacher import Teacher
+def test_the_example_about_is_recognised_and_refused(tmp_path, cfg, conn):
+    """profile.example/about.md describes an invented student: `doctor` reports it, the
+    judge refuses to judge for it, and a real about.md in the example's shape passes."""
+    from bodh.judge import Judge
 
-    example = (ROOT / "profile.example" / "seed.md").read_text(encoding="utf-8")
+    example = (ROOT / "profile.example" / "about.md").read_text(encoding="utf-8")
     cfg.about_path.write_text(example, encoding="utf-8")
     assert cfg.about_is_example()
     with pytest.raises(ConfigError, match="still the worked example"):
-        Teacher(cfg, None, conn)  # type: ignore[arg-type]
+        Judge(cfg, None, conn)  # type: ignore[arg-type]
     own = re.sub(r"<!--.*?-->", "", example, flags=re.S).replace("Ines, a marine biologist", "Someone else, a geologist")
     cfg.about_path.write_text(own, encoding="utf-8")
     assert not cfg.about_is_example() and "geologist" in cfg.read_about()
-    Teacher(cfg, None, conn)  # type: ignore[arg-type]
+    Judge(cfg, None, conn)  # type: ignore[arg-type]
 
 
 def test_find_root_tries_the_default_home_last(tmp_path, monkeypatch):

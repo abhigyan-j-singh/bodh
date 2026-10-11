@@ -14,8 +14,8 @@ from pathlib import Path
 
 from conftest import seed_scored
 
-from bodh import control, ops, store
-from bodh.panel import Panel
+from bodh import jobs, locks, store
+from bodh.console import Console
 
 FAKE = '''
 import sys, time
@@ -67,34 +67,34 @@ def test_status_text_and_enforce_flip(conn, cfg):
     store.finish_run(conn, run_id, True, summary="unread 2 · judged 2")
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 40\n", encoding="utf-8")
     cfg.autocut.enabled = False
-    st = control.status(cfg, conn)
+    st = jobs.status(cfg, conn)
     assert st["mode"] == "scoring-only" and st["running"] is None and st["pile"]["unread"] == 2
     assert st["jobs"]["run"]["installed"] is False and st["runs"][0]["summary"] == "unread 2 · judged 2"
-    text = control.render_status_text(st)
+    text = jobs.render_status_text(st)
     assert "idle" in text and "scoring-only" in text and "unread 2" in text
-    ok, msg = control.set_enforce(cfg.root, True)
+    ok, msg = jobs.set_enforce(cfg.root, True)
     assert ok and "now true" in msg
     assert "enforce: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
-    ok, msg = control.set_enforce(cfg.root, False)
+    ok, msg = jobs.set_enforce(cfg.root, False)
     assert ok and "scoring-only" in msg
     # a file without the key, in either layout, gets the new one
     (cfg.root / "config.yaml").write_text("cut:\n  target_unread: 40\n", encoding="utf-8")
-    ok, msg = control.set_enforce(cfg.root, True)
+    ok, msg = jobs.set_enforce(cfg.root, True)
     assert ok and "autocut:\n  enabled: true" in (cfg.root / "config.yaml").read_text(encoding="utf-8")
     # launchd is not here: states say so instead of failing
-    j = control.job_state("bodh.run")
+    j = jobs.job_state("bodh.run")
     assert j["installed"] is False and j["state"] == "not installed"
-    assert "not installed" in control.schedule("pause")
+    assert "not installed" in jobs.schedule("pause")
 
 
 def test_running_process_and_stop(conn, cfg):
     data_dir = cfg.root / cfg.data_dir
-    assert ops.running_process(data_dir) is None
-    assert ops.stop_process(data_dir) == "nothing is running"
+    assert locks.running_process(data_dir) is None
+    assert locks.stop_process(data_dir) == "nothing is running"
     # a child process holding the lock, as a blast or prune would
     src = str(Path(__file__).resolve().parents[1] / "src")
     code = (
-        f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path; from bodh.ops import run_lock\n"
+        f"import sys, time; sys.path.insert(0, {src!r}); from pathlib import Path; from bodh.locks import run_lock\n"
         f"with run_lock(Path({str(data_dir)!r}), 'blast'):\n"
         "    print('locked', flush=True)\n"
         "    try:\n        time.sleep(30)\n    except KeyboardInterrupt:\n        pass\n"
@@ -102,23 +102,23 @@ def test_running_process_and_stop(conn, cfg):
     with subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True) as proc:
         assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
         time.sleep(0.2)
-        running = ops.running_process(data_dir)
+        running = locks.running_process(data_dir)
         assert running and running["pid"] == proc.pid and running["kind"] == "blast"
-        st = control.status(cfg, conn)
+        st = jobs.status(cfg, conn)
         assert st["running"]["kind"] == "blast"
-        msg = ops.stop_process(data_dir, wait=10)
+        msg = locks.stop_process(data_dir, wait=10)
         assert msg.startswith("stopped blast")
         proc.wait(timeout=10)
-    assert ops.running_process(data_dir) is None and not (data_dir / "bodh.pid").exists()
+    assert locks.running_process(data_dir) is None and not (data_dir / "bodh.pid").exists()
 
 
-def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
+def test_console_serves_status_actions_and_output(conn, cfg, tmp_path):
     seed_scored(conn, cfg, [dict(n=1, score=90)])
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
     cfg.autocut.enabled = False
     (cfg.root / cfg.dashboard_dir).mkdir(exist_ok=True)
     (cfg.root / cfg.dashboard_dir / "index.html").write_text("<p>dash</p>", encoding="utf-8")
-    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    panel = Console(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     # pick a free port
     import socket
 
@@ -138,7 +138,7 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     page = urllib.request.urlopen(base + "/", timeout=10).read().decode("utf-8")
     assert "bodh console" in page and "/api/action" in page
     assert urllib.request.urlopen(base + "/dashboard/index.html", timeout=10).read() == b"<p>dash</p>"
-    # a POST without our header is refused (another site's page cannot drive the panel)
+    # a POST without our header is refused (another site's page cannot drive the console)
     code, _ = _post(base + "/api/action", {"action": "undo"}, header=False)
     assert code == 403
     # a foreground action returns its output
@@ -178,18 +178,18 @@ def test_panel_serves_status_actions_and_output(conn, cfg, tmp_path):
     assert os.environ.get("BODH_HOME") != str(cfg.root)  # the child env carries it, the test process does not
 
 
-def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
-    from bodh.panel import panel_log
+def test_console_state_and_stop_all_without_launchd(conn, cfg, tmp_path):
+    from bodh.console import console_log
 
-    st = control.panel_state(cfg)
+    st = jobs.console_state(cfg)
     assert st["up"] is False and st["url"] == "http://127.0.0.1:8766" and st["note"] == ""
-    panel_log(cfg.root / cfg.data_dir, "cannot listen on 127.0.0.1:8766: address in use")
-    st = control.panel_state(cfg)
+    console_log(cfg.root / cfg.data_dir, "cannot listen on 127.0.0.1:8766: address in use")
+    st = jobs.console_state(cfg)
     assert "address in use" in st["note"]
-    text = control.render_status_text(control.status(cfg, conn))
+    text = jobs.render_status_text(jobs.status(cfg, conn))
     assert "console: not answering" in text and "address in use" in text
-    # a live panel: panel.json points at it and the port answers
-    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    # a live console: console.json points at it and the port answers
+    panel = Console(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     import socket
 
     with socket.socket() as sock:
@@ -197,17 +197,17 @@ def test_panel_state_and_halt_without_launchd(conn, cfg, tmp_path):
         panel.port = sock.getsockname()[1]
     threading.Thread(target=panel.serve, daemon=True).start()
     for _ in range(50):
-        if control.panel_state(cfg)["up"]:
+        if jobs.console_state(cfg)["up"]:
             break
         time.sleep(0.1)
-    st = control.panel_state(cfg)
+    st = jobs.console_state(cfg)
     assert st["up"] and st["url"].endswith(str(panel.port)) and st["pid"] == os.getpid()
-    assert "console: up" in control.render_status_text(control.status(cfg, conn))
+    assert "console: up" in jobs.render_status_text(jobs.status(cfg, conn))
     # halt with no launchd and nothing running still reports cleanly
-    notes = control.halt(cfg)
+    notes = jobs.stop_all(cfg)
     assert any("not installed" in n for n in notes) and any("nothing is running" in n for n in notes)
     assert notes[-1].startswith("everything is stopped")
-    assert not (cfg.root / cfg.data_dir / "panel.json").exists()
+    assert not (cfg.root / cfg.data_dir / "console.json").exists()
 
 
 def test_installer_covers_every_job():
@@ -217,7 +217,7 @@ def test_installer_covers_every_job():
     installer = (root / "install-launchd.sh").read_text(encoding="utf-8")
     loop = next(line for line in installer.splitlines() if line.startswith("for job in "))
     labels = [word.strip(";") for word in loop.split()]
-    for label in control.JOBS.values():
+    for label in jobs.JOBS.values():
         assert label in labels, f"{label} is not installed by install-launchd.sh"
         assert (root / "launchd" / f"{label}.plist").exists()
     assert subprocess.run(["bash", "-n", str(root / "install-launchd.sh")]).returncode == 0
@@ -228,14 +228,14 @@ def test_set_autocut_every_yaml_spelling(cfg):
     a missing key is added under `autocut:`, an `enabled:` elsewhere is left alone, and a file in
     the layout before October 2026 (`cut: enforce:`) is edited under its own names."""
     from bodh.config import load_config
-    from bodh.control import _edit_flag
+    from bodh.jobs import _edit_flag
 
     path = cfg.root / "config.yaml"
     for spelling in ("true", "True", "yes", "on", '"false"', "'no'", "false   # a comment"):
         path.write_text(f"timezone: UTC\n# enabled: not this one\nautocut:\n  max_per_run: 40\n  enabled: {spelling}\n"
                         "  cutoff: 35\nsafety:\n  lowered_cutoff: 25\n", encoding="utf-8")
         for on in (False, True):
-            ok, msg = control.set_autocut(cfg.root, on)
+            ok, msg = jobs.set_autocut(cfg.root, on)
             assert ok, (spelling, on, msg)
             text = path.read_text(encoding="utf-8")
             loaded = load_config(cfg.root)
@@ -249,33 +249,33 @@ def test_set_autocut_every_yaml_spelling(cfg):
     # no enabled line under autocut: added there, nothing else moves
     path.write_text("autocut:\n  cutoff: 40\nfolders:\n  Comics: { protected: true }\nsafety:\n  lowered_cutoff: 25\n",
                     encoding="utf-8")
-    ok, _ = control.set_autocut(cfg.root, True)
+    ok, _ = jobs.set_autocut(cfg.root, True)
     assert ok and path.read_text(encoding="utf-8").startswith("autocut:\n  enabled: true\n  cutoff: 40\n")
     assert load_config(cfg.root).folders["Comics"].protected
     # no autocut section at all: one is appended
     path.write_text("timezone: UTC\n", encoding="utf-8")
-    ok, _ = control.set_autocut(cfg.root, True)
+    ok, _ = jobs.set_autocut(cfg.root, True)
     assert ok and load_config(cfg.root).autocut.enabled is True
     assert path.read_text(encoding="utf-8") == "timezone: UTC\n\nautocut:\n  enabled: true\n"
     # the old layout is edited in place, under the old names, so the file keeps loading as it did
     path.write_text("cut:\n  enforce: false   # kept\n  target_unread: 40\n", encoding="utf-8")
-    ok, msg = control.set_autocut(cfg.root, True)
+    ok, msg = jobs.set_autocut(cfg.root, True)
     assert ok and "cut.enforce is now true" in msg
     assert path.read_text(encoding="utf-8") == "cut:\n  enforce: true # kept\n  target_unread: 40\n"
     assert load_config(cfg.root).autocut.enabled is True
-    assert control.set_enforce is control.set_autocut
+    assert jobs.set_enforce is jobs.set_autocut
     # a shape the line editor cannot handle is refused, and the file is untouched
     path.write_text("autocut: { enabled: false, cutoff: 40 }\n", encoding="utf-8")
     before = path.read_text(encoding="utf-8")
-    ok, msg = control.set_autocut(cfg.root, True)
+    ok, msg = jobs.set_autocut(cfg.root, True)
     assert not ok and "by hand" in msg and path.read_text(encoding="utf-8") == before
 
 
-def test_panel_enforce_lever_fails_closed(conn, cfg, tmp_path):
+def test_console_autocut_lever_fails_closed(conn, cfg, tmp_path):
     """When the file cannot be edited the page keeps showing the file's truth, not the wish."""
     (cfg.root / "config.yaml").write_text("cut: { enforce: false }\n", encoding="utf-8")
     cfg.autocut.enabled = False
-    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    panel = Console(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     res = panel.run_action("enforce_on", {})
     assert not res["ok"] and panel.cfg.autocut.enabled is False
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n", encoding="utf-8")
@@ -287,19 +287,19 @@ def test_halt_stops_before_pausing(conn, cfg, monkeypatch):
     """Pausing launchd first sent SIGTERM to the running job with no handler: no run row, no
     heartbeat, a pid file left behind. The run is interrupted first, then the schedule."""
     order = []
-    monkeypatch.setattr(ops, "stop_process", lambda data_dir, wait=20.0: order.append("stop") or "nothing is running")
-    monkeypatch.setattr(control, "schedule", lambda action, which="all", data_dir=None: order.append(f"{action} {which}") or "paused")
-    control.halt(cfg)
+    monkeypatch.setattr(locks, "stop_process", lambda data_dir, wait=20.0: order.append("stop") or "nothing is running")
+    monkeypatch.setattr(jobs, "schedule", lambda action, which="all", data_dir=None: order.append(f"{action} {which}") or "paused")
+    jobs.stop_all(cfg)
     assert order == ["stop", "pause all"]
 
 
 def test_schedule_kick_refuses_while_running(conn, cfg):
     data_dir = cfg.root / cfg.data_dir
-    with ops.run_lock(data_dir, "blast"):
-        msg = control.schedule("kick", "run", data_dir)
+    with locks.run_lock(data_dir, "blast"):
+        msg = jobs.schedule("kick", "run", data_dir)
     assert msg.startswith("not kicked") and "blast" in msg
-    assert "not installed" in control.schedule("kick", "run", data_dir)   # idle: launchd (absent here) is asked
-    assert "console is paused too" in control.schedule("pause", "all", data_dir)
+    assert "not installed" in jobs.schedule("kick", "run", data_dir)   # idle: launchd (absent here) is asked
+    assert "console is paused too" in jobs.schedule("pause", "all", data_dir)
 
 
 def test_stray_processes_only_this_checkout(tmp_path):
@@ -307,7 +307,7 @@ def test_stray_processes_only_this_checkout(tmp_path):
     control room and an editor whose arguments carried the path."""
     import re
 
-    pattern = re.compile(control.stray_pattern(tmp_path))
+    pattern = re.compile(jobs.stray_pattern(tmp_path))
     lines = {
         101: f"{tmp_path}/.venv/bin/bodh panel --port 8766",
         102: "/Users/other/bodh/.venv/bin/bodh run",
@@ -321,7 +321,7 @@ def test_stray_processes_only_this_checkout(tmp_path):
 
 
 def test_next_run_uses_last_timer_run(conn, cfg, monkeypatch):
-    monkeypatch.setattr(control, "job_state", lambda label: {"label": label, "installed": True, "loaded": True,
+    monkeypatch.setattr(jobs, "job_state", lambda label: {"label": label, "installed": True, "loaded": True,
                                                               "state": "waiting", "last_exit": 0, "pid": None,
                                                               "mode": "agent", "plist": "x", "interval": 1800})
     run_id = store.begin_run(conn, "run")
@@ -331,17 +331,17 @@ def test_next_run_uses_last_timer_run(conn, cfg, monkeypatch):
                  ((store.utcnow() - __import__("datetime").timedelta(minutes=20)).isoformat(), run_id))
     prune_id = store.begin_run(conn, "prune")           # a prune just now must not reset the countdown
     store.finish_run(conn, prune_id, True, summary="prune")
-    st = control.status(cfg, conn)
+    st = jobs.status(cfg, conn)
     assert st["next_run_in"] is not None and 500 < st["next_run_in"] < 700
 
 
-def test_panel_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
+def test_console_rejects_foreign_host_and_caches_status(conn, cfg, tmp_path):
     import socket
 
     seed_scored(conn, cfg, [dict(n=1, score=90)])
     (cfg.root / "config.yaml").write_text("cut:\n  enforce: false\n  target_unread: 33\n", encoding="utf-8")
     cfg.autocut.enabled = False
-    panel = Panel(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
+    panel = Console(cfg, conn, command=_fake_command(tmp_path), host="127.0.0.1", port=0)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         panel.port = sock.getsockname()[1]
@@ -388,7 +388,7 @@ def test_installer_rejects_unknown_mode_and_plists_parse():
     res = subprocess.run(["bash", str(root / "install-launchd.sh"), "--bogus"], capture_output=True, text=True,
                          cwd=str(root))
     assert res.returncode == 2 and "usage" in res.stdout
-    for label in control.JOBS.values():
+    for label in jobs.JOBS.values():
         with (root / "launchd" / f"{label}.plist").open("rb") as fh:
             plist = plistlib.load(fh)
         assert plist["Label"] == label

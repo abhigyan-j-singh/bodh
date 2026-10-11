@@ -1,11 +1,11 @@
-# Seed
+# About the student
 
-<!-- The seed is fifteen lines on the student, written once and rarely touched; the teacher reads
+<!-- This file is fifteen lines on the student, written once and rarely touched; the judge reads
      it with every article. Five paragraphs: who the student is; what they already know well (the
-     teacher scores "fit" against it); what reading is for this year; the decisions in front of
+     judge scores "fit" against it); what reading is for this year; the decisions in front of
      them (it scores "relevance" against these); what is never worth attention. Below is a worked
      example for an invented student, so you can see the shape. Replace every paragraph with your
-     own and delete this comment: while it is here, `bodh doctor` reports the seed as still the
+     own and delete this comment: while it is here, `bodh doctor` reports about.md as still the
      example and `bodh run` refuses to judge for someone who does not exist. -->
 
 Student: Ines, a marine biologist at a university field station on the Atlantic coast of Portugal.

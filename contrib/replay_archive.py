@@ -1,4 +1,4 @@
-"""Replay the teacher over an archive from an earlier filtering tool, offline, before anything
+"""Replay the judge over an archive from an earlier filtering tool, offline, before anything
 touches the live account. Not part of the package: it depends on another project's database.
 
 The archive expected: a SQLite file with a table `articles` holding `id`, `feed`, `title`,
@@ -6,7 +6,7 @@ The archive expected: a SQLite file with a table `articles` holding `id`, `feed`
 a `golden.jsonl` with lines `{"article_id": ..., "judgment": "star"}` naming the articles
 you starred. A stratified sample by default (random rows are proportional to feed volume),
 plus every starred article, so the eval gate can be checked: no starred article may fall
-below the automatic floor.
+below the cut-off.
 
     cd <your bodh folder>
     .venv/bin/python contrib/replay_archive.py --archive /path/to/archive.db [--golden golden.jsonl] [--sample 500]
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from bodh import store
 from bodh.config import Config, load_config, load_secrets
-from bodh.teacher import LLM, Teacher, compose, concept_context
+from bodh.judge import LLM, Judge, compose, concept_context
 
 ARCHIVE_QUERY = """
 SELECT id, feed, title, url, summary, fetched_at, decision, quality AS old_quality
@@ -70,13 +70,13 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
         have = {r["id"] for r in rows}
         rows += [_row(r) for r in extra if r["id"] not in have]
     run_id = store.begin_run(conn, "replay")
-    teacher = Teacher(cfg, llm, conn, context=concept_context(conn, cfg))
+    judge = Judge(cfg, llm, conn, context=concept_context(conn, cfg))
     results: list[dict] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     batches = [rows[i: i + cfg.judge.articles_per_call] for i in range(0, len(rows), cfg.judge.articles_per_call)]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = {pool.submit(teacher.judge_batch, b, run_id): b for b in batches}
+        futures = {pool.submit(judge.judge_batch, b, run_id): b for b in batches}
         for fut in as_completed(futures):
             batch = futures[fut]
             try:
@@ -93,10 +93,10 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
                                 "lesson": v.lesson, "old_decision": r["old_decision"],
                                 "starred": r["id"] in starred_ids})
     scored = [r for r in results if "score" in r]
-    floor = cfg.autocut.cutoff
-    below_floor = [r for r in scored if r["score"] < floor and r["confidence"] != "low"]
+    cutoff = cfg.autocut.cutoff
+    below_cutoff = [r for r in scored if r["score"] < cutoff and r["confidence"] != "low"]
     starred_scored = [r for r in scored if r["starred"]]
-    starred_below = [r for r in starred_scored if r["score"] < floor]
+    starred_below = [r for r in starred_scored if r["score"] < cutoff]
     by_feed: dict[str, list[float]] = defaultdict(list)
     for r in scored:
         by_feed[r["feed"]].append(r["score"])
@@ -105,13 +105,13 @@ def replay(cfg: Config, llm: LLM, conn: sqlite3.Connection, archive_db: Path, go
         bands[next(name for lo, name in [(90, "90+"), (70, "70-89"), (50, "50-69"), (30, "30-49"), (0, "0-29")] if r["score"] >= lo)] += 1
     report = {
         "sampled": len(rows), "scored": len(scored), "failed": sum(r.get("n", 0) for r in results if "error" in r),
-        "floor": floor, "would_cut_share": (len(below_floor) / len(scored)) if scored else None,
+        "cutoff": cutoff, "would_cut_share": (len(below_cutoff) / len(scored)) if scored else None,
         "bands": dict(bands),
-        "starred_checked": len(starred_scored), "starred_below_floor": [r["title"] for r in starred_below],
+        "starred_checked": len(starred_scored), "starred_below_cutoff": [r["title"] for r in starred_below],
         "gate_passed": not starred_below,
         "feeds": sorted(({"feed": f, "n": len(s), "mean": sum(s) / len(s)} for f, s in by_feed.items()),
                         key=lambda x: -x["n"])[:25],
-        "old_keep_now_below_floor": sum(1 for r in below_floor if r["old_decision"] == "keep"),
+        "old_keep_now_below_cutoff": sum(1 for r in below_cutoff if r["old_decision"] == "keep"),
         "old_junk_now_above_70": sum(1 for r in scored if r["old_decision"] == "junk" and r["score"] >= 70),
         "spend_usd": store.spent_since(conn, store.local_midnight_iso(cfg.timezone)),
         "sample": sorted(scored, key=lambda r: -r["score"])[:15] + sorted(scored, key=lambda r: r["score"])[:15],
@@ -140,14 +140,14 @@ def main() -> None:
     if rep["would_cut_share"] is None:
         print("nothing scored")
     else:
-        print(f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); floor {rep['floor']}; "
+        print(f"scored {rep['scored']} of {rep['sampled']} (failed {rep['failed']}); cut-off {rep['cutoff']}; "
               f"would cut {rep['would_cut_share']:.0%}")
     print(f"bands: {rep['bands']}")
-    print(f"starred checked {rep['starred_checked']}; below floor: {len(rep['starred_below_floor'])} "
+    print(f"starred checked {rep['starred_checked']}; below the cut-off: {len(rep['starred_below_cutoff'])} "
           f"-> gate {'PASSED' if rep['gate_passed'] else 'FAILED'}")
-    for t in rep["starred_below_floor"][:10]:
-        print(f"   below floor: {t[:80]}")
-    print(f"archive kept, now below floor: {rep['old_keep_now_below_floor']}; archive junked, now 70+: {rep['old_junk_now_above_70']}")
+    for t in rep["starred_below_cutoff"][:10]:
+        print(f"   below the cut-off: {t[:80]}")
+    print(f"archive kept, now below the cut-off: {rep['old_keep_now_below_cutoff']}; archive junked, now 70+: {rep['old_junk_now_above_70']}")
     print(f"full report: {rep['path']}")
 
 

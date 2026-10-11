@@ -44,5 +44,5 @@ Duplicate the Shortcut and change the script line for other depths:
 ## Without a Shortcut
 
 Any BazQux client works as a trigger too: add the tag `prune` to any article in BazQux and the next
-timer run prunes one step to the target, then removes the tag. And plain `ssh my-mac` followed by
+run with autocut on prunes to what the prune keeps, then removes the tag. And plain `ssh my-mac` followed by
 `bodh prune` is always there.

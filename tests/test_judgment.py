@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from bodh.ids import resolve_ordinal, short_to_long
-from bodh.teacher import (
+from bodh.judge import (
+    Judge,
     JudgmentIn,
-    Teacher,
     Verdict,
     _fmt_date,
     _mentions_cache_ttl,
@@ -33,16 +33,16 @@ def _v(n, dupe=None, flags=()):
 
 def test_dupe_must_point_to_an_earlier_article():
     ids = [short_to_long(i) for i in range(1, 5)]
-    by = Teacher._by_article([_v(1, dupe=2), _v(2, dupe=1), _v(3, dupe=3, flags=["duplicate"]), _v(4, dupe=2)], ids)
+    by = Judge._by_article([_v(1, dupe=2), _v(2, dupe=1), _v(3, dupe=3, flags=["duplicate"]), _v(4, dupe=2)], ids)
     assert by[ids[0]].dupe_of is None and by[ids[0]].flags == []        # points forward: dropped, the original stands
     assert by[ids[1]].dupe_of == ids[0]                                  # the mutual pair: the later copy is the dupe
     assert by[ids[2]].dupe_of is None and by[ids[2]].flags == []        # points at itself: dropped, flag too
     assert by[ids[3]].dupe_of is None                                    # points at a dupe, not an original: dropped
     # a chain: 3 is a dupe of 2, so 4 may not be a dupe of 3 (it would point at a copy)
-    by = Teacher._by_article([_v(2), _v(3, dupe=2), _v(4, dupe=3)], ids)
+    by = Judge._by_article([_v(2), _v(3, dupe=2), _v(4, dupe=3)], ids)
     assert by[ids[2]].dupe_of == ids[1] and by[ids[3]].dupe_of is None
     # verdicts arrive in any order; the batch order decides
-    by = Teacher._by_article([_v(4, dupe=1), _v(1)], ids)
+    by = Judge._by_article([_v(4, dupe=1), _v(1)], ids)
     assert by[ids[3]].dupe_of == ids[0]
 
 
@@ -70,7 +70,7 @@ def test_adapt_to_error_word_boundaries():
 
 
 def test_prompt_home_flag_follows_the_config(cfg, conn):
-    from bodh.teacher import Teacher, fill_prompt, load_prompt
+    from bodh.judge import Judge, fill_prompt, load_prompt
 
     class StubLLM:
         plain_json = False
@@ -83,12 +83,12 @@ def test_prompt_home_flag_follows_the_config(cfg, conn):
     cfg.judge.home_angle = ""
     assert "home (" not in fill_prompt(raw, cfg) and "<<" not in fill_prompt(raw, cfg)
     cfg.judge.home_angle = "India"
-    text = Teacher(cfg, StubLLM(), conn).system_text  # type: ignore[arg-type]
+    text = Judge(cfg, StubLLM(), conn).system_text  # type: ignore[arg-type]
     assert "home (an angle on the student's home ground, India)" in text and "<<" not in text
     assert "outside the student's own field" in text
     cfg.judge.home_angle = "  "   # whitespace is off, like "": no flag in the prompt, no bonus in compose
     assert cfg.model_validate(cfg.model_dump()).judge.home_angle == ""
-    from bodh.teacher import normalize_flags
+    from bodh.judge import normalize_flags
 
     assert normalize_flags(["india_angle", "funding_round_non_infra", "primary_source"]) == ["home_angle", "funding_offfield", "primary_source"]
     assert normalize_flags(None) == []

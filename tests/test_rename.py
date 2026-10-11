@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from bodh import __version__, control
+from bodh import __version__, jobs
 from bodh.cli import app
 from bodh.config import Config, find_root
 
@@ -46,14 +46,14 @@ def test_old_home_variable_still_works_with_a_warning(tmp_path, monkeypatch, cap
 def test_log_file_is_the_new_folder_on_a_mac_and_data_logs_elsewhere(tmp_path, monkeypatch):
     """The old ~/Library/Logs/triage is not kept: the installers create the new folder before
     any run, so keeping the old one would have split the logs across two folders."""
-    from bodh import ops
+    from bodh import logs
 
     home = tmp_path / "home"
     (home / "Library" / "Logs" / "triage").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    assert ops.log_file(tmp_path / "data") == home / "Library" / "Logs" / "bodh" / "bodh.log"
+    assert logs.log_file(tmp_path / "data") == home / "Library" / "Logs" / "bodh" / "bodh.log"
     monkeypatch.setenv("HOME", str(tmp_path / "nohome"))
-    assert ops.log_file(tmp_path / "data") == tmp_path / "data" / "logs" / "bodh.log"
+    assert logs.log_file(tmp_path / "data") == tmp_path / "data" / "logs" / "bodh.log"
 
 
 def test_the_owners_files_are_not_tracked():
@@ -75,11 +75,11 @@ def test_old_command_name_runs_with_a_note():
 
 def test_installer_migrates_the_old_labels_and_names_match_the_code():
     installer = (ROOT / "install-launchd.sh").read_text(encoding="utf-8")
-    for old in control.OLD_JOBS:
+    for old in jobs.OLD_JOBS:
         assert old in installer, old
     loop = next(line for line in installer.splitlines() if line.startswith("for job in "))
-    assert [w.strip(";") for w in loop.split()[3:-1]] == list(control.JOBS.values())
-    for label in control.JOBS.values():
+    assert [w.strip(";") for w in loop.split()[3:-1]] == list(jobs.JOBS.values())
+    for label in jobs.JOBS.values():
         assert (ROOT / "launchd" / f"{label}.plist").exists()
     assert "com.antriksh" not in "".join(p.read_text(encoding="utf-8") for p in (ROOT / "launchd").glob("*.plist"))
 
@@ -87,7 +87,7 @@ def test_installer_migrates_the_old_labels_and_names_match_the_code():
 def test_stray_pattern_covers_both_command_names(tmp_path):
     import re
 
-    pattern = re.compile(control.stray_pattern(tmp_path))
+    pattern = re.compile(jobs.stray_pattern(tmp_path))
     assert pattern.search(f"{tmp_path}/.venv/bin/bodh run") and pattern.search(f"{tmp_path}/.venv/bin/triage run")
 
 
@@ -99,3 +99,21 @@ def test_version_is_single_sourced():
     except importlib.metadata.PackageNotFoundError:
         pass  # a PYTHONPATH=src run without the package installed: the file check below still holds
     assert "version" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8").split("[project.optional")[0].replace('dynamic = ["version"]', "")
+
+
+def test_old_module_names_import_with_a_deprecation_warning():
+    """`bodh.teacher`, `bodh.learner`, `bodh.cut`, `bodh.pipeline`, `bodh.control`, `bodh.panel`,
+    `bodh.bazqux` and `bodh.ops` re-export their successors for one release."""
+    import importlib
+    import warnings
+
+    pairs = {"teacher": ("judge", "Judge"), "learner": ("profiler", "weekly_rewrite"), "cut": ("cutting", "select_autocut"),
+             "pipeline": ("run", "Context"), "control": ("jobs", "stop_all"), "panel": ("console", "Console"),
+             "bazqux": ("readers.bazqux", "BazQuxClient"), "ops": ("locks", "run_lock")}
+    for old, (new, name) in pairs.items():
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sys.modules.pop(f"bodh.{old}", None)
+            shim = importlib.import_module(f"bodh.{old}")
+        assert any(issubclass(w.category, DeprecationWarning) and f"bodh.{new.split('.')[0]}" in str(w.message) for w in caught), old
+        assert getattr(shim, name) is getattr(importlib.import_module(f"bodh.{new}"), name), (old, name)

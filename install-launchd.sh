@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install the four launchd jobs for this checkout: the run (every 30 minutes), the Sunday learner
-# rewrite, the monthly report, and the control room (http://127.0.0.1:8766, kept alive).
+# Install the four launchd jobs for this checkout: the run (every 30 minutes), the Sunday profile
+# rewrite, the monthly report, and the console (http://127.0.0.1:8766, kept alive).
 #   ./install-launchd.sh            laptop: LaunchAgents in ~/Library/LaunchAgents, no sudo, run while logged in
 #   ./install-launchd.sh --daemon   an always-on Mac: LaunchDaemons in /Library/LaunchDaemons (asks for sudo)
 # Run again after moving the folder, updating the code or changing the plists; it replaces what is there.
@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 BODH_DIR="$(pwd)"
 MODE="${1:-agent}"
-PANEL_PORT=8766
+CONSOLE_PORT=8766
 case "$MODE" in
   agent|--daemon) ;;
   *) echo "usage: ./install-launchd.sh [--daemon]"; exit 2;;
@@ -73,27 +73,27 @@ for job in bodh.run bodh.weekly bodh.report bodh.console; do
   echo "installed $job"
 done
 
-# the control room should answer within a few seconds; if not, say why
-echo -n "control room: "
+# the console should answer within a few seconds; if not, say why
+echo -n "console: "
 up=""
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  if curl -s -m 2 "http://127.0.0.1:$PANEL_PORT/api/status" >/dev/null 2>&1; then up=1; break; fi
+  if curl -s -m 2 "http://127.0.0.1:$CONSOLE_PORT/api/status" >/dev/null 2>&1; then up=1; break; fi
   sleep 1
 done
 if [ -n "$up" ]; then
-  echo "http://127.0.0.1:$PANEL_PORT"
+  echo "http://127.0.0.1:$CONSOLE_PORT"
 else
-  echo "not answering on port $PANEL_PORT after 15 s"
+  echo "not answering on port $CONSOLE_PORT after 15 s"
   printed="$($SUDO launchctl print "$DOMAIN/bodh.console" 2>/dev/null || true)"
   if [ -n "$printed" ]; then
     echo "  job state: $(echo "$printed" | grep -E 'state =|last exit code|pid =' | tr -s ' ' | tr '\n' ';')"
   else
     echo "  job state: not loaded"
   fi
-  for f in "$HOME/Library/Logs/bodh/panel.err.log" "$BODH_DIR/data/panel.log"; do
+  for f in "$HOME/Library/Logs/bodh/console.err.log" "$BODH_DIR/data/console.log"; do
     [ -s "$f" ] && { echo "  $f:"; tail -5 "$f" | sed 's/^/    /'; }
   done
-  echo "  try it in the foreground to see the error: .venv/bin/bodh panel"
+  echo "  try it in the foreground to see the error: .venv/bin/bodh console"
 fi
 
 if [ "$MODE" = "--daemon" ]; then
@@ -101,4 +101,4 @@ if [ "$MODE" = "--daemon" ]; then
 else
   echo "jobs run as agents while you are logged in; see them with: launchctl print gui/$(id -u)/bodh.run"
 fi
-echo "logs: ~/Library/Logs/bodh/   status: .venv/bin/bodh status   stop everything: .venv/bin/bodh halt"
+echo "logs: ~/Library/Logs/bodh/   status: .venv/bin/bodh status   stop everything: .venv/bin/bodh stop --all"

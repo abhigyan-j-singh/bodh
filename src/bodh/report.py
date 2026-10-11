@@ -16,7 +16,7 @@ MIN_VOLUME_FOR_PROPOSAL = 40   # articles in the window, and judged ones: a feed
 
 
 def strictest_folder(cfg: Config) -> str | None:
-    """The folder with the highest automatic floor above the default (`News` in the example config),
+    """The folder with the highest cut-off above the default (`News` in the example config),
     where a high-volume, low-keep feed belongs; None when the config has no such folder."""
     best: tuple[int, str] | None = None
     for name, policy in cfg.folders.items():
@@ -39,7 +39,7 @@ def proposal(row: sqlite3.Row, cfg: Config) -> str:
         return "unsubscribe: high volume, almost everything cut, nothing read or starred"
     strict = strictest_folder(cfg)
     if strict and n >= 300 and cut > 0.6 and (row["folder"] or "") != strict:
-        return f"move to {strict}: high volume with a low keep rate; a stricter floor fits"
+        return f"move to {strict}: high volume with a low keep rate; a stricter cut-off fits"
     if star >= 0.08 or (read >= 0.3 and mean >= 60):
         return "consider protecting: you read or star an unusual share of it"
     return ""
