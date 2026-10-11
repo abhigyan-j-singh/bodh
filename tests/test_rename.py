@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from viveka import __version__, control
@@ -42,17 +43,27 @@ def test_old_home_variable_still_works_with_a_warning(tmp_path, monkeypatch, cap
     assert caplog.text == ""
 
 
-def test_log_file_keeps_an_existing_old_folder(tmp_path, monkeypatch):
+def test_log_file_is_the_new_folder_on_a_mac_and_data_logs_elsewhere(tmp_path, monkeypatch):
+    """The old ~/Library/Logs/triage is not kept: the installers create the new folder before
+    any run, so keeping the old one would have split the logs across two folders."""
     from viveka import ops
 
     home = tmp_path / "home"
     (home / "Library" / "Logs" / "triage").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    assert ops.log_file(tmp_path / "data") == home / "Library" / "Logs" / "triage" / "viveka.log"
-    (home / "Library" / "Logs" / "viveka").mkdir()
     assert ops.log_file(tmp_path / "data") == home / "Library" / "Logs" / "viveka" / "viveka.log"
     monkeypatch.setenv("HOME", str(tmp_path / "nohome"))
     assert ops.log_file(tmp_path / "data") == tmp_path / "data" / "logs" / "viveka.log"
+
+
+def test_the_owners_files_are_not_tracked():
+    """config.yaml is the owner's, like .env and profile/; the one-person prompt is gone."""
+    tracked = subprocess.run(["git", "ls-files", "config.yaml", "src/viveka/prompts", ".gitignore"],
+                             capture_output=True, text=True, cwd=str(ROOT)).stdout.split()
+    if ".gitignore" not in tracked:
+        pytest.skip("not a git checkout")
+    assert "config.yaml" not in tracked and "src/viveka/prompts/teacher.v1.md" not in tracked, tracked
+    assert "/config.yaml" in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
 
 
 def test_old_command_name_runs_with_a_note():

@@ -26,7 +26,7 @@ This file is the overview and the install; `RUNBOOK.md` is the operator's sheet.
 | `config.example.yaml`, `.env.example`, `profile.example/` | Templates; `./install.sh` copies them to `config.yaml`, `.env`, `profile/` | yes |
 | `contrib/` | Scripts outside the package: `replay_archive.py` judges another filter's archive offline | yes |
 | `shortcuts/` | The Prune button: an Apple Shortcut over SSH | yes |
-| `config.yaml` | Your folders, floors, models, budget | yes (nothing secret in it) |
+| `config.yaml` | Your folders, floors, models, budget | never (yours; `config.example.yaml` is the template) |
 | `.env` | BazQux password, Anthropic key, heartbeat URL | never |
 | `profile/` | Your seed and learner model, with their own git history | never |
 | `data/`, `dashboard/` | The SQLite cache, logs, the rendered dashboard | never |
@@ -102,7 +102,7 @@ In BazQux, before relying on it:
 4. **Enforce.** Set `cut.enforce: true` and `cut.default_floor: 25`. The floor removes clear junk; you
    prune to 40 with the Shortcut or `viveka prune` whenever the list is long.
 5. **Raise the bar.** After a week, set the floor to the boundary you have been choosing (the dashboard
-   shows it), set `Firehose` to 70, act on the first feed report. From then on: weekly note on Sundays,
+   shows it), give the firehose folders their own floor in `cut.folders`, act on the first feed report. From then on: weekly note on Sundays,
    feed report on the 1st, seed reviewed when your priorities change.
 
 ## Cost

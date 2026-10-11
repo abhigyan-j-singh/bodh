@@ -383,8 +383,8 @@ def test_installer_rejects_unknown_mode_and_plists_parse():
         with (root / "launchd" / f"{label}.plist").open("rb") as fh:
             plist = plistlib.load(fh)
         assert plist["Label"] == label
-        if label.endswith(".panel"):
+        if label.endswith(".console"):
             assert plist["KeepAlive"] is True and plist["ThrottleInterval"] == 60
     ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
-    for personal in (".env", "data/", "profile/", "dashboard/", "/prompts/", ".coverage", ".mypy_cache/"):
+    for personal in (".env", "/config.yaml", "data/", "profile/", "dashboard/", "/prompts/", ".coverage", ".mypy_cache/"):
         assert personal in ignored, personal
