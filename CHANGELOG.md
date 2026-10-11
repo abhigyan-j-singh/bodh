@@ -143,6 +143,36 @@ of the aliases go away in the release after 1.0.0.
 
 ### Added
 
+- Models from five providers. Every role (`models.judge`, `models.reviewer`, `models.profiler`,
+  `catch_up.model`) takes `provider/model-id`: `anthropic` (a bare id still means Anthropic, so
+  an old `config.yaml` reads the same), `openai` (the Responses API, the Batch API, structured
+  outputs), `gemini` (`generateContent` with a response schema, the batch API), `openrouter`
+  (Chat Completions, no batch), and `openai-compatible` for Ollama, llama.cpp, vLLM or LM Studio
+  (the base URL selects it; with every role local nothing leaves the machine). Each provider
+  is one file under `src/bodh/providers/` behind one interface; the contract suite runs the
+  same twelve behaviours over all five. The database stores and `models.prices_per_mtok` is
+  keyed by the same name (`claude-sonnet-5-5`, `openai/gpt-5-mini`). `docs/models.md`.
+- `bodh keys [list|set <provider>]`: which keys are set, never a value; `set` reads the key
+  with hidden input and writes `.env` owner-only, or the system keychain with `--keychain`
+  (`pip install bodh[keychain]`). Keys are looked up in `.env`, then the environment, then the
+  keychain. `bodh doctor` names the missing key per provider and the roles that need it.
+- `bodh models [list|compare --with provider/model]`: the roles, the keys present, the prices,
+  the capabilities; `compare` judges a sample of already-judged unread articles with the judge
+  and a second model and prints the band agreement, the mean difference, the largest
+  disagreements with both lessons, the cost per 1,000 and the seconds per article. Nothing
+  stored changes but the costs (purpose `compare`).
+- `bodh run --rejudge` and `bodh catch-up --rejudge`: the judge reads again everything another
+  model judged, whatever it rated (the standing rule re-judges only what was rated
+  `catch_up.rejudge_at` or more). `catch-up --rejudge` is the judge's pass, not the quick judge's.
+- The dashboard's calibration section gains a table by the model that judged, when two models
+  have each judged twenty or more articles in the last thirty days: how many, the mean score,
+  how often their articles were read or starred, the grades for and against.
+- A per-run circuit breaker: five failed model calls in a row stop the judging for that run
+  (the provider is down, or the prompt is broken for that model); the rest stays pending, the
+  run is still ok and its summary says why; a catch-up stops after that round instead of
+  spinning on a dead provider.
+- `bodh progress` says when a model's spend is an estimate (its service reports no token
+  counts; four characters a token).
 - `bodh backup`: a copy of the database with `VACUUM INTO` under `data/backups/`, seven kept;
   the run makes one a day on its own; `bodh doctor` reports how many and the newest.
 - `bodh rebuild [--dry-run]`: after a lost database, the band tags, the cut tag and the stars

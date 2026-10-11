@@ -32,7 +32,7 @@ import typer
 from . import __version__, dashboard, feedback, logs, profiler, recovery, report, store
 from . import cutting as cutmod
 from . import run as runmod
-from .config import Config, Secrets, load_config, load_secrets
+from .config import Config, Secrets, keychain_set, load_config, load_secrets, write_env_value
 from .errors import BodhError, ConfigError, LockedError
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
@@ -123,7 +123,7 @@ def doctor(
             typer.echo(f"   {key} = {value!r}  ({source})")
     _doctor_profile(cfg, problem)
     _doctor_prompts(cfg, problem)
-    _doctor_secrets(secrets, problem)
+    _doctor_secrets(secrets, problem, cfg)
     conn = store.connect(cfg.db_path)
     _doctor_database(cfg, conn, problem)
     if live and not problems:
@@ -200,17 +200,40 @@ def _doctor_prompts(cfg: Config, problem: Any) -> None:
             problem(f"prompt {name}: MISSING ({exc}; looked in {PROMPTS_DIR})")
 
 
-def _doctor_secrets(secrets: Secrets, problem: Any) -> None:
+def _doctor_secrets(secrets: Secrets, problem: Any, cfg: Config | None = None) -> None:
+    from .llm import secret_field
+    from .providers.base import REQUIRED_SECRET, ModelRef
+
     if secrets.is_set("bazqux_email") and secrets.is_set("bazqux_password"):
         typer.echo("bazqux credentials: set")
     else:
         problem("bazqux credentials: MISSING (BAZQUX_EMAIL, BAZQUX_PASSWORD in .env)")
-    if secrets.is_set("anthropic_api_key"):
-        typer.echo("anthropic key: set")
-    else:
-        problem("anthropic key: MISSING (ANTHROPIC_API_KEY in .env)")
+    roles = (
+        [
+            ("judge", cfg.models.judge),
+            ("reviewer", cfg.models.reviewer),
+            ("profiler", cfg.models.profiler),
+            ("quick judge", cfg.catch_up.model),
+        ]
+        if cfg is not None
+        else [("judge", "claude-sonnet-5-5")]
+    )
+    needed: dict[str, list[str]] = {}
+    for role, model in roles:
+        needed.setdefault(ModelRef.parse(model).provider, []).append(role)
+    for provider, used_by in needed.items():
+        name = REQUIRED_SECRET[provider]
+        if secrets.is_set(secret_field(provider)):
+            typer.echo(f"{provider} key: set ({', '.join(used_by)})")
+        else:
+            problem(f"{provider} key: MISSING ({name} in .env; used by the {', '.join(used_by)})")
     hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     typer.echo(f"heartbeat url: {hb}")
+    unpriced = [m for _r, m in roles if cfg is not None and not cfg.models.has_price(m)]
+    if unpriced:
+        typer.echo(
+            f"unpriced models (charged as the dearest known until models.prices_per_mtok names them): {sorted(set(unpriced))}"
+        )
 
 
 def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
@@ -316,6 +339,9 @@ def run(
     workers: int | None = typer.Option(
         None, "--workers", help="Model calls running at once (--sync); default from config."
     ),
+    rejudge: bool = typer.Option(
+        False, "--rejudge", help="Have the judge read again every unread article another model judged."
+    ),
     verbose: bool = VERBOSE,
 ) -> None:
     """One full pass. This is what launchd runs every 30 minutes."""
@@ -332,6 +358,7 @@ def run(
                 enforce=(ctx.cfg.autocut.enabled and not shadow),
                 workers=workers,
                 sync=sync,
+                rejudge=rejudge,
             )
     except AlreadyRunning:
         typer.echo("another run is in progress; skipping")
@@ -414,6 +441,11 @@ def catch_up(
         None, "--max-seconds", help="Start no new call after this long; run again to continue."
     ),
     yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    rejudge: bool = typer.Option(
+        False,
+        "--rejudge",
+        help="The judge (not the quick judge) also reads what other models judged, whatever they rated.",
+    ),
     verbose: bool = VERBOSE,
 ) -> None:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous, many
@@ -427,8 +459,11 @@ def catch_up(
     cfg.check_about()
     if all_ages:
         cfg.limits.max_age_days = None
-    judge = model or cfg.catch_up.model
-    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget, yes)
+    judge = model or (cfg.models.judge if rejudge else cfg.catch_up.model)
+    if rejudge and not same_model(judge, cfg.models.judge):
+        _fail(f"--rejudge is the judge's pass ({cfg.models.judge}): drop --model, or name the judge")
+        return
+    pending = _catch_up_preview(ctx, judge, workers, all_ages, budget, yes, rejudge)
     if pending == 0:
         return
     show = _catch_up_progress_line(pending, time.monotonic())
@@ -443,6 +478,7 @@ def catch_up(
                 on_progress=show,
                 model=judge,
                 max_seconds=max_seconds,
+                rejudge=rejudge,
             )
     except AlreadyRunning:
         _fail("another run is in progress; wait for it (or `bodh schedule pause`) and try again", 5)
@@ -470,15 +506,24 @@ def _catch_up_progress_line(pending: int, started: float) -> Any:
 
 
 def _catch_up_preview(
-    ctx: runmod.Context, judge: str, workers: int, all_ages: bool, budget: float | None, yes: bool
+    ctx: runmod.Context,
+    judge: str,
+    workers: int,
+    all_ages: bool,
+    budget: float | None,
+    yes: bool,
+    rejudge_all: bool = False,
 ) -> int:
     """How many articles are pending and what the pass will cost, then the confirmation unless
     `yes`; 0 when there is nothing to do."""
     from .judge import Judge
+    from .providers.base import model_name
 
     cfg = ctx.cfg
     quick = not same_model(judge, cfg.models.judge)
     rejudge = None if quick else Judge.rejudge_rule(cfg)
+    if rejudge_all and not quick:
+        rejudge = (model_name(judge), 0.0)
     pending = store.unscored_unread_count(
         ctx.conn,
         cfg.judge.prompt_version,
@@ -528,6 +573,8 @@ def _catch_up_report(total: dict[str, Any]) -> None:
         typer.echo("time limit reached; run again to continue")
     if total["budget_stop"]:
         typer.echo("stopped at the daily budget; pass --budget to raise it for today")
+    if total.get("halted"):
+        typer.echo(f"{total['halted']}; check the provider's status page and run again later")
     if total["failed"] and total["pending"]:
         typer.echo("some calls were refused (rate limits); run again, or with fewer --workers")
 
@@ -660,6 +707,104 @@ def rebuild(
     with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "rebuild"), graceful_sigterm():
         stats = recovery.rebuild(ctx, dry_run=dry_run)
     typer.echo(recovery.summary(stats))
+
+
+@app.command()
+@_handled
+def keys(
+    action: str = typer.Argument("list", help="list, or set <provider>"),
+    provider: str | None = typer.Argument(
+        None, help="anthropic, openai, gemini, openrouter or openai-compatible"
+    ),
+    keychain: bool = typer.Option(
+        False, "--keychain", help="Store in the system keychain instead of .env (pip install bodh[keychain])."
+    ),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Which provider keys are set (never a value, never a prefix), or set one: `bodh keys set openai`
+    asks for it with hidden input and writes .env with owner-only permissions (`--keychain` for the
+    system keychain). The lookup order is .env, then the environment, then the keychain."""
+    from .llm import secret_field
+    from .providers.base import PROVIDERS, REQUIRED_SECRET
+
+    cfg = _config()
+    if action == "list":
+        secrets = load_secrets(cfg.root)
+        for name in PROVIDERS:
+            needed = REQUIRED_SECRET[name]
+            state = "set" if secrets.is_set(secret_field(name)) else "not set"
+            extra = ""
+            if name == "openai-compatible":
+                extra = " (the base URL; OPENAI_COMPATIBLE_API_KEY is optional)"
+            typer.echo(f"{name:<18} {needed:<28} {state}{extra}")
+        return
+    if action != "set" or not provider:
+        _fail("say `bodh keys list` or `bodh keys set <provider>`")
+        return
+    if provider not in PROVIDERS:
+        _fail(f"unknown provider {provider!r}; one of {', '.join(PROVIDERS)}")
+        return
+    env_name = PROVIDERS[provider]
+    value = typer.prompt(f"{env_name}", hide_input=True, default="", show_default=False).strip()
+    if not value:
+        _fail("nothing entered; the key is unchanged")
+        return
+    if keychain:
+        keychain_set(env_name, value)
+        typer.echo(f"{env_name}: stored in the keychain ({len(value)} characters)")
+    else:
+        path = write_env_value(cfg.root, env_name, value)
+        typer.echo(f"{env_name}: written to {path} ({len(value)} characters, owner-only)")
+    if provider == "openai-compatible":
+        url = typer.prompt(
+            "OPENAI_COMPATIBLE_BASE_URL (where the service is, e.g. http://localhost:11434/v1)", default=""
+        ).strip()
+        if url:
+            write_env_value(cfg.root, "OPENAI_COMPATIBLE_BASE_URL", url)
+            typer.echo(f"OPENAI_COMPATIBLE_BASE_URL: written to {cfg.root / '.env'}")
+
+
+@app.command()
+@_handled
+def models(
+    action: str = typer.Argument("list", help="list, or compare"),
+    with_model: str | None = typer.Option(
+        None, "--with", help="compare: the second model, as provider/model-id."
+    ),
+    sample: int = typer.Option(
+        50, "--sample", min=1, max=500, help="compare: how many judged unread articles to re-judge."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="compare: skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """The roles and their models, the providers with keys present, the prices and the
+    capabilities (`list`); or `compare --with provider/model`: judge a sample of already-judged
+    unread articles with a second model and print the band agreement, the mean difference, the
+    largest disagreements, the cost per 1,000 and the seconds per article for both."""
+    from . import comparing
+
+    if action == "list":
+        cfg = _config()
+        typer.echo(comparing.render_models(cfg, load_secrets(cfg.root)))
+        return
+    if action != "compare":
+        _fail("say `bodh models list` or `bodh models compare --with provider/model`")
+        return
+    if not with_model:
+        _fail("compare needs --with provider/model-id")
+        return
+    ctx = _ctx(verbose)
+    plan = comparing.plan(ctx, with_model, sample)
+    typer.echo(plan["preview"])
+    if plan["n"] == 0:
+        return
+    if not yes and not typer.confirm("Judge them with both models?"):
+        raise typer.Exit(0)
+    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "compare"), graceful_sigterm():
+        result = comparing.compare(
+            ctx, with_model, sample, on_progress=lambda d, t: typer.echo(f"  {d}/{t}", err=True)
+        )
+    typer.echo(comparing.render_comparison(result))
 
 
 @app.command("eval")

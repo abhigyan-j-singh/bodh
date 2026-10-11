@@ -95,6 +95,34 @@ def test_model_outage_mid_run_keeps_what_was_judged(cfg, conn):
     assert res.scored == 4 and res.pending == 0
 
 
+def test_five_failed_calls_in_a_row_stop_the_judging(cfg, conn):
+    """The provider is down: after five failed calls in a row no further call is made, the
+    articles stay pending, the run is ok and its summary says why. A catch-up stops after
+    the round that tripped the breaker instead of spinning on a dead provider. Once the
+    provider is back the next run judges everything."""
+    cfg.models.batch = False
+    cfg.judge.articles_per_call = 1
+    titles = [f"plain {n}" for n in range(9)]
+    client = FakeReader(_items(titles))
+    ctx = _ctx(cfg, conn, client)
+    ctx.llm.api.fail_with = api_error(anthropic.InternalServerError, "overloaded", 500)
+    res = run.run(ctx, enforce=False, workers=1)
+    assert res.ok and res.scored == 0 and res.pending == 9
+    assert len(ctx.llm.api.calls) == 5  # the sixth was never sent
+    assert "5 model calls failed in a row; the judging stopped" in res.summary()
+    assert "5 batch(es) failed and stay pending" in res.summary()
+    assert client.tagged == [] and conn.execute("SELECT COUNT(*) FROM costs").fetchone()[0] == 0
+    # a catch-up on the dead provider: one round, then it stops and says so
+    total = run.catch_up(ctx, workers=1, chunk=100)
+    assert total["rounds"] == 1 and total["halted"].startswith("5 model calls failed")
+    assert len(ctx.llm.api.calls) == 10 and total["pending"] == 9
+    assert "stopped: 5 model calls failed in a row" in store.last_runs(conn, 1)[0]["summary"]
+    # the provider is back: everything is judged on the next run
+    ctx.llm.api.fail_with = None
+    res = run.run(ctx, enforce=False, workers=2)
+    assert res.scored == 9 and res.pending == 0 and "failed in a row" not in res.summary()
+
+
 def test_crash_between_the_tag_and_the_read_mark_is_finished_next_run(cfg, conn):
     """The cut tag is written, then BazQux fails before the read mark: the run fails, the
     article stays tagged and unread, and the next run marks it read without re-judging."""

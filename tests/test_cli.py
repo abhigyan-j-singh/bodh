@@ -33,7 +33,17 @@ SECRET_SHAPES = [
     re.compile(p)
     for p in (r"sk-ant-[A-Za-z0-9_-]{8,}", r"[\w.+-]+@[\w-]+\.[\w.-]+", r"GoogleLogin auth=", r"Passwd=")
 ]
-SECRET_ENV = ("BAZQUX_EMAIL", "BAZQUX_PASSWORD", "ANTHROPIC_API_KEY", "HEALTHCHECK_URL")
+SECRET_ENV = (
+    "BAZQUX_EMAIL",
+    "BAZQUX_PASSWORD",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_BASE_URL",
+    "HEALTHCHECK_URL",
+)
 ENV_FILE = (
     "BAZQUX_EMAIL=reader@example.com\nBAZQUX_PASSWORD=hunter2\nANTHROPIC_API_KEY=sk-ant-test-key-0123456789\n"
 )
@@ -992,6 +1002,8 @@ def test_label_bad_id_and_verbose_everywhere(tmp_path, monkeypatch):
         ["weekly", "-v"],
         ["report", "-v"],
         ["dashboard", "-v"],
+        ["keys", "-v"],
+        ["models", "-v"],
     ):
         result = invoke(args)
         assert "No such option" not in result.output, (args, result.output)

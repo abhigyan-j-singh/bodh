@@ -45,7 +45,10 @@ and writes tags and read marks; a provider is anything that answers a judgment r
 synchronously or in a batch. Each has a contract suite in `tests/contracts/`, parametrised over
 the implementations: add yours to the fixture's list and make it pass against a fake of its
 own service (never the live one). The suite is what "works" means here; a reader or provider
-that cannot pass it is not accepted, and one that passes needs no further argument.
+that cannot pass it is not accepted, and one that passes needs no further argument. For a
+provider the steps are in `docs/models.md` ("Adding a provider"): one file under
+`src/bodh/providers/`, a line each in `make_provider`, `PROVIDERS` and `REQUIRED_SECRET`, a
+secret field, a fake of the service in `tests/fakes.py`, and the suite's list.
 
 ## What the mutation run found
 

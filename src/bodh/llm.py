@@ -5,6 +5,7 @@ The providers themselves live in `providers/`."""
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -62,6 +63,7 @@ class LLM:
         self._providers: dict[str, Provider] = {}
         self._schema = _output_schema()
         self._retries: int | None = None
+        self._estimated: set[str] = set(store.estimated_usage_models(self.conn))
         for role, text in (
             ("models.judge", cfg.models.judge),
             ("models.reviewer", cfg.models.reviewer),
@@ -187,8 +189,13 @@ class LLM:
         self, run_id: int | None, model: str, purpose: str, usage: Any, discount: float = 1.0
     ) -> float:
         counts, usd = self.cost(model, usage, discount)
+        name = ModelRef.parse(model).name
         with self._lock:
-            store.record_cost(self.conn, run_id, ModelRef.parse(model).name, purpose, counts, usd)
+            store.record_cost(self.conn, run_id, name, purpose, counts, usd)
+            if isinstance(usage, Usage) and usage.estimated and name not in self._estimated:
+                # the provider reported no token counts: the views say the spend is an estimate
+                self._estimated.add(name)
+                store.kv_set(self.conn, store.ESTIMATED_USAGE_KEY, json.dumps(sorted(self._estimated)))
         return usd
 
     # -- request shapes -------------------------------------------------------

@@ -141,6 +141,7 @@ SCHEMA_VERSION_KEY = "schema_version"
 PHASE_KEY = "run_phase"  # what the run in progress is doing, for the live views
 PLAIN_JSON_KEY = "provider.plain_json"  # "1" once the judge's model rejected structured outputs
 CACHE_TTL_KEY = "provider.cache_ttl"  # "5m" once the API rejected the 1-hour prompt cache
+ESTIMATED_USAGE_KEY = "llm.estimated_usage_models"  # JSON list: models whose provider reports no token counts, so their spend is estimated
 SAFETY_KEY = "safety_tripped"  # the run whose autocut tripped the safety limit; set until `bodh safety reset`
 LEGACY_SAFETY_KEY = "breaker_tripped"  # the key before October 2026, kept in step: a rollback to the old code must still see the trip
 OLD_KV_KEYS = {"phase": PHASE_KEY, "plain_json": PLAIN_JSON_KEY}
@@ -959,6 +960,15 @@ def learned_versions(conn: sqlite3.Connection, n: int = 5) -> list[sqlite3.Row]:
 def kv_get(conn: sqlite3.Connection, key: str, default: str | None = None) -> str | None:
     row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
     return row[0] if row else default
+
+
+def estimated_usage_models(conn: sqlite3.Connection) -> list[str]:
+    """The models whose spend is an estimate: their provider reported no token counts."""
+    try:
+        found = json.loads(kv_get(conn, ESTIMATED_USAGE_KEY) or "[]")
+    except (ValueError, sqlite3.Error):
+        return []
+    return [str(m) for m in found] if isinstance(found, list) else []
 
 
 def kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:

@@ -100,6 +100,40 @@ def calibration(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return out
 
 
+BY_MODEL_MIN_N = 20  # a model with fewer judgments in the window has no row: too few to read anything into
+
+
+def by_model(conn: sqlite3.Connection, days: int = 30, min_n: int = BY_MODEL_MIN_N) -> list[dict[str, Any]]:
+    """Per model that judged at least `min_n` articles in the window: how many, the mean score,
+    the share of its unread-for-a-day articles that were read or starred, and the student's
+    grades for and against. Empty when one model judged everything: the main tables say it all."""
+    since = store.days_ago_iso(days)
+    rows = conn.execute(
+        """SELECT s.model, COUNT(*) n, AVG(s.score) mean_score,
+                  SUM(EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = s.article_id AND f.kind = 'read')) was_read,
+                  SUM(EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = s.article_id AND f.kind = 'star')) was_starred,
+                  SUM(EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = s.article_id AND f.kind IN ('great', 'good'))) liked,
+                  SUM(EXISTS(SELECT 1 FROM feedback f WHERE f.article_id = s.article_id AND f.kind IN ('meh', 'bad'))) disliked
+           FROM scores s WHERE s.scored_at >= ? AND s.model NOT IN ('dedup', 'rebuilt')
+           GROUP BY s.model HAVING COUNT(*) >= ? ORDER BY n DESC""",
+        (since, min_n),
+    ).fetchall()
+    if len(rows) < 2:
+        return []
+    return [
+        {
+            "model": r["model"],
+            "n": int(r["n"]),
+            "mean_score": round(float(r["mean_score"] or 0), 1),
+            "read_share": int(r["was_read"] or 0) / int(r["n"]),
+            "star_share": int(r["was_starred"] or 0) / int(r["n"]),
+            "liked": int(r["liked"] or 0),
+            "disliked": int(r["disliked"] or 0),
+        }
+        for r in rows
+    ]
+
+
 def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
     """The student's grades against the judge's bands: for each band, how many articles the
     student marked great, good, meh or bad in the window. Calibration from the student's own hand."""
@@ -276,6 +310,7 @@ def data(cfg: Config, conn: sqlite3.Connection) -> dict[str, Any]:
         "now": datetime.now(tz),
         "flow": flow(conn, tz),
         "calibration": calibration(conn),
+        "by_model": by_model(conn, min_n=BY_MODEL_MIN_N),
         "verdicts": verdicts(conn),
         "disagreements": disagreements(conn),
         "near_misses": near_misses(conn),
@@ -347,11 +382,33 @@ def _section_calibration(d: dict[str, Any]) -> str:
         "Higher bands should be read more. If 50 to 69 is read as often as 70 to 89, "
         "the mix of sub-scores in config.yaml is wrong."
     )
-    return ui.section(
-        "Calibration: how often each band gets read",
-        ui.table(["Band", ("Left unread", "num"), ("Read", "num"), ("Starred", "num")], rows)
-        + ui.muted(note),
-    )
+    inner = ui.table(["Band", ("Left unread", "num"), ("Read", "num"), ("Starred", "num")], rows)
+    if d.get("by_model"):
+        mrows = [
+            [
+                _e(m["model"]),
+                str(m["n"]),
+                f"{m['mean_score']:.0f}",
+                _pct(m["read_share"]),
+                _pct(m["star_share"]),
+                str(m["liked"]),
+                str(m["disliked"]),
+            ]
+            for m in d["by_model"]
+        ]
+        inner += "<p>By the model that judged, last 30 days:</p>" + ui.table(
+            [
+                "Model",
+                ("Judged", "num"),
+                ("Mean", "num"),
+                ("Read", "num"),
+                ("Starred", "num"),
+                ("great+good", "num"),
+                ("meh+bad", "num"),
+            ],
+            mrows,
+        )
+    return ui.section("Calibration: how often each band gets read", inner + ui.muted(note))
 
 
 def _section_verdicts(d: dict[str, Any]) -> str:

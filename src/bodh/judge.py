@@ -58,6 +58,7 @@ log = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 BATCH_WAIT_MINUTES = 60  # a half-empty batch is still submitted once its oldest article has waited this long
+CIRCUIT_BREAKER_FAILURES = 5  # synchronous calls failed in a row before the phase stops on its own
 BATCH_LOST_HOURS = 26  # the API expires a batch after 24h; one never seen to end by then is given up on
 
 
@@ -134,6 +135,12 @@ class _Feeder:
         self.running: set[Any] = set()
         self.budget_hit = False
         self.stopped_early = False
+        self.halted = ""  # why the feeder stopped submitting on its own (the circuit breaker)
+
+    def halt(self, reason: str) -> None:
+        """Submit nothing more; what is running finishes and is absorbed."""
+        self.halted = reason
+        self.queue.clear()
 
     def feed(self) -> None:
         while self.queue and len(self.running) < self.workers:
@@ -303,7 +310,7 @@ class Judge:
         scored stays pending for the next run. ``on_progress(stats)`` is called after every
         batch that lands; past ``stop_after`` (a time.monotonic() value) no new call starts.
         Returns stats."""
-        stats = {
+        stats: dict[str, Any] = {
             "scored": 0,
             "dupes": 0,
             "failed_batches": 0,
@@ -312,6 +319,8 @@ class Judge:
             "pending_after": 0,
             "total": 0,
             "stopped_early": False,
+            "consecutive_failures": 0,
+            "halted": "",
         }
         todo, stats["dupes"] = self.pending_rows(limit, exclude_inflight=True)  # a batch may hold some
         stats["total"] = len(todo)
@@ -330,12 +339,20 @@ class Judge:
             while feeder.running:
                 done, batch = feeder.next_done()
                 self._absorb_future(done, batch, stats, on_progress, len(todo))
+                if stats["consecutive_failures"] >= CIRCUIT_BREAKER_FAILURES and not feeder.halted:
+                    # the provider is down or the prompt is broken for this model: five failed calls
+                    # in a row stop the phase; the articles stay pending and the run records why
+                    feeder.halt(
+                        f"{CIRCUIT_BREAKER_FAILURES} model calls failed in a row; the judging stopped"
+                    )
+                    log.error("judge: %s", feeder.halted)
                 feeder.feed()  # after the absorb: a rejection or an interrupt must not let one more call out
         finally:
             # a rejected key or model id, a timeout, Ctrl-C: whatever is queued is never sent
             pool.shutdown(wait=True, cancel_futures=True)
         stats["budget_stop"] = stats["budget_stop"] or feeder.budget_hit
         stats["stopped_early"] = stats["stopped_early"] or feeder.stopped_early
+        stats["halted"] = feeder.halted
         stats["pending_after"] = self.pending_count(exclude_inflight=True)
         return stats
 
@@ -352,13 +369,16 @@ class Judge:
         except NoJudgments as exc:  # the model answered with nothing: counted against the articles
             stats["failed_batches"] += 1
             stats["empty_batches"] += 1
+            stats["consecutive_failures"] += 1
             store.bump_judge_failures(self.conn, [r["id"] for r in batch])
             log.warning("judge: batch of %d: %s; they stay pending", len(batch), exc)
             return
         except Exception:  # one call failed (network, a 5xx after the retries): its articles stay pending
             stats["failed_batches"] += 1
+            stats["consecutive_failures"] += 1
             log.exception("judge: batch of %d failed; they stay pending", len(batch))
             return
+        stats["consecutive_failures"] = 0
         by_id = {r["id"]: r for r in batch}
         for aid, v in verdicts.items():
             self._record(by_id[aid], v)

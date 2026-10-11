@@ -138,6 +138,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[s
         "skip_folders": cfg.unjudged_folders(),
         "teacher": cfg.models.judge,
         "budget": cfg.models.daily_budget_usd,
+        "estimated_models": store.estimated_usage_models(conn),
         **counts,
         **_money(conn, cfg),
         "folders": _folders(conn, cfg, counts["_pending_rows"], counts["_inflight_judge"]),
@@ -500,6 +501,11 @@ def _text_money(snap: dict[str, Any]) -> list[str]:
         f"Spend     today ${t['spend']:.2f} of ${snap['budget']:.2f} · 7 days ${w['spend']:.2f} · "
         f"all time ${a['spend']:.2f} · {per} · {cache}",
     ]
+    if snap.get("estimated_models"):
+        lines.append(
+            f"          spend is estimated for {', '.join(snap['estimated_models'])}: "
+            "the provider reports no token counts (4 characters a token)"
+        )
     if snap.get("series"):
         lines.append(
             "Last 3 h  "

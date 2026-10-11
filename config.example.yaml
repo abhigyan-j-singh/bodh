@@ -14,9 +14,12 @@ dashboard_dir: "./dashboard"       # index.html, the weekly note and the feed re
 obsidian_note: ""                  # also write the weekly note here, e.g. "~/Obsidian/Main/Bodh/Weekly.md";
                                    # empty writes it to dashboard_dir only
 
-models:
+models:                            # every model is provider/model-id: anthropic, openai, gemini, openrouter or
+                                   # openai-compatible (Ollama and friends); a bare id means anthropic. The provider's
+                                   # key goes in .env (`bodh keys set <provider>`); docs/models.md lists what was tested
   judge: "claude-sonnet-5-5"       # reads every article once: the judgment. Changing it re-judges every unread article
-                                   # another model rated catch_up.rejudge_at or more (the keepers rest on the judge's opinion)
+                                   # another model rated catch_up.rejudge_at or more (the keepers rest on the judge's
+                                   # opinion); `bodh run --rejudge` re-judges them all, `bodh models compare` tries one first
   reviewer: "claude-opus-5-5"      # re-reads close calls with the full text; can only save an article
   profiler: "claude-opus-5-5"      # rewrites profile/learned.md on Sundays
   batch: true                      # Message Batches API: half price; judgments arrive on the next run (30 min).
@@ -27,11 +30,16 @@ models:
   daily_budget_usd: 8.0            # judging pauses (nothing is cut) when a day's spend passes this
   est_usd_per_article: 0.001       # the budget check before a batch is submitted, before its usage is known
   prices_per_mtok:                 # input, output, cache read (USD per million tokens); cache writes 1.25x / 2x input.
+                                   # Keyed like the roles: a bare id for Anthropic, provider/model-id for the rest.
                                    # A model id not listed is charged as the dearest one here, with a warning
     claude-sonnet-5-5: [2.0, 10.0, 0.10]
     claude-opus-5-5: [4.0, 20.0, 0.20]
     claude-haiku-5-5: [0.10, 0.50, 0.01]   # the quick judge of `bodh catch-up`
     claude-haiku-4-5: [1.0, 5.0, 0.10]
+    # openai/gpt-5-mini: [0.25, 2.0, 0.025]
+    # gemini/gemini-2.5-flash: [0.30, 2.50, 0.03]
+    # openrouter/qwen/qwen3-235b: [0.20, 0.60]
+    # openai-compatible/llama3.3: [0, 0]     # a local model costs nothing per token
 
 judge:
   prompt_version: "teacher.v2"     # the judge's prompt in src/bodh/prompts/ (a ./prompts/ folder next to this
@@ -50,7 +58,7 @@ review:
   max_per_run: 50                  # synchronous runs: at most this many reviews per run
 
 catch_up:
-  model: "claude-haiku-5-5"        # the quick judge `bodh catch-up` uses unless --model says otherwise
+  model: "claude-haiku-5-5"        # the quick judge `bodh catch-up` uses unless --model says otherwise (provider/model-id)
   rejudge_at: 50                   # what the quick judge rated at least this, the judge reads again; null: never.
                                    # What it rated below stays with the quick judge's verdict: a catch-up's junk is final
 

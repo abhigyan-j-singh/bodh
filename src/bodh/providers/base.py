@@ -50,7 +50,7 @@ class ModelRef:
             raise ConfigError("a model is an empty string; name one as provider/model-id")
         head, sep, rest = text.partition("/")
         if sep and head in PROVIDERS:
-            if not rest.strip():
+            if not rest.strip() or rest.startswith("/"):
                 raise ConfigError(f"{text!r} names no model after the provider")
             return cls(head, rest.strip())
         if sep and head not in PROVIDERS:

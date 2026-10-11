@@ -6,8 +6,9 @@
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 
 Bodh (बोध: understanding, insight) keeps your BazQux unread list worth reading. A judge (Claude
-Sonnet 5.5) reads every unread article once as teaching material for you and writes its judgment:
-writing quality, what you learn, level fit, breadth, relevance. The worst are marked read in BazQux
+Sonnet 5.5 by default; any model from Anthropic, OpenAI, Google, OpenRouter or a local Ollama,
+see `docs/models.md`) reads every unread article once as teaching material for you and writes
+its judgment: writing quality, what you learn, level fit, breadth, relevance. The worst are marked read in BazQux
 itself; you choose how deep the cut goes and can run it again. Any reader that syncs with BazQux
 (NetNewsWire, Reeder, the BazQux apps) simply follows. Every machine action is a tag, every cut can
 be undone, and nothing but mark-as-read ever changes in your reader.
@@ -69,6 +70,9 @@ worked example in `profile/about.md` with yourself, and name your own folders in
 | `bodh backup` | Copy the database to `data/backups/bodh-<date>.db` (`VACUUM INTO`); seven kept. The run does this once a day on its own. |
 | `bodh rebuild [--dry-run]` | After a lost database: read the band tags, the cut tag and the stars back from BazQux, so nothing already judged is paid for again and nothing already cut is cut again. Rebuilt scores carry the band's threshold and a low confidence (autocut leaves them alone); the unread ones rated 50 or more are read again by the judge on the next runs. |
 | `bodh eval [--model] [--cap 0.50]` | Judge the sixty-article evaluation set (`evals/`) for the example student and print the agreement by band and the cost. A few cents; the figure below comes from it. |
+| `bodh keys [list\|set <provider>]` | Which provider keys are set (never a value); `set` asks for one with hidden input and writes `.env` owner-only (`--keychain` for the system keychain). |
+| `bodh models [list\|compare --with provider/model]` | The four roles with their models, prices and capabilities, and the providers with keys; `compare` judges a sample of already-judged unread articles with the judge and a second model and prints the band agreement, the largest disagreements, the cost per 1,000 and the seconds per article for both. Nothing stored changes. |
+| `bodh run --rejudge`, `bodh catch-up --rejudge` | After a switch of `models.judge`: the judge reads again everything the previous judge rated, whatever the score (by default only what it rated 50 or more is re-judged, `catch_up.rejudge_at`). |
 
 ## Install
 
@@ -80,7 +84,8 @@ path with spaces makes pip wrap the command in `/bin/sh`, which is denied first.
 ```bash
 git clone https://github.com/abhigyan-j-singh/bodh ~/bodh && cd ~/bodh
 ./install.sh                      # venv, package; config.yaml, .env and profile/ from the templates; doctor
-$EDITOR .env                      # BazQux email and password, Anthropic key (the file says where each comes from)
+$EDITOR .env                      # BazQux email and password, Anthropic key (the file says where each comes from;
+                                  # `bodh keys set <provider>` writes a key without showing it)
 $EDITOR profile/about.md          # replace the worked example with fifteen lines about you
 $EDITOR config.yaml               # your folders, what the prune keeps, the cut-off; leave autocut off for the first days
 .venv/bin/bodh doctor --live      # logs in, lists folders, calls both models once (a few cents)
@@ -132,7 +137,10 @@ before it can be cut. Unread articles older than `limits.max_age_days` (14) are 
 
 At about 1,300 arrivals a day that comes to roughly $0.65 per 1,000 judged, under a dollar a day,
 against $1.90 per 1,000 before. `bodh progress` shows the actual rate and the cache hit share;
-`models.daily_budget_usd` still caps a bad day. Trade-offs: a judgment lands 30 to 60 minutes after an
+`models.daily_budget_usd` still caps a bad day, across every provider. Another provider's model, or
+a local one that costs nothing per token, goes in `config.yaml` as `provider/model-id` with its price
+in `models.prices_per_mtok`; `bodh models compare` shows what it would judge differently before you
+switch (`docs/models.md`). Trade-offs: a judgment lands 30 to 60 minutes after an
 article arrives instead of at once (the Batches API finishes most batches within the hour), and a
 close call survives one extra run. `bodh run --sync` restores the immediate path when you want it
 (`doctor --live` always runs synchronously; `limits.parallel_calls` model calls run at once).

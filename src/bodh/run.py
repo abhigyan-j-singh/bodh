@@ -17,7 +17,7 @@ from .heartbeat import Heartbeat
 from .judge import Judge, concept_context
 from .llm import LLM
 from .profiler import expansion_topics
-from .providers.base import same_model
+from .providers.base import model_name, same_model
 from .readers.bazqux import BazQuxClient, BazQuxError
 
 log = logging.getLogger(__name__)
@@ -200,6 +200,7 @@ class _Run:
     judge: Judge | None = None
     newly_scored: set[str] = field(default_factory=set)
     budget_stop: bool = False  # the daily budget stopped the judging: this run cuts nothing
+    rejudge: bool = False  # every unread article another model judged is pending for the judge
 
     @property
     def cfg(self) -> Config:
@@ -227,11 +228,14 @@ def run(
     workers: int | None = None,
     sync: bool = False,
     stop_after: float | None = None,
+    rejudge: bool = False,
 ) -> RunResult:
     """The timer's job. ``enforce=False`` is scoring-only mode: everything but the cuts.
     ``sync=True`` waits for every model call instead of using the Batches API. No model call
     starts after ``stop_after`` (a time.monotonic() value; by default a minute short of the
-    run's limit), so the next scheduled run is not skipped because this one overran."""
+    run's limit), so the next scheduled run is not skipped because this one overran.
+    ``rejudge`` has the judge read again every unread article another model judged (after a
+    switch of ``models.judge``, on request; a switch alone re-judges nothing)."""
     cfg, conn = ctx.cfg, ctx.conn
     cfg.check_about()  # before any network: nothing is fetched or recorded for a student who does not exist
     if stop_after is None:
@@ -248,6 +252,7 @@ def run(
         workers=workers,
         stop_after=stop_after,
         live=progress.live_writer(cfg, conn),
+        rejudge=rejudge,
     )
     try:
         _collect_feedback(st)
@@ -306,6 +311,9 @@ def _judge(st: _Run) -> None:
     judge = st.judge = ctx.judge()
     if st.sync:
         judge.batch_mode = False
+    if st.rejudge:
+        judge.rejudge = (model_name(st.cfg.models.judge), 0.0)
+        res.notes.append("re-judging what other models judged (--rejudge)")
     res.batch_mode = judge.batch_mode
     before = store.scored_ids(conn)
     collected = 0
@@ -371,6 +379,8 @@ def _judge_now(st: _Run) -> None:
         res.notes.append("daily budget reached; unscored articles stay unread")
     if stats["failed_batches"]:
         res.notes.append(f"{stats['failed_batches']} batch(es) failed and stay pending")
+    if stats.get("halted"):
+        res.notes.append(stats["halted"])
 
 
 def _tag(st: _Run) -> None:
@@ -482,6 +492,7 @@ def catch_up(
     on_progress: Any = None,
     model: str | None = None,
     max_seconds: float | None = None,
+    rejudge: bool = False,
 ) -> dict[str, Any]:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, round after round until nothing is pending. Scores and tags only;
@@ -500,6 +511,11 @@ def catch_up(
     judge.batch_mode = False
     if quick:
         judge.rejudge = None
+    elif rejudge:
+        judge.rejudge = (
+            model_name(cfg.models.judge),
+            0.0,
+        )  # everything another model judged, whatever it rated
     ctx.llm.retries(8)
     run_id = store.begin_run(conn, "catch-up")
     total = _catch_up_totals(run_id, judge.pending_count(exclude_inflight=True))
@@ -544,6 +560,7 @@ def _catch_up_totals(run_id: int, pending: int) -> dict[str, Any]:
         "interrupted": False,
         "run_id": run_id,
         "timed_out": False,
+        "halted": "",
     }
 
 
@@ -582,6 +599,9 @@ def _catch_up_rounds(
         if stats["budget_stop"]:
             total["budget_stop"] = True
             return
+        if stats.get("halted"):  # five failed calls in a row: the provider is down; stop, do not spin
+            total["halted"] = stats["halted"]
+            return
         if stats["stopped_early"] or (deadline is not None and time.monotonic() > deadline):
             total["timed_out"] = True
             return
@@ -612,6 +632,7 @@ def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict[str, An
         + (", interrupted" if total["interrupted"] else "")
         + (", time limit" if total["timed_out"] else "")
         + (", budget reached" if total["budget_stop"] else "")
+        + (f", stopped: {total['halted']}" if total.get("halted") else "")
     )
     store.finish_run(
         conn,

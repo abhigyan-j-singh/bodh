@@ -377,3 +377,19 @@ dollar for a 1,300-article day; `bodh progress` shows the measured figure and th
 share. A full catch-up of 30,000 articles: $35 to $40 with Sonnet synchronous (full price), about $2.50
 with the quick judge. `models.daily_budget_usd` caps a bad day; a run the budget stopped cuts nothing,
 and nothing is ever cut because the budget ran out. The evaluation set (`bodh eval`) costs a few cents a run.
+
+## 12. Another model
+
+Every role (`models.judge`, `models.reviewer`, `models.profiler`, `catch_up.model`) takes a model
+as `provider/model-id`: `openai/gpt-5-mini`, `gemini/gemini-2.5-flash`, `openrouter/qwen/qwen3-235b`,
+or `openai-compatible/llama3.3` for an Ollama on this machine (its base URL in `.env`). The provider's
+key goes in `.env` by `bodh keys set <provider>`; `bodh keys` lists what is set, `bodh doctor` says
+which role lacks one. Before switching the judge, `bodh models compare --with provider/model` judges
+fifty already-judged unread articles with both (a few cents) and prints how far they agree, the
+largest disagreements, and what each costs per 1,000. The switch is the line in `config.yaml`; the
+judge then reads again what the old judge rated 50 or more on the next runs, or everything with
+`bodh run --rejudge`. The budget is one figure across every provider; a model without a price in
+`models.prices_per_mtok` is charged as the dearest listed; a local service that reports no token
+counts has its spend estimated and `bodh progress` says so. Five failed calls in a row (the provider
+down, the prompt broken for that model) stop the judging for that run; the rest stays pending and the
+summary says why. `docs/models.md` has the table of providers and what each can do.

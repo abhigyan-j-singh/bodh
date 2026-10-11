@@ -81,6 +81,24 @@ the real client, so it cannot drift. `tests/test_drills.py` plays the failures a
 one test each. `tests/snapshots/` holds the rendered prompts: a prompt change shows as a diff,
 `BODH_UPDATE_SNAPSHOTS=1` accepts it, and `CHANGELOG.md` says whether it re-judges.
 
+## Providers
+
+`llm.LLM` is the one door to every model: it checks at construction that the three roles'
+providers have their secret, builds a provider the first time a model of its kind is asked for
+(`make_provider`), keeps the budget and the cost accounting, and turns a request into the
+provider's shape. A provider (`providers/base.Provider`) answers a judgment, a completion and
+the three batch calls, reports its capabilities per model (batch, structured output, prompt
+cache) and says how to adapt after a rejected request shape; `HttpProvider` adds the client,
+the bounded retry with backoff and jitter on 429, 5xx and connection errors, and the
+translation of a status into the error kinds the run knows (401, 403 and a 404 naming the
+model are `ModelConfigError`, exit 4; the rest is one failed call). A model is `ModelRef`:
+`provider/model`, a bare id being Anthropic's; `ModelRef.name` is what the database stores and
+the prices are keyed by. Usage is `Usage`, with `estimated=True` when the service reported
+none; `LLM.record` remembers such models under `llm.estimated_usage_models` in `kv` and the
+progress views say so. Five failed calls in a row halt the feeder in `Judge.score_pending`
+(`CIRCUIT_BREAKER_FAILURES`); the stats carry the reason and the run and catch-up summaries
+print it.
+
 ## Stored words
 
 Database column names and stored values keep their first spelling (`bucket`, `exploration`,

@@ -3,6 +3,7 @@ a run refuses to do anything with a broken config."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -701,13 +702,59 @@ def _dotted_keys(raw: dict[str, Any], prefix: str = "") -> set[str]:
     return out
 
 
+KEYCHAIN_SERVICE = "bodh"
+
+
 def load_secrets(root: Path | None = None) -> Secrets:
+    """The secrets, in this order: the project's `.env`, then the environment, then the
+    keychain (`pip install bodh[keychain]`; the macOS Keychain, the Linux secret service or
+    the Windows Credential Manager, under the service "bodh" and the variable's name)."""
     root = root or find_root()
     # the project's own .env wins over whatever the shell happens to export (a stale key in ~/.zshrc, say)
     load_dotenv(root / ".env", override=True)
-    return Secrets(
-        **{
-            name: SecretStr(os.environ.get(name.upper(), ""))
-            for name in (*SECRET_FIELDS, "openai_compatible_base_url")
-        }
-    )
+    values: dict[str, str] = {}
+    for name in (*SECRET_FIELDS, "openai_compatible_base_url"):
+        values[name] = os.environ.get(name.upper(), "") or keychain_get(name.upper()) or ""
+    return Secrets(**{name: SecretStr(value) for name, value in values.items()})
+
+
+def keychain_get(env_name: str) -> str | None:
+    """A value from the keychain, or None: without `keyring` installed, without a backend, or
+    with nothing stored, the same None."""
+    try:
+        import keyring
+
+        value = keyring.get_password(KEYCHAIN_SERVICE, env_name)
+        return str(value) if value else None
+    except Exception:  # no keyring, no backend, a locked keychain: the other sources still answer
+        return None
+
+
+def keychain_set(env_name: str, value: str) -> None:
+    """Store a value in the keychain; raises ConfigError when there is no keyring to store it in."""
+    try:
+        import keyring
+    except ImportError:
+        raise ConfigError("the keychain needs `pip install bodh[keychain]` (the keyring package)") from None
+    try:
+        keyring.set_password(KEYCHAIN_SERVICE, env_name, value)
+    except Exception as exc:
+        raise ConfigError(f"the keychain refused the value: {exc}") from exc
+
+
+def write_env_value(root: Path, env_name: str, value: str) -> Path:
+    """Set one `NAME=value` line in `<root>/.env` (replacing an existing one, keeping every
+    other line and comment), with the file readable by its owner alone."""
+    path = root / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    written = False
+    for i, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == env_name:
+            lines[i] = f"{env_name}={value}"
+            written = True
+    if not written:
+        lines.append(f"{env_name}={value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with contextlib.suppress(OSError):  # a file system without modes: the file is still written
+        os.chmod(path, 0o600)
+    return path

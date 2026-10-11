@@ -14,6 +14,9 @@ checkout, with the virtualenv's `bodh` (or the `bodh` alias). Each costs cents a
 | `bodh backup` | `backup written: data/backups/bodh-<today>.db (N kept)`; the file opens with `sqlite3` |
 | `bodh rebuild --dry-run` | one line of counts: the band-tagged, cut-tagged and starred articles BazQux holds, how many are unknown here (a few at most on a live database), `would write 0 scores` or thereabouts |
 | `bodh eval --cap 0.50` | `60 articles; about $0.0x with <judge>`, a progress count, then the agreement: exact and within one band, the per-band table, the largest disagreements; put the two figures and the date in README's Development section |
+| `bodh keys` | one line per provider, `set` or `not set`, no value and no prefix anywhere |
+| `bodh models` | the four roles with their prices and capabilities (`batch, schema, cache` for Anthropic), the providers with keys, the price table, the budget line |
+| `bodh models compare --with <provider/model> --sample 5 --yes` (after `bodh keys set <provider>` and a price in `config.yaml`) | a progress count to 10, then `compared 5 of 5 articles`, the agreement lines, the cost per 1,000 and seconds per article for both, and `nothing stored changed`; a few cents |
 | `bodh status` | the console up, the four `bodh.*` jobs, the last run's summary |
 | the console, once each: run, stop, schedule pause and resume, autocut off and on, prune (dry run), undo, clear-old (dry run), catch-up (stop it), weekly, report, doctor, dashboard | each button streams its output and ends with the command's exit code; `autocut off` shows in `bodh doctor --values` at once |
 | `tail -f ~/Library/Logs/bodh/bodh.log` during a run | one line per phase, the summary line at the end, no secret anywhere |
