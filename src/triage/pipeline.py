@@ -423,7 +423,11 @@ def prune(ctx: Context, keep: int | None = None, fraction: float | None = None,
                                     "check a few with `triage why ID`, then `triage safety reset`")
     sel = cutmod.select_prune(conn, cfg, keep=keep, fraction=fraction, below=below)
     if confirmed is not None:
-        sel.cut = [r for r in sel.cut if r["id"] in confirmed]
+        unconfirmed = [r for r in sel.cut if r["id"] not in confirmed]
+        if unconfirmed:
+            sel.cut = [r for r in sel.cut if r["id"] in confirmed]
+            sel.survivors.extend(unconfirmed)
+            sel.boundary = min((float(r["score"]) for r in sel.survivors if cutmod.eligible(r)), default=None)
     if dry_run or not sel.cut:
         return 0, sel
     run_id = store.begin_run(conn, "prune")

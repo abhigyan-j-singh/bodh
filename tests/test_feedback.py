@@ -38,11 +38,16 @@ def test_small_flips_are_believed_at_once(conn, cfg):
 def test_read_dismissed_expired_marked_unread_again_return_to_unread(conn, cfg):
     ids = seed_scored(conn, cfg, [dict(n=1, score=60), dict(n=2, score=60), dict(n=3, score=60), dict(n=4, score=60)])
     store.set_flags(conn, ids[:1], status="read", read_at="x")
+    store.add_feedback(conn, ids[0], "read")
     store.set_flags(conn, ids[1:2], status="dismissed")
     store.set_flags(conn, ids[2:3], status="expired")
     stats = feedback.collect(FakeClient(), conn, cfg, unread_now=set(ids), starred_now=set())
     assert stats["returned"] == 3 and store.status_ids(conn, "unread") == set(ids)
-    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
+    # only the article the student had read is exempt from the floor: a reversed dismissal or
+    # expiry (one wrong answer from BazQux) must not retire the floor for the whole pool
+    exempt = {r[0] for r in conn.execute("SELECT article_id FROM state WHERE exempt = 1")}
+    assert exempt == {ids[0]}
     # and they are in the pool the cuts select from
     from triage import cut
 

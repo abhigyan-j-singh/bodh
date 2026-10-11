@@ -209,7 +209,7 @@ disagreements shrink week by week, it is learning you.
 | stop the run, prune or blast in progress | `triage stop` (the same as Ctrl-C in its terminal; a cut half-written to BazQux is finished by the next run) |
 | nothing fires for a while | `triage schedule pause` (`--job run` for one job; without it the control room pauses too); `triage schedule resume` |
 | a run now, through launchd | `triage schedule kick` (refused while a run holds the lock) |
-| stop everything, control room included | `triage halt`; `triage schedule resume` brings the jobs back |
+| stop everything, control room included | `triage halt`; `triage schedule resume` brings the jobs back. It ends the commands of this checkout started by their full path (launchd's jobs, the alias above); one started as `.venv/bin/triage …` from inside the folder is not found, Ctrl-C that one |
 | after a code update, or after moving the folder | `./install.sh && ./install-launchd.sh` |
 | the control room in the foreground | `triage panel` (Ctrl-C ends it; launchd restarts its own copy) |
 

@@ -40,14 +40,18 @@ def collect(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_
     stats["stars"] = len(new_stars)
 
     # back to unread: what we recorded as read, dismissed or expired that the student marked
-    # unread again belongs to the pool once more (no feedback: nothing is known about why), and
-    # the automatic floor leaves it alone (an article kept to finish later must not be cut for
-    # its old score); a prune may still take it
+    # unread again belongs to the pool once more (no feedback: nothing is known about why). One
+    # the student had read (a `read` row) and kept to finish later is exempt from the automatic
+    # floor, which would only cut it for its old score; a prune may still take it. A reversed
+    # dismissal or expiry (BazQux's answer was wrong for an hour) earns no exemption: nothing
+    # about those articles changed.
     returned: set[str] = set()
     for status in ("read", "dismissed", "expired"):
         returned |= store.status_ids(conn, status) & unread_now
     if returned:
-        store.restore_unread(conn, returned, rescued=False, exempt=True)
+        kept = returned & store.feedback_ids(conn, "read")
+        store.restore_unread(conn, kept, rescued=False, exempt=True)
+        store.restore_unread(conn, returned - kept, rescued=False)
         stats["returned"] = len(returned)
 
     # reads and dismissals: what we left unread and is now read, by the student's hand
