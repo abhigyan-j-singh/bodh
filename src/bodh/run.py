@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import cutting as cutmod
-from . import dashboard, feedback, progress, store
+from . import dashboard, feedback, progress, recovery, store
 from .config import Config, Secrets
 from .heartbeat import Heartbeat
 from .judge import Judge, concept_context
@@ -444,6 +444,8 @@ def _finish(st: _Run) -> None:
     )
     st.phase("rendering the dashboard")
     render_dashboard(cfg, conn, res)
+    st.phase("backing up")
+    recovery.backup_daily(conn, cfg)  # once a day; a failure is a log line
     st.phase("")
     log.info(
         "run %d: %s", st.run_id, res.summary()

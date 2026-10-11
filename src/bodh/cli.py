@@ -28,7 +28,7 @@ from typing import Any
 
 import typer
 
-from . import __version__, dashboard, feedback, logs, profiler, report, store
+from . import __version__, dashboard, feedback, logs, profiler, recovery, report, store
 from . import cutting as cutmod
 from . import run as runmod
 from .config import Config, Secrets, load_config, load_secrets
@@ -212,6 +212,10 @@ def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
             problem(f"database {pragma}: {verdict} (restore data/bodh.db from a backup)")
             return
     typer.echo("database integrity: ok")
+    kept = recovery.backups(cfg)
+    typer.echo(
+        f"backups: {len(kept)}" + (f", newest {kept[-1].name}" if kept else " (the run makes one a day)")
+    )
 
 
 def _doctor_live(cfg: Config, secrets: Secrets, conn: Any, problem: Any) -> None:
@@ -616,6 +620,36 @@ def undo(verbose: bool = VERBOSE) -> None:
         typer.echo("nothing to undo")
     else:
         typer.echo(f"restored {n} articles from run {run_id}")
+
+
+@app.command()
+@_handled
+def backup(
+    keep: int = typer.Option(recovery.BACKUPS_KEPT, "--keep", min=1, help="Backups to keep, newest first."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Copy the database to data/backups/bodh-<date>.db (the run does this once a day too)."""
+    ctx = _ctx(verbose)
+    path = recovery.backup(ctx.conn, ctx.cfg, keep=keep)
+    typer.echo(f"backup written: {path} ({len(recovery.backups(ctx.cfg))} kept)")
+
+
+@app.command()
+@_handled
+def rebuild(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count what would be written; write nothing."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """After a lost database: read the band tags, the cut tag and the stars back from BazQux,
+    so nothing already judged is judged again and nothing already cut is cut again. Rebuilt
+    scores carry the band's threshold and a low confidence: autocut leaves them alone."""
+    ctx = _ctx(verbose)
+    if not dry_run and not yes and not typer.confirm("Rebuild scores and cuts from the tags in BazQux?"):
+        raise typer.Exit(0)
+    with run_lock(ctx.cfg.root / ctx.cfg.data_dir, "rebuild"), graceful_sigterm():
+        stats = recovery.rebuild(ctx, dry_run=dry_run)
+    typer.echo(recovery.summary(stats))
 
 
 @app.command("clear-old")

@@ -1,6 +1,6 @@
 """SQLite store: the system's memory of what it judged, cut and learned, next to BazQux,
-which stays the only source of truth for what is read and tagged. (A rebuild of the
-scored set from the band tags in BazQux is planned, not written: `bodh rebuild`.)"""
+which stays the only source of truth for what is read and tagged (`bodh rebuild`, in
+recovery.py, reads the band tags back from it into an empty database)."""
 
 from __future__ import annotations
 
@@ -641,7 +641,7 @@ def rescued_ids(conn: sqlite3.Connection) -> set[str]:
 
 
 # the kinds of run, as `runs.kind` records them (older rows may say blast, bankruptcy or nudge)
-RunKind = Literal["run", "prune", "undo", "clear-old", "catch-up", "weekly", "steer"]
+RunKind = Literal["run", "prune", "undo", "clear-old", "catch-up", "weekly", "steer", "rebuild"]
 
 
 def begin_run(conn: sqlite3.Connection, kind: RunKind) -> int:
