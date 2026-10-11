@@ -310,6 +310,8 @@ Outcome: the commands below in eight groups named by when they are used, so a ne
 
 ## Phase 7: dashboard and console
 
+Superseded on 11 October by `DASHBOARD_PLAN.md` (the Claude Doc "The dashboard: the prompt"), which specifies this phase in full: the five questions, the design system and its validated palette, every panel, the chart rules, the data contract and the quality bar. The items below remain as the summary.
+
 Outcome: one page, served live by the control room and exported as the static `dashboard/index.html` from the same renderer, that answers in order: is it running, what did it do today, what should I read, is it judging well for me, what is it costing. Readable on a phone over Tailscale, in light and dark, without a build step, a framework or an external request.
 
 1. One renderer. The control room's `/` becomes the dashboard with the levers on top; `triage dashboard` writes the same page (buttons omitted) to `dashboard/index.html` for `tailscale serve --set-path`. Both come from `html.py` (Phase 3) and one `dashboard.data(conn, cfg)` that returns a dict; `/api/dashboard` serves that dict as JSON, so the page, the static export and anyone's script read the same numbers.
