@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
@@ -201,7 +201,7 @@ def matches_topic(concept: str, topics: list[str]) -> bool:
     return False
 
 
-def compose(v: Verdict | dict, cfg: Config, expansion_topics: list[str] | None = None) -> float:
+def compose(v: Verdict | dict[str, Any], cfg: Config, expansion_topics: list[str] | None = None) -> float:
     """Sub-scores to one score, deterministically, so weights can change without re-prompting."""
     d = v.model_dump() if isinstance(v, Verdict) else dict(v)
     w = cfg.judge.weights
@@ -250,8 +250,8 @@ class DupIndex:
 
     def __init__(self, conn: sqlite3.Connection, window_days: int = 7) -> None:
         since = store.days_ago_iso(window_days)
-        self.by_url: dict[str, dict] = {}
-        self.by_title: dict[str, dict] = {}
+        self.by_url: dict[str, dict[str, Any]] = {}
+        self.by_title: dict[str, dict[str, Any]] = {}
         for cand in conn.execute(
             """SELECT a.id, a.url, a.title, a.feed_title, s.concept
                FROM articles a JOIN scores s ON s.article_id = a.id
@@ -260,7 +260,7 @@ class DupIndex:
         ):
             self.add(dict(cand))
 
-    def add(self, cand: dict) -> None:
+    def add(self, cand: dict[str, Any]) -> None:
         curl = canonical_url(cand.get("url") or "")
         if curl:
             self.by_url.setdefault(curl, cand)
@@ -268,7 +268,7 @@ class DupIndex:
         if len(ntitle) > 25:
             self.by_title.setdefault(ntitle, cand)
 
-    def find(self, row: sqlite3.Row | dict) -> dict | None:
+    def find(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any] | None:
         curl = canonical_url(row["url"] or "")
         hit = self.by_url.get(curl) if curl else None
         if hit and hit["id"] != row["id"]:
@@ -280,5 +280,5 @@ class DupIndex:
         return None
 
 
-def find_duplicate(conn: sqlite3.Connection, row: sqlite3.Row, window_days: int = 7) -> dict | None:
+def find_duplicate(conn: sqlite3.Connection, row: sqlite3.Row, window_days: int = 7) -> dict[str, Any] | None:
     return DupIndex(conn, window_days).find(row)

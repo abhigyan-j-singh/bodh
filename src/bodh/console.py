@@ -20,6 +20,7 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import html as ui
@@ -50,7 +51,7 @@ class Child:
     """One background command at a time, its output kept for the page."""
 
     def __init__(self) -> None:
-        self.proc: subprocess.Popen | None = None
+        self.proc: subprocess.Popen[str] | None = None
         self.args: list[str] = []
         self.started = 0.0
         self.ended = 0.0
@@ -61,7 +62,7 @@ class Child:
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, args: list[str], cwd: Path, env: dict) -> None:
+    def start(self, args: list[str], cwd: Path, env: dict[str, Any]) -> None:
         with self.lock:
             if self.alive():
                 raise RuntimeError("a command is already running")
@@ -78,7 +79,7 @@ class Child:
             self.output.clear()
             threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
 
-    def _pump(self, proc: subprocess.Popen) -> None:
+    def _pump(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stdout is not None
         try:
             for raw in proc.stdout:
@@ -103,7 +104,7 @@ class Child:
             proc.terminate()
             return "sent SIGTERM after 25s"
 
-    def state(self) -> dict:
+    def state(self) -> dict[str, Any]:
         alive = self.alive()
         return {
             "running": alive,
@@ -137,13 +138,13 @@ class Console:
         self.child = Child()
         self.db_lock = threading.Lock()
         self.env = {**os.environ, "BODH_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
-        self._status_cache: tuple[float, dict] | None = None
-        self._jobs_cache: tuple[float, dict] | None = None
+        self._status_cache: tuple[float, dict[str, Any]] | None = None
+        self._jobs_cache: tuple[float, dict[str, Any]] | None = None
         self._config_mtime: float | None = None
 
     # -- data -----------------------------------------------------------------
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         self._reload_config()
         now = time.monotonic()
         with self.db_lock:
@@ -154,7 +155,7 @@ class Console:
         st["child"] = self.child.state()
         return st
 
-    def _jobs(self) -> dict:
+    def _jobs(self) -> dict[str, Any]:
         now = time.monotonic()
         if self._jobs_cache is None or now - self._jobs_cache[0] > JOBS_CACHE_SECONDS:
             self._jobs_cache = (now, {name: jobs.job_state(label) for name, label in jobs.JOBS.items()})
@@ -195,7 +196,7 @@ class Console:
         except Exception as exc:  # a half-saved or broken config.yaml: the page keeps the last good one
             log.warning("console: config.yaml not reloaded: %s", exc)
 
-    def run_action(self, action: str, params: dict) -> dict:
+    def run_action(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """One button of the page: the levers the console works itself (stop, the schedule,
         autocut) or a bodh command run as a child process."""
         if action == "stop":
@@ -228,7 +229,7 @@ class Console:
         args = list(args) + _extra_args(action, params)
         return self._start_command(args) if background else self._run_command(args)
 
-    def _start_command(self, args: list[str]) -> dict:
+    def _start_command(self, args: list[str]) -> dict[str, Any]:
         """A long command (a run, a catch-up) as a child whose output streams into the page."""
         if self.child.alive():
             return {"ok": False, "message": "a command is already running; stop it first"}
@@ -237,7 +238,7 @@ class Console:
         self.child.start(self.command + args, self.cfg.root, self.env)
         return {"ok": True, "message": f"started: bodh {' '.join(args)}"}
 
-    def _run_command(self, args: list[str]) -> dict:
+    def _run_command(self, args: list[str]) -> dict[str, Any]:
         """A short command, waited for; its output goes back with the answer."""
         try:
             res = subprocess.run(
@@ -264,7 +265,7 @@ class Console:
         console = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, fmt, *args):
+            def log_message(self, fmt: str, *args: Any) -> None:
                 log.debug("console: " + fmt, *args)
 
             def _send(self, code: int, body: bytes, ctype: str = "application/json; charset=utf-8") -> None:
@@ -388,7 +389,7 @@ def console_log(data_dir: Path, message: str) -> None:
         pass
 
 
-def _extra_args(action: str, params: dict) -> list[str]:
+def _extra_args(action: str, params: dict[str, Any]) -> list[str]:
     out: list[str] = []
     if action in ("prune", "prune_dry"):
         if params.get("keep"):

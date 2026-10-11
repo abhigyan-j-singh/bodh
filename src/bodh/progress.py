@@ -10,8 +10,10 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import html as ui
@@ -27,7 +29,7 @@ SERIES_BIN_MINUTES = 5
 SERIES_HOURS = 3
 
 
-def _count(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> int:
+def _count(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:
     return int(conn.execute(sql, params).fetchone()[0] or 0)
 
 
@@ -56,7 +58,7 @@ def _age(iso: str | None) -> str:
 # -- activity: how fast is it moving ------------------------------------------
 
 
-def activity(conn: sqlite3.Connection, cfg: Config) -> dict:
+def activity(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     """Judged per minute (last 2 minutes, else last 10), a 3-hour series in 5-minute
     bins, the phase a run is in, and whether a run holds the lock right now."""
     now = store.utcnow()
@@ -123,7 +125,7 @@ def log_tail(path: Path, n: int = 10) -> list[str]:
 # -- the snapshot -------------------------------------------------------------
 
 
-def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
+def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict[str, Any]:
     """Everything the progress views show, as plain numbers."""
     version = cfg.judge.prompt_version
     skip = cfg.unjudged_folders()
@@ -187,7 +189,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
         "WHERE st.status = 'unread' AND s.second_look_model = 'failed'",
     )
 
-    def period(since: str) -> dict:
+    def period(since: str) -> dict[str, Any]:
         return {
             "arrived": _count(conn, "SELECT COUNT(*) FROM articles WHERE fetched_at >= ?", (since,)),
             "judged": _count(
@@ -243,7 +245,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config, live: bool = True) -> dict:
                 "scored": (r["folder"] or "") not in skip,
             }
         )
-    by_name = {f["folder"]: f for f in folders}
+    by_name: dict[str, dict[str, Any]] = {str(f["folder"]): f for f in folders}
     for row in pending_rows:
         f = by_name.get(row["folder"] or "(no folder)")
         if f:
@@ -329,10 +331,12 @@ def write_live(cfg: Config, conn: sqlite3.Connection, min_interval: float = 0.0)
         return None
 
 
-def live_writer(cfg: Config, conn: sqlite3.Connection, min_interval: float = 2.0):
+def live_writer(
+    cfg: Config, conn: sqlite3.Connection, min_interval: float = 2.0
+) -> Callable[[dict[str, Any]], None]:
     """A callback for the judge: write the live file at most every few seconds."""
 
-    def _cb(_stats: dict | None = None) -> None:
+    def _cb(_stats: dict[str, Any] | None = None) -> None:
         write_live(cfg, conn, min_interval=min_interval)
 
     return _cb
@@ -361,7 +365,7 @@ def _eta(minutes: float | None) -> str:
     return f"{minutes / 60:.1f} h"
 
 
-def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved; terminals wrap
+def render_text(snap: dict[str, Any], width: int | None = None) -> str:  # width: reserved; terminals wrap
     """The terminal view: the state, the counts, the money, the folders, the batches, the log,
     the last runs."""
     lines = [
@@ -388,7 +392,7 @@ def render_text(snap: dict, width: int | None = None) -> str:  # width: reserved
     return "\n".join(lines)
 
 
-def _text_state(snap: dict) -> list[str]:
+def _text_state(snap: dict[str, Any]) -> list[str]:
     mode = "batch mode: judgments arrive on the next run" if snap["batch_mode"] else "synchronous mode"
     now = snap["now"] if isinstance(snap["now"], datetime) else datetime.fromisoformat(snap["now"])
     lines = [f"bodh progress · {now.strftime('%a %d %b %H:%M:%S')} · {mode}"]
@@ -405,7 +409,7 @@ def _text_state(snap: dict) -> list[str]:
     return lines
 
 
-def _text_counts(snap: dict) -> list[str]:
+def _text_counts(snap: dict[str, Any]) -> list[str]:
     unread = snap["unread"] or 1
     judged, pending, inflight = snap["judged_unread"], snap["pending"], snap["inflight"]
     in_window = judged + pending + inflight
@@ -434,7 +438,7 @@ def _text_counts(snap: dict) -> list[str]:
     return lines
 
 
-def _text_notes(snap: dict) -> list[str]:
+def _text_notes(snap: dict[str, Any]) -> list[str]:
     notes = []
     if snap.get("stand_in"):
         notes.append(
@@ -451,7 +455,7 @@ def _text_notes(snap: dict) -> list[str]:
     return notes
 
 
-def _text_money(snap: dict) -> list[str]:
+def _text_money(snap: dict[str, Any]) -> list[str]:
     t, w, a = snap["today"], snap["week"], snap["all_time"]
     per = f"${snap['per_1000']:.2f} per 1,000 judged" if snap["per_1000"] is not None else "no spend yet"
     cache = (
@@ -478,7 +482,7 @@ def _text_money(snap: dict) -> list[str]:
     return lines
 
 
-def _text_folders(snap: dict) -> list[str]:
+def _text_folders(snap: dict[str, Any]) -> list[str]:
     lines = [
         f"{'By folder':<32}{'unread':>8}{'judged':>8}{'pending':>9}{'model':>8}{'≥70':>6}{'cut':>7}  cut-off"
     ]
@@ -493,7 +497,7 @@ def _text_folders(snap: dict) -> list[str]:
     return lines
 
 
-def _text_batches(snap: dict) -> list[str]:
+def _text_batches(snap: dict[str, Any]) -> list[str]:
     lines = ["Batches"]
     for b in snap["batches"]:
         state = b["status"]
@@ -519,7 +523,7 @@ def _sparkline(series: list[int]) -> str:
 # -- dashboard ----------------------------------------------------------------
 
 
-def render_html(snap: dict) -> str:
+def render_html(snap: dict[str, Any]) -> str:
     """The progress section of the dashboard: numbers now, and a script that keeps them moving by polling
     progress.json while a run writes it (bars, rate, ETA, phase, sparkline, batches, log)."""
     e = ui.esc
@@ -584,7 +588,7 @@ def render_html(snap: dict) -> str:
     return "\n".join(parts)
 
 
-def _folder_rows(folders: list[dict], e) -> str:
+def _folder_rows(folders: list[dict[str, Any]], e: Callable[[Any], str]) -> str:
     rows = []
     for f in folders:
         if not f["unread"] and not f["cut"]:
@@ -598,7 +602,7 @@ def _folder_rows(folders: list[dict], e) -> str:
     return "".join(rows)
 
 
-def _batch_rows(batches: list[dict], e) -> str:
+def _batch_rows(batches: list[dict[str, Any]], e: Callable[[Any], str]) -> str:
     if not batches:
         return "<tr><td colspan='4' class='muted'>none yet</td></tr>"
     rows = []

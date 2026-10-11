@@ -14,7 +14,8 @@ from . import cutting as cutmod
 from . import dashboard, feedback, progress, store
 from .config import Config, Secrets
 from .heartbeat import Heartbeat
-from .judge import LLM, Judge, concept_context
+from .judge import Judge, concept_context
+from .llm import LLM
 from .profiler import expansion_topics
 from .readers.bazqux import BazQuxClient, BazQuxError
 
@@ -43,7 +44,7 @@ class RunResult:
     cut_autocut: int = 0
     cut_prune: int = 0
     boundary: float | None = None
-    feedback: dict = field(default_factory=dict)
+    feedback: dict[str, Any] = field(default_factory=dict)
     spend_usd: float = 0.0
     error: str = ""
     notes: list[str] = field(default_factory=list)
@@ -461,7 +462,7 @@ def catch_up(
     on_progress: Any = None,
     model: str | None = None,
     max_seconds: float | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """One deliberate pass over everything pending, as fast as the API allows: synchronous,
     many calls at once, round after round until nothing is pending. Scores and tags only;
     nothing is cut. Resumable: stop it and run it again. With ``model`` the quick judge (a faster
@@ -481,7 +482,7 @@ def catch_up(
         judge.rejudge = None
     ctx.llm.retries(8)
     run_id = store.begin_run(conn, "catch-up")
-    total = {
+    total: dict[str, Any] = {
         "scored": 0,
         "dupes": 0,
         "failed": 0,
@@ -495,9 +496,9 @@ def catch_up(
     }
     deadline = total["started"] + max_seconds if max_seconds else None
     live = progress.live_writer(cfg, conn)
-    current: dict = {}
+    current: dict[str, Any] = {}
 
-    def tick(stats: dict) -> None:
+    def tick(stats: dict[str, Any]) -> None:
         current.clear()
         current.update(stats)
         live(stats)
@@ -526,8 +527,8 @@ def _catch_up_rounds(
     ctx: Context,
     judge: Judge,
     run_id: int,
-    total: dict,
-    current: dict,
+    total: dict[str, Any],
+    current: dict[str, Any],
     chunk: int,
     workers: int,
     tick: Any,
@@ -569,7 +570,7 @@ def _catch_up_rounds(
             idle_rounds = 0
 
 
-def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict) -> None:
+def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict[str, Any]) -> None:
     """Whatever happened: the tags, the run row with its summary, the dashboard."""
     cfg, conn = ctx.cfg, ctx.conn
     progress.set_phase(conn, "tagging in BazQux")

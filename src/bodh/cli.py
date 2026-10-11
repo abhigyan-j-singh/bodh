@@ -30,8 +30,8 @@ import typer
 from . import __version__, dashboard, feedback, profiler, report, store
 from . import cutting as cutmod
 from . import run as runmod
-from .config import Config, ConfigError, Secrets, load_config, load_secrets
-from .errors import BodhError, LockedError
+from .config import Config, Secrets, load_config, load_secrets
+from .errors import BodhError, ConfigError, LockedError
 from .ids import normalize_item_id
 from .locks import AlreadyRunning, graceful_sigterm, run_lock, time_limit
 from .logs import setup_logging
@@ -214,7 +214,7 @@ def _doctor_database(cfg: Config, conn: Any, problem: Any) -> None:
     typer.echo("database integrity: ok")
 
 
-def _doctor_live(cfg: Config, secrets, conn, problem) -> None:
+def _doctor_live(cfg: Config, secrets: Secrets, conn: Any, problem: Any) -> None:
     ctx = runmod.Context(cfg, secrets, conn)
     try:
         ctx.client.user_info()
@@ -420,7 +420,7 @@ def catch_up(
         raise typer.Exit(0)
     started = time.monotonic()
 
-    def show(total: dict, stats: dict) -> None:
+    def show(total: dict[str, Any], stats: dict[str, Any]) -> None:
         done = total["scored"] + total["dupes"] + stats["scored"] + stats["dupes"]
         mins = max(1e-6, (time.monotonic() - started) / 60)
         rate = done / mins
@@ -495,7 +495,7 @@ def _catch_up_preview(
     return pending
 
 
-def _catch_up_report(total: dict) -> None:
+def _catch_up_report(total: dict[str, Any]) -> None:
     typer.echo(
         f"judged {total['scored']:,} (+{total['dupes']:,} dupes) in {total['elapsed'] / 60:.1f} min over "
         f"{total['rounds']} rounds; {total['failed']} failed batches; pending {total['pending']:,}; "
@@ -844,7 +844,7 @@ def why(article_id: str, verbose: bool = VERBOSE) -> None:
             + (f", review {row['second_look_score']:.1f}" if row["second_look_score"] is not None else "")
             + ")"
         )
-        from .judge import normalize_flags
+        from .judgment import normalize_flags
 
         try:
             flags = normalize_flags(json.loads(row["flags"] or "[]"))
@@ -1031,7 +1031,7 @@ def _drift_check(ctx: runmod.Context, run_id: int) -> str:
     if len(rows) < 10:
         return ""
     judge = ctx.judge()
-    from .judge import compose
+    from .judgment import compose
 
     diffs = []
     for i in range(0, len(rows), cfg.judge.articles_per_call):

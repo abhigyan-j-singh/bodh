@@ -194,8 +194,11 @@ class BazQuxClient:
 
     # -- reads --------------------------------------------------------------
 
-    def user_info(self) -> dict:
-        return self._authed("GET", "/reader/api/0/user-info", params={"output": "json"}).json()
+    def user_info(self) -> dict[str, Any]:
+        data: dict[str, Any] = self._authed(
+            "GET", "/reader/api/0/user-info", params={"output": "json"}
+        ).json()
+        return data
 
     def subscriptions(self) -> list[Subscription]:
         data = self._authed("GET", "/reader/api/0/subscription/list", params={"output": "json"}).json()
@@ -356,9 +359,10 @@ def _int_or_none(value: Any) -> int | None:
 
 
 def _first_href(entries: object) -> str:
-    if isinstance(entries, (dict, str)):
-        entries = [entries]
-    for entry in entries or []:  # type: ignore[union-attr]
+    items: list[object] = (
+        [entries] if isinstance(entries, (dict, str)) else list(entries) if isinstance(entries, list) else []
+    )
+    for entry in items:
         if isinstance(entry, dict) and entry.get("href"):
             return str(entry["href"])
         if isinstance(entry, str) and entry:
@@ -366,7 +370,7 @@ def _first_href(entries: object) -> str:
     return ""
 
 
-def _parse_item(raw: dict) -> Item:
+def _parse_item(raw: dict[str, Any]) -> Item:
     long_id = normalize_item_id(raw.get("id", ""))
     origin = raw.get("origin") or {}
     url = _first_href(raw.get("canonical")) or _first_href(raw.get("alternate"))

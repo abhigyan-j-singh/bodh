@@ -31,7 +31,7 @@ MIN_CUTS_FOR_RESCUE_RATE = 20  # the weekly rescue rate means nothing on a handf
 
 def collect(
     client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, unread_now: set[str], starred_now: set[str]
-) -> dict:
+) -> dict[str, Any]:
     """What the student did since the last run, from BazQux's state: stars, articles marked
     unread again, reads and dismissals, rescues, verdict tags, the prune request."""
     stats = {
@@ -87,7 +87,7 @@ def _collect_returned(conn: sqlite3.Connection, unread_now: set[str]) -> int:
 
 
 def _collect_reads(
-    conn: sqlite3.Connection, cfg: Config, ours_unread: set[str], unread_now: set[str], stats: dict
+    conn: sqlite3.Connection, cfg: Config, ours_unread: set[str], unread_now: set[str], stats: dict[str, Any]
 ) -> None:
     """Reads and dismissals: what we left unread and is now read, by the student's hand. A
     burst across several feeds is mark-all-as-read, not reading; an old article going read is
@@ -193,7 +193,9 @@ def prune_request_done(conn: sqlite3.Connection) -> None:
     store.kv_delete(conn, PRUNE_REQUEST_KEY)
 
 
-def collect_verdicts(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, known: set[str]) -> dict:
+def collect_verdicts(
+    client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, known: set[str]
+) -> dict[str, Any]:
     """The student's tags, read as verdicts. A tag stays on the article (the student's record)
     and is recorded once. Within a group one verdict holds per article: a different tag added
     later replaces it (when both are present, the later one in the group's order wins, so
@@ -280,4 +282,4 @@ def rescue_rate_week(conn: sqlite3.Connection, min_cuts: int = MIN_CUTS_FOR_RESC
     ).fetchone()[0]
     if cuts < min_cuts:
         return 0.0
-    return rescues / cuts
+    return float(rescues) / float(cuts)

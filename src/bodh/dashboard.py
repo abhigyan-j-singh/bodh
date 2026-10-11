@@ -10,6 +10,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import html as ui
@@ -40,7 +41,7 @@ def _local_day(iso: str | None, tz: ZoneInfo) -> str | None:
 # -- data ---------------------------------------------------------------------
 
 
-def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
+def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict[str, Any]]:
     since = store.days_ago_iso(days)
     per: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for r in conn.execute("SELECT fetched_at FROM articles WHERE fetched_at >= ?", (since,)):
@@ -61,14 +62,14 @@ def flow(conn: sqlite3.Connection, tz: ZoneInfo, days: int = 14) -> list[dict]:
     out = []
     for i in range(days - 1, -1, -1):
         day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-        row = {"day": day}
+        row: dict[str, Any] = {"day": day}
         for k in ("arrived", "cut by autocut", "cut by prune", "read", "starred"):
             row[k] = per[day][k]
         out.append(row)
     return out
 
 
-def calibration(conn: sqlite3.Connection) -> list[dict]:
+def calibration(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Among articles the system left unread for at least a day, how often each band was read or starred."""
     cutoff = store.days_ago_iso(1)
     rows = conn.execute(
@@ -99,7 +100,7 @@ def calibration(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
-def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
+def verdicts(conn: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
     """The student's grades against the judge's bands: for each band, how many articles the
     student marked great, good, meh or bad in the window. Calibration from the student's own hand."""
     since = store.days_ago_iso(days)
@@ -190,7 +191,7 @@ def concept_map(conn: sqlite3.Connection, cfg: Config) -> tuple[list[tuple[str, 
     return covered, frontier
 
 
-def health(conn: sqlite3.Connection, cfg: Config) -> dict:
+def health(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     runs = store.last_runs(conn, 20)
     today = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     week = store.spent_since(conn, store.days_ago_iso(7))
@@ -222,7 +223,7 @@ def _pct(x: float | None) -> str:
     return "–" if x is None else f"{x * 100:.0f}%"
 
 
-def _bars_svg(rows: list[dict], keys: list[str], colors: list[str]) -> str:
+def _bars_svg(rows: list[dict[str, Any]], keys: list[str], colors: list[str]) -> str:
     """Grouped bars per day, hand-rolled SVG, no scripts."""
     if not rows:
         return ""
@@ -260,7 +261,7 @@ FLOW_KEYS = ["arrived", "cut by autocut", "cut by prune", "read", "starred"]
 FLOW_COLORS = ["var(--pending)", "var(--flight)", "var(--prune)", "var(--read)", "var(--star)"]
 
 
-def data(cfg: Config, conn: sqlite3.Connection) -> dict:
+def data(cfg: Config, conn: sqlite3.Connection) -> dict[str, Any]:
     """Every number the page shows, in one dict: the sections render from it and `data.json`
     carries a part of it."""
     tz = ZoneInfo(cfg.timezone)
@@ -288,7 +289,7 @@ def data(cfg: Config, conn: sqlite3.Connection) -> dict:
     }
 
 
-def _section_head(cfg: Config, d: dict) -> str:
+def _section_head(cfg: Config, d: dict[str, Any]) -> str:
     hl = d["health"]
     last_ok = hl["last_ok"]
     status = (
@@ -320,7 +321,7 @@ def _section_progress(cfg: Config, conn: sqlite3.Connection) -> str:
         return "<p class='bad'>the progress section failed to render</p>"
 
 
-def _section_flow(cfg: Config, d: dict) -> str:
+def _section_flow(cfg: Config, d: dict[str, Any]) -> str:
     note = (
         "Read and starred are inferred from BazQux read state; a burst of more than "
         f"{cfg.safety.mark_all_read_threshold} articles going read at once is counted as a dismissal, not reading."
@@ -328,7 +329,7 @@ def _section_flow(cfg: Config, d: dict) -> str:
     return ui.section("Flow, last 14 days", _bars_svg(d["flow"], FLOW_KEYS, FLOW_COLORS) + ui.muted(note))
 
 
-def _section_calibration(d: dict) -> str:
+def _section_calibration(d: dict[str, Any]) -> str:
     rows = [
         [_e(c["band"]), str(c["n"]), _pct(c["read_share"]), _pct(c["star_share"])] for c in d["calibration"]
     ]
@@ -343,7 +344,7 @@ def _section_calibration(d: dict) -> str:
     )
 
 
-def _section_verdicts(d: dict) -> str:
+def _section_verdicts(d: dict[str, Any]) -> str:
     verd = d["verdicts"]
     if not any(r["n"] for r in verd):
         return ui.section(
@@ -379,7 +380,7 @@ def _section_verdicts(d: dict) -> str:
     return ui.section("Your verdicts, last 30 days", inner)
 
 
-def _section_near_misses(d: dict) -> str:
+def _section_near_misses(d: dict[str, Any]) -> str:
     rows = [
         [
             f"{r['score']:.0f}",
@@ -399,7 +400,7 @@ def _section_near_misses(d: dict) -> str:
     )
 
 
-def _section_feeds(d: dict) -> str:
+def _section_feeds(d: dict[str, Any]) -> str:
     rows = [
         [
             _e(r["feed_title"][:40]),
@@ -413,7 +414,7 @@ def _section_feeds(d: dict) -> str:
         ]
         for r in d["feeds"]
     ]
-    columns = [
+    columns: list[str | tuple[str, str]] = [
         "Feed",
         "Folder",
         ("Articles", "num"),
@@ -426,7 +427,7 @@ def _section_feeds(d: dict) -> str:
     return ui.section("Feeds, last 30 days", ui.table(columns, rows))
 
 
-def _section_learnings(d: dict) -> str:
+def _section_learnings(d: dict[str, Any]) -> str:
     lessons = d["learnings"]
     if not lessons:
         return ui.section("Learnings this week", ui.muted("No reads recorded yet this week."))
@@ -439,7 +440,7 @@ def _section_learnings(d: dict) -> str:
     return ui.section("Learnings this week", "".join(parts))
 
 
-def _section_map(d: dict) -> str:
+def _section_map(d: dict[str, Any]) -> str:
     covered = d["covered"]
     inner = (
         "<p>" + " · ".join(f"<b>{_e(c)}</b> {n}" for c, n in covered) + "</p>"
@@ -460,14 +461,14 @@ def _section_map(d: dict) -> str:
     return ui.section("Map: concepts read in the last 90 days", inner)
 
 
-def _section_profile(d: dict) -> str:
+def _section_profile(d: dict[str, Any]) -> str:
     inner = f"<pre>{_e(d['learned_text'])}</pre>"
     if d["learned_diff"]:
         inner += f"<h3>Change from the previous version</h3><pre>{_e(d['learned_diff'])}</pre>"
     return ui.section("Learned profile", inner)
 
 
-def _section_health(d: dict) -> str:
+def _section_health(d: dict[str, Any]) -> str:
     rows = [
         [
             _e((r["started_at"] or "")[:16]),
@@ -522,7 +523,9 @@ def render(cfg: Config, conn: sqlite3.Connection) -> Path:
     return path
 
 
-def weekly_note(cfg: Config, conn: sqlite3.Connection, learned_result: dict | None = None) -> Path | None:
+def weekly_note(
+    cfg: Config, conn: sqlite3.Connection, learned_result: dict[str, Any] | None = None
+) -> Path | None:
     """The weekly digest as Markdown: learnings, map, near misses, the learned profile's diff."""
     target = cfg.obsidian_path
     tz = ZoneInfo(cfg.timezone)

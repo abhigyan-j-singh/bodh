@@ -274,7 +274,11 @@ def in_chunks(ids: Iterable[str], size: int = IN_CHUNK) -> Iterator[list[str]]:
 
 
 def fetch_in(
-    conn: sqlite3.Connection, sql: str, ids: Iterable[str], before: tuple = (), after: tuple = ()
+    conn: sqlite3.Connection,
+    sql: str,
+    ids: Iterable[str],
+    before: tuple[Any, ...] = (),
+    after: tuple[Any, ...] = (),
 ) -> list[sqlite3.Row]:
     """Run ``sql`` (with ``{marks}`` where the ids go) once per chunk of ids and gather the rows,
     so a mark-all-read of a big pile never exceeds the variable limit."""
@@ -294,7 +298,7 @@ def scored_ids(conn: sqlite3.Connection, prompt_version: str | None = None) -> s
 
 
 def article(conn: sqlite3.Connection, article_id: str) -> sqlite3.Row | None:
-    return conn.execute(
+    row: sqlite3.Row | None = conn.execute(
         """SELECT a.*, s.score, s.base_score, s.quality, s.learning, s.fit, s.breadth, s.relevance,
                   s.lesson, s.concept, s.kind, s.flags, s.confidence, s.dupe_of, s.second_look_score,
                   s.bucket, s.model, s.prompt_version, st.status, st.starred, st.protected, st.exploration, st.cut_mode, st.cut_at,
@@ -304,6 +308,7 @@ def article(conn: sqlite3.Connection, article_id: str) -> sqlite3.Row | None:
            WHERE a.id = ?""",
         (article_id,),
     ).fetchone()
+    return row
 
 
 MAX_JUDGE_FAILURES = 3  # empty answers from the model for one article before it is left alone
@@ -451,7 +456,7 @@ def unread_scored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def record_score(
     conn: sqlite3.Connection,
     article_id: str,
-    verdict: dict,
+    verdict: dict[str, Any],
     base_score: float,
     score: float,
     bucket: str,
@@ -649,7 +654,7 @@ def last_runs(conn: sqlite3.Connection, n: int = 10, kind: str | None = None) ->
 
 
 def record_cost(
-    conn: sqlite3.Connection, run_id: int | None, model: str, purpose: str, usage: dict, usd: float
+    conn: sqlite3.Connection, run_id: int | None, model: str, purpose: str, usage: dict[str, Any], usd: float
 ) -> None:
     conn.execute(
         """INSERT INTO costs (run_id, model, purpose, input_tokens, output_tokens, cache_write, cache_read,

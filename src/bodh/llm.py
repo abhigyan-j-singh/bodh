@@ -72,7 +72,7 @@ def _mentions_cache_ttl(text: str) -> bool:
     return bool(_TTL_WORDS.search(text or ""))
 
 
-def _output_format() -> dict:
+def _output_format() -> dict[str, Any]:
     """The structured-outputs format for a judgment batch, built the way the SDK's
     ``messages.parse`` builds it (bounds moved into descriptions, no extra properties)."""
     schema = JudgmentBatchOut.model_json_schema()
@@ -135,7 +135,7 @@ class LLM:
 
     # -- accounting -----------------------------------------------------------
 
-    def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict, float]:
+    def cost(self, model: str, usage: Any, discount: float = 1.0) -> tuple[dict[str, int], float]:
         """(token counts, USD) for one response's usage, the batch discount applied if any."""
         p_in, p_out = self.cfg.models.price(model)
         creation = getattr(usage, "cache_creation", None)
@@ -196,13 +196,15 @@ class LLM:
 
     # -- request shapes -------------------------------------------------------
 
-    def _system(self, system_text: str, ttl: str | None = None) -> list[dict]:
+    def _system(self, system_text: str, ttl: str | None = None) -> list[dict[str, Any]]:
         cache: dict[str, Any] = {"type": "ephemeral"}
         if ttl == "1h" and self.long_ttl_ok:
             cache["ttl"] = "1h"
         return [{"type": "text", "text": system_text, "cache_control": cache}]
 
-    def request_params(self, model: str, system_text: str, user_text: str, ttl: str | None = None) -> dict:
+    def request_params(
+        self, model: str, system_text: str, user_text: str, ttl: str | None = None
+    ) -> dict[str, Any]:
         """One judgment request, the same shape for a direct call and for a batch."""
         if self.plain_json:
             return {
@@ -274,10 +276,10 @@ class LLM:
 
     # -- batches --------------------------------------------------------------
 
-    def submit_batch(self, requests: list[dict]) -> str:
+    def submit_batch(self, requests: list[dict[str, Any]]) -> str:
         """requests: [{"custom_id": ..., "params": ...}]. Returns the batch id."""
         try:
-            batch = self._client.messages.batches.create(requests=requests)
+            batch = self._client.messages.batches.create(requests=requests)  # type: ignore[arg-type]  # the SDK wants its TypedDict; the dicts have that shape
         except Exception as exc:
             raise _classify(exc) from exc
         return batch.id
@@ -289,7 +291,7 @@ class LLM:
         except Exception as exc:
             raise _batch_classify(exc) from exc
 
-    def batch_counts(self, batch_id: str) -> dict:
+    def batch_counts(self, batch_id: str) -> dict[str, Any]:
         """How many requests of a batch are processing, succeeded, errored, canceled, expired."""
         try:
             counts = self._client.messages.batches.retrieve(batch_id).request_counts

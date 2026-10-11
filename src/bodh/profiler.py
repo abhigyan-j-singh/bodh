@@ -11,10 +11,13 @@ import re
 import sqlite3
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from . import store
 from .config import Config
-from .judge import LLM, Judge, compose, concept_context, load_prompt
+from .judge import Judge, concept_context, load_prompt
+from .judgment import compose
+from .llm import LLM
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +137,7 @@ def diff(old: str, new: str) -> str:
 
 def weekly_rewrite(
     cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, dry_run: bool = False
-) -> dict:
+) -> dict[str, Any]:
     """Rewrite profile/learned.md from the week's evidence; keep it only if the eval gate passes."""
     result = {"applied": False, "reason": "", "diff": "", "words": 0}
     since = store.days_ago_iso(7)
@@ -225,7 +228,9 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
-def gate_check(cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, new_learner: str) -> dict:
+def gate_check(
+    cfg: Config, llm: LLM, conn: sqlite3.Connection, run_id: int | None, new_learner: str
+) -> dict[str, Any]:
     """With the proposed learned profile in place, no recently loved article (starred, `great`,
     rescued) may score below its folder's cut-off. Up to 30 articles,
     one or two calls."""

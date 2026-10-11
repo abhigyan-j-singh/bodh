@@ -18,6 +18,7 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -63,7 +64,7 @@ def _domain(mode: str) -> str:
     return "system" if mode == "daemon" else f"gui/{os.getuid()}"
 
 
-def job_state(label: str) -> dict:
+def job_state(label: str) -> dict[str, Any]:
     """installed, loaded, state ('running', 'waiting', 'not loaded', 'not installed', 'unknown'),
     last exit code, pid, next fire interval, as launchctl reports them."""
     out = {
@@ -167,11 +168,11 @@ def _schedule_one(action: str, which: str) -> str:
 # -- the console's own state ------------------------------------------------
 
 
-def console_state(cfg: Config) -> dict:
+def console_state(cfg: Config) -> dict[str, Any]:
     """Is the console answering? From data/console.json (written by `bodh console`) and a
     one-second connection attempt; the last line of data/console.log explains a failure."""
     data_dir = cfg.root / cfg.data_dir
-    info: dict = {}
+    info: dict[str, Any] = {}
     with contextlib.suppress(OSError, ValueError):
         info = json.loads((data_dir / "console.json").read_text(encoding="utf-8"))
     host, port = info.get("host", "127.0.0.1"), int(info.get("port", 8766))
@@ -349,15 +350,15 @@ def _edit_flag(text: str, section: str, key: str, on: bool) -> str:
                 comment = rest[hash_at:]
             lines[i] = f"{m.group('indent')}{key}: {value}{comment}\n"
             return "".join(lines)
-    indent = " " * (child_indent if child_indent else 2)
-    lines.insert(section_at + 1, f"{indent}{key}: {value}\n")
+    pad = " " * (child_indent if child_indent else 2)
+    lines.insert(section_at + 1, f"{pad}{key}: {value}\n")
     return "".join(lines)
 
 
 # -- the whole picture ------------------------------------------------------------
 
 
-def status(cfg: Config, conn: sqlite3.Connection, jobs: dict | None = None) -> dict:
+def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = None) -> dict[str, Any]:
     """The whole picture. ``jobs`` lets a caller pass launchd's answers from a cache."""
     data_dir = cfg.root / cfg.data_dir
     proc = locks.running_process(data_dir)
@@ -446,7 +447,7 @@ def _parse_ts(iso: str | None) -> float | None:
     return t.timestamp()
 
 
-def render_status_text(st: dict) -> str:
+def render_status_text(st: dict[str, Any]) -> str:
     """The whole picture for the terminal (`bodh status`)."""
     lines = []
     r = st["running"]

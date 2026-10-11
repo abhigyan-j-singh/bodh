@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -89,7 +90,7 @@ def _fmt_date(published: int | None) -> str:
         return "unknown date"  # a feed's bad timestamp must not fail its batch every run for two weeks
 
 
-def article_block(n: int, row: sqlite3.Row | dict, chars: int) -> str:
+def article_block(n: int, row: sqlite3.Row | dict[str, Any], chars: int) -> str:
     text = (row["text"] or "").strip()
     snippet = text[:chars] + (" […]" if len(text) > chars else "")
     host = urlsplit(row["url"] or "").netloc.lower().removeprefix("www.") if row["url"] else ""
@@ -102,7 +103,7 @@ def article_block(n: int, row: sqlite3.Row | dict, chars: int) -> str:
     )
 
 
-def has_more_to_read(row: sqlite3.Row | dict, cfg: Config) -> bool:
+def has_more_to_read(row: sqlite3.Row | dict[str, Any], cfg: Config) -> bool:
     """A review is worth paying for only when the full text holds more than the
     opening the first pass already saw."""
     has_len = "text_len" in row.keys()  # noqa: SIM118 — `in row` on a sqlite3.Row tests the values, not the keys
@@ -184,7 +185,7 @@ class Judge:
         self.rejudge = self.rejudge_rule(cfg)  # None when a quick judge must not touch the judge's work
         self.stale_tags: dict[str, list[str]] = {}  # band tag -> articles a re-score moved out of it
 
-    def _user_text(self, rows: list, chars: int) -> str:
+    def _user_text(self, rows: Sequence[sqlite3.Row | dict[str, Any]], chars: int) -> str:
         blocks = "\n".join(article_block(i, r, chars) for i, r in enumerate(rows, 1))
         return f"# Concepts\n{self.context}\n\n# Articles\n{blocks}"
 
@@ -276,7 +277,7 @@ class Judge:
         workers: int = 3,
         on_progress: Any = None,
         stop_after: float | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Score every pending article now, waiting for each call. Resumable: anything not
         scored stays pending for the next run. ``on_progress(stats)`` is called after every
         batch that lands; past ``stop_after`` (a time.monotonic() value) no new call starts.
@@ -300,7 +301,7 @@ class Judge:
         try:
             futures = {}
             queue = list(enumerate(batches))
-            running: set = set()
+            running: set[Any] = set()
 
             def feed() -> None:
                 # at most one call per worker in flight and nothing queued behind it, so the
@@ -331,7 +332,9 @@ class Judge:
         stats["pending_after"] = self.pending_count(exclude_inflight=True)
         return stats
 
-    def _absorb_future(self, future: Any, batch: list, stats: dict, on_progress: Any, total: int) -> None:
+    def _absorb_future(
+        self, future: Any, batch: list[sqlite3.Row], stats: dict[str, Any], on_progress: Any, total: int
+    ) -> None:
         try:
             verdicts = future.result()
         except BudgetExceeded:
@@ -363,10 +366,10 @@ class Judge:
 
     # -- first pass, batched --------------------------------------------------
 
-    def submit_pending(self, run_id: int | None, limit: int | None = None) -> dict:
+    def submit_pending(self, run_id: int | None, limit: int | None = None) -> dict[str, Any]:
         """Send what is pending to the Batches API. A batch smaller than one call's worth
         waits for more articles unless its oldest has waited an hour. Returns stats."""
-        stats = {
+        stats: dict[str, Any] = {
             "submitted": 0,
             "requests": 0,
             "dupes": 0,
@@ -402,7 +405,7 @@ class Judge:
             members.append((custom_id, [r["id"] for r in batch]))
         batch_id = self.llm.submit_batch(requests)
         store.add_batch(self.conn, batch_id, run_id, "teacher", model, members)
-        stats.update(submitted=len(todo), requests=len(requests), batch_id=batch_id)
+        stats.update({"submitted": len(todo), "requests": len(requests), "batch_id": batch_id})
         log.info("judge: submitted batch %s: %d articles in %d requests", batch_id, len(todo), len(requests))
         return stats
 
@@ -444,7 +447,7 @@ class Judge:
         log.info("judge: submitted %d reviews as batch %s", len(requests), batch_id)
         return len(requests)
 
-    def collect(self, run_id: int | None, client: Any = None, on_progress: Any = None) -> dict:
+    def collect(self, run_id: int | None, client: Any = None, on_progress: Any = None) -> dict[str, Any]:
         """Record the judgments of every finished batch. Articles whose request failed go
         back to pending (first pass) or count as examined and stay unread (review)."""
         stats = {"scored": 0, "second_looks": 0, "saved": 0, "failed": 0, "empty": 0, "open": 0, "notes": []}
@@ -457,7 +460,7 @@ class Judge:
                 on_progress(stats)
         return stats
 
-    def _finished_results(self, b: sqlite3.Row, stats: dict) -> list[Any] | None:
+    def _finished_results(self, b: sqlite3.Row, stats: dict[str, Any]) -> list[Any] | None:
         """The results of one batch when it has ended and they can be fetched; None when it is
         still open (counted) or has been given up on (closed as lost). A rejected key or model
         is raised: nothing else can go right after it."""
@@ -492,7 +495,7 @@ class Judge:
                 stats["open"] += 1
         return None
 
-    def _give_up(self, b: sqlite3.Row, why: str, stats: dict) -> None:
+    def _give_up(self, b: sqlite3.Row, why: str, stats: dict[str, Any]) -> None:
         """Close a batch whose results will never come; its articles are pending again (first
         pass) or count as examined and stay unread (reviews)."""
         if b["purpose"] == "second_look":
@@ -514,7 +517,7 @@ class Judge:
         return store.utcnow() - created > timedelta(hours=BATCH_LOST_HOURS)
 
     def _absorb(
-        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict
+        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict[str, Any]
     ) -> None:
         """Record one finished batch: judgments, reviews, costs and the batch's closing in
         one transaction, so an interrupt leaves it open and untouched for the next run to
@@ -527,7 +530,7 @@ class Judge:
             self.llm.adapt_to_error(model, first_error)
 
     def _absorb_results(
-        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict
+        self, b: sqlite3.Row, results: list[Any], run_id: int | None, client: Any, stats: dict[str, Any]
     ) -> tuple[str, str]:
         """Returns (model, first error message) for the caller to act on once the transaction is over."""
         members = store.batch_members(self.conn, b["id"])
@@ -597,7 +600,9 @@ class Judge:
             done += 1
         return done
 
-    def _absorb_review(self, aid: str, verdicts: list[Verdict] | None, client: Any, stats: dict) -> None:
+    def _absorb_review(
+        self, aid: str, verdicts: list[Verdict] | None, client: Any, stats: dict[str, Any]
+    ) -> None:
         current = self.conn.execute(
             "SELECT s.score, a.folder FROM scores s JOIN articles a ON a.id = s.article_id WHERE s.article_id = ?",
             (aid,),
@@ -649,7 +654,7 @@ class Judge:
         if stale:
             self.stale_tags.setdefault(stale, []).append(row["id"])
 
-    def _record_duplicate(self, row: sqlite3.Row, original: dict) -> None:
+    def _record_duplicate(self, row: sqlite3.Row, original: dict[str, Any]) -> None:
         d = {
             "quality": 20,
             "learning": 10,
@@ -769,7 +774,10 @@ def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
     neg = store.concept_counts(conn, store.NEGATIVE_KINDS, since)
     basic = store.concept_counts(conn, ["basic"], since, limit=20)
     heavy = store.concept_counts(conn, ["heavy"], since, limit=20)
-    fmt = lambda pairs: ", ".join(f"{c}: {n}" for c, n in pairs)  # noqa: E731
+
+    def fmt(pairs: list[tuple[str, int]]) -> str:
+        return ", ".join(f"{c}: {n}" for c, n in pairs)
+
     lines = []
     if loved:
         lines.append(

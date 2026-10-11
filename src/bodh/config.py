@@ -477,7 +477,7 @@ class Secrets(BaseModel):
     healthcheck_url: SecretStr = SecretStr("")
 
     def value(self, name: str) -> str:
-        return getattr(self, name).get_secret_value()
+        return str(getattr(self, name).get_secret_value())
 
     def is_set(self, name: str) -> bool:
         return bool(self.value(name))

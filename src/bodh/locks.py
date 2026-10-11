@@ -10,13 +10,16 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import Any
 
 from .errors import BodhError, LockedError
 
 try:
     import fcntl
+
+    HAVE_FLOCK = True
 except ImportError:  # Windows: no flock; the lock below falls back to an exclusive file
-    fcntl = None  # type: ignore[assignment]
+    HAVE_FLOCK = False
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +76,7 @@ def _pid_record(data_dir: Path) -> tuple[int, str, float] | None:
 def _lock_held_by_someone(path: Path) -> bool:
     """A non-blocking probe of the lock file: taken and released in the same instant. Used only
     when the pid file names a live process, so a refused run_lock cannot be our own probe."""
-    if fcntl is None:
+    if not HAVE_FLOCK:
         return path.exists()
     try:
         with open(path, "a") as fh:
@@ -106,7 +109,7 @@ def run_lock(data_dir: Path, kind: str = "run") -> Iterator[None]:
     path = data_dir / "bodh.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     pid_path = data_dir / "bodh.pid"
-    if fcntl is None:
+    if not HAVE_FLOCK:
         with _exclusive_file_lock(path), _pid_file(pid_path, kind):
             yield
         return
@@ -170,7 +173,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
             path.unlink()
 
 
-def running_process(data_dir: Path) -> dict | None:
+def running_process(data_dir: Path) -> dict[str, Any] | None:
     """The process holding the run lock, from the pid file: {pid, kind, started} or None."""
     rec = _pid_record(data_dir)
     if rec is None or not run_in_progress(data_dir):
@@ -209,7 +212,7 @@ def time_limit(seconds: int) -> Iterator[None]:
         yield
         return
 
-    def _alarm(signum, frame):
+    def _alarm(signum: int, frame: Any) -> None:
         raise RunTimeout(f"run exceeded {seconds}s")
 
     previous = signal.signal(signal.SIGALRM, _alarm)
@@ -233,7 +236,7 @@ def graceful_sigterm() -> Iterator[None]:
         yield
         return
 
-    def _term(signum, frame):
+    def _term(signum: int, frame: Any) -> None:
         raise KeyboardInterrupt
 
     previous = signal.signal(signal.SIGTERM, _term)
