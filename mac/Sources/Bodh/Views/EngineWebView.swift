@@ -20,7 +20,6 @@ struct EngineWebView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = false
-        view.setValue(false, forKey: "drawsBackground")
         if let identifier = Bundle.main.bundleIdentifier {
             view.customUserAgent = "bodh-mac/\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev") (\(identifier))"
         }

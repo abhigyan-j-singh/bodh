@@ -55,9 +55,9 @@ final class AppModel: ObservableObject {
     }
 
     var nextRunText: String? {
-        if isPaused, let until = status?.pausedUntil { return "Paused until " + Clock.short(until) }
+        if isPaused, let until = status?.pausedUntil { return "Paused until " + TimeText.short(until) }
         guard let seconds = tick?.nextRunInS ?? status?.nextRunIn else { return nil }
-        return "Next run in " + Clock.minutes(seconds)
+        return "Next run in " + TimeText.minutes(seconds)
     }
 
     var worstAttention: Attention? {
@@ -363,7 +363,7 @@ final class AppModel: ObservableObject {
 }
 
 /// Short times for the menu: "7 min", "1 h 20 min", "Tue 07:00".
-enum Clock {
+enum TimeText {
     static func minutes(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         if total < 60 { return "under a minute" }

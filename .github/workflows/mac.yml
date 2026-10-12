@@ -29,9 +29,12 @@ jobs:
         run: |
           python -m pip install -e ".[dev]" >/dev/null
           python -m pytest -q tests/contracts/test_app_api.py
-      - name: BodhEngine tests
+      - name: The engine
         working-directory: mac
-        run: swift test
+        run: make engine
+      - name: BodhEngine tests, the live ones against the engine too
+        working-directory: mac
+        run: make test
       - name: The app
         working-directory: mac
         run: make app

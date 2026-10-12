@@ -26,9 +26,15 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     private var sent: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "notifications.sent") ?? [])
     var onOpen: (@MainActor (Kind) -> Void)?
 
+    /// `UNUserNotificationCenter` needs an app bundle; `swift run` on the bare executable has
+    /// none, and asking it for the center would crash the app.
+    static let available = Bundle.main.bundleIdentifier != nil
+
     override init() {
         super.init()
-        UNUserNotificationCenter.current().delegate = self
+        if Notifications.available {
+            UNUserNotificationCenter.current().delegate = self
+        }
     }
 
     static func isEnabled(_ key: String) -> Bool {
@@ -37,13 +43,14 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func requestPermission() {
+        guard Notifications.available else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             AppLog.info("notifications: \(granted ? "allowed" : "declined")\(error.map { " (\($0.localizedDescription))" } ?? "")")
         }
     }
 
     func send(id: String, title: String, body: String, kind: Kind) {
-        guard Notifications.isEnabled(kind.preferenceKey), !sent.contains(id) else { return }
+        guard Notifications.available, Notifications.isEnabled(kind.preferenceKey), !sent.contains(id) else { return }
         sent.insert(id)
         if sent.count > 500 { sent = Set(sent.suffix(300)) }
         UserDefaults.standard.set(Array(sent), forKey: "notifications.sent")
@@ -59,6 +66,7 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func sendTest() {
+        guard Notifications.available else { return }
         let content = UNMutableNotificationContent()
         content.title = "bodh"
         content.body = "This is what a notification looks like."

@@ -29,10 +29,18 @@ open build/Bodh.app
 ```
 
 `make run` starts the app from the build folder with `BODH_ENGINE` pointing at the engine, which
-is the quick loop while developing. `make test` runs the BodhEngine tests; `open Package.swift`
-opens the package in Xcode, where the `Bodh` scheme runs the app (set `BODH_ENGINE` to
-`mac/build/engine-arm64` in the scheme's environment, and `BODH_HOME` to a project folder of
-your choosing if you do not want the app's own one under Application Support).
+is the quick loop while developing (notifications and the login item need the bundle, so they
+are off there). `make test` runs the BodhEngine tests, and with the engine built the live ones
+too: a real `bodh serve --app` started by the supervisor, the client's round trips, the event
+stream, the stop. `open Package.swift` opens the package in Xcode, where the `Bodh` scheme runs
+the app (set `BODH_ENGINE` to `mac/build/engine-arm64` in the scheme's environment, and
+`BODH_HOME` to a project folder of your choosing if you do not want the app's own one under
+Application Support).
+
+On Linux the package is the BodhEngine library and its tests alone (`Package.swift` leaves the
+app out there), so the client, the models, the event stream and the supervisor are built and
+tested with any Swift 5.10+ toolchain: `swift test`, and with `BODH_LIVE_ENGINE=1 BODH_PYTHON=…`
+against a Python that has bodh installed. That is how this code was first compiled.
 
 The app is signed ad hoc by `make app`, enough for this Mac. For a copy another Mac will open
 without a warning: `make sign IDENTITY="Developer ID Application: Your Name (TEAMID)"`, then
@@ -71,3 +79,5 @@ Sparkle (Check for updates opens the releases page), the App Store, UI tests, th
 and Keyboard panes, the Connections pane beyond the weekly note path (healthchecks, ntfy,
 Pushover, Slack, hooks, MCP, Shortcuts come with the engine's Phase 8), Localizable strings.
 `MAC_APP_PLAN.md` is the full plan; this is Stage B with the packaging of Stage C scripted.
+The app target (SwiftUI, AppKit, WebKit) has been parsed by the compiler but not yet built
+against the macOS SDK: the first `make app` on a Mac is where its compile errors, if any, show.

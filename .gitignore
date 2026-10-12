@@ -17,6 +17,7 @@ __pycache__/
 htmlcov/
 *.egg-info/
 build/
+.build/
 dist/
 
 # your own prompt overrides (./prompts/ next to config.yaml; the packaged ones live in src/bodh/prompts/)

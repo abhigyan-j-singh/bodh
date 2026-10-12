@@ -105,7 +105,11 @@ public final class EngineClient {
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data, status: Int) throws -> T {
         if status >= 400 {
-            if let refusal = try? EngineClient.decoder.decode(SettingsRefusal.self, from: data) {
+            let refusal = try? EngineClient.decoder.decode(SettingsRefusal.self, from: data)
+            if status == 401 || status == 403 {  // the token, or the Host: never a field's fault
+                throw EngineError.http(status: status, message: refusal?.message ?? "The engine refused the request (\(status)).")
+            }
+            if let refusal = refusal {
                 throw EngineError.refused(message: refusal.message, errors: refusal.errors ?? [])
             }
             let text = String(decoding: data, as: UTF8.self)
@@ -296,29 +300,64 @@ public final class EngineClient {
     // MARK: events
 
     /// The event stream, frame by frame, until the task is cancelled or the engine goes. A
-    /// reconnect passes `since` (the last event id seen) so nothing is missed.
+    /// reconnect passes `since` (the last event id seen) so nothing is missed. A data-task
+    /// delegate feeds the parser as bytes arrive (the same code on macOS and Linux).
     public func events(since: Int? = nil) -> AsyncThrowingStream<EngineEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                var request = self.request("GET", "/api/events")
-                request.timeoutInterval = 3600
-                if let since = since { request.setValue(String(since), forHTTPHeaderField: "Last-Event-ID") }
-                do {
-                    let (bytes, response) = try await self.session.bytes(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    guard status == 200 else { throw EngineError.http(status: status, message: "the event stream was refused") }
-                    var parser = SSEParser()
-                    for try await line in bytes.lines {
-                        for event in parser.feed(line + "\n") {
-                            continuation.yield(event)
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+        var request = self.request("GET", "/api/events")
+        request.timeoutInterval = 3600
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let since = since { request.setValue(String(since), forHTTPHeaderField: "Last-Event-ID") }
+        return SSEStream.open(request, configuration: session.configuration)
+    }
+}
+
+/// A `URLSession` data task whose bytes become parsed server-sent events on an async stream.
+final class SSEStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {  // the session's delegate queue serialises the callbacks
+    private var parser = SSEParser()
+    private var continuation: AsyncThrowingStream<EngineEvent, Error>.Continuation?
+    private var session: URLSession?
+    private var status = 0
+
+    static func open(_ request: URLRequest, configuration: URLSessionConfiguration) -> AsyncThrowingStream<EngineEvent, Error> {
+        let stream = SSEStream()
+        return AsyncThrowingStream { continuation in
+            stream.continuation = continuation
+            let config = configuration.copy() as? URLSessionConfiguration ?? URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 3600
+            config.timeoutIntervalForResource = 86400
+            let session = URLSession(configuration: config, delegate: stream, delegateQueue: nil)
+            stream.session = session
+            let task = session.dataTask(with: request)
+            continuation.onTermination = { _ in
+                task.cancel()
+                session.invalidateAndCancel()
             }
-            continuation.onTermination = { _ in task.cancel() }
+            task.resume()
         }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status != 200 {
+            continuation?.finish(throwing: EngineError.http(status: status, message: "the event stream was refused"))
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        for event in parser.feed(data) {
+            continuation?.yield(event)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            continuation?.finish(throwing: EngineError.transport(error))
+        } else {
+            continuation?.finish()
+        }
+        session.finishTasksAndInvalidate()
     }
 }

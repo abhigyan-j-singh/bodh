@@ -552,7 +552,7 @@ struct AdvancedPane: View {
                 LabeledContent("Version", value: model.health?.version ?? "–")
                 LabeledContent("State", value: model.engineState.description)
                 LabeledContent("Port", value: model.engineState.port.map { String($0) } ?? "–")
-                LabeledContent("Up for", value: model.health.map { Clock.minutes($0.uptimeS) } ?? "–")
+                LabeledContent("Up for", value: model.health.map { TimeText.minutes($0.uptimeS) } ?? "–")
                 HStack {
                     Button("Restart the engine") { model.restartEngine() }
                     Button("Export diagnostics…") { Task { if let url = await Diagnostics.export(model: model) { message = "Written: \(url.lastPathComponent)" } } }

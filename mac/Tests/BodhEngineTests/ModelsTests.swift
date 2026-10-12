@@ -30,7 +30,7 @@ final class ModelsTests: XCTestCase {
         let why = try Fixtures.decode(WhyAnswer.self, "why.json")
         XCTAssertTrue(why.article.judged)
         XCTAssertEqual(why.article.score, 92)
-        XCTAssertEqual(why.article.record.first?.kind, "great")
+        XCTAssertEqual(why.article.record, [])  // the fixture is written before any mark
         let found = try Fixtures.decode(FindAnswer.self, "find.json")
         XCTAssertEqual(found.hits.count, 4)
         XCTAssertTrue(found.unread)

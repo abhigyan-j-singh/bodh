@@ -7,7 +7,7 @@
 #   make build           swift build, release
 #   make app             Bodh.app in build/, signed ad hoc: open build/Bodh.app
 #   make run             the app from the build folder, the engine from build/engine-<arch>
-#   make test            the engine library's tests (swift test)
+#   make test            the engine library's tests; with the engine built, the live ones against it too
 #   make icon            AppIcon.icns from Resources/Icon (iconutil)
 #   make sign            Developer ID signature (IDENTITY=...), every Mach-O in the engine too
 #   make notarize        notarytool + staple (NOTARY_PROFILE=bodh)
@@ -45,8 +45,12 @@ run: build
 	@test -x $(ENGINE)/python/bin/python3 || $(MAKE) engine
 	BODH_ENGINE=$(abspath $(ENGINE)) $(BINARY)
 
-test:
-	swift test
+test:  # the engine library's tests; with an engine built, the live ones against `bodh serve --app` too
+	@if [ -x $(ENGINE)/python/bin/python3 ]; then \
+	  BODH_LIVE_ENGINE=1 BODH_PYTHON=$(abspath $(ENGINE))/python/bin/python3 swift test; \
+	else \
+	  swift test; echo "note: no $(ENGINE): the live tests were skipped (make engine first)"; \
+	fi
 
 icon: build/AppIcon.icns
 
