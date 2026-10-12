@@ -410,3 +410,12 @@ judge then reads again what the old judge rated 50 or more on the next runs, or 
 counts has its spend estimated and `bodh progress` says so. Five failed calls in a row (the provider
 down, the prompt broken for that model) stop the judging for that run; the rest stays pending and the
 summary says why. `docs/models.md` has the table of providers and what each can do.
+
+## 13. The Mac app and the settings command
+
+The Mac app (`docs/mac.md`) runs the same engine from `~/Library/Application Support/bodh`;
+`bodh status` in Terminal agrees with its menu bar once `BODH_HOME` points there, and the two
+never run at once (one lock). Every knob in this sheet is in its Settings window, and on the
+command line: `bodh settings` lists every value with its source, `bodh settings set
+autocut.cutoff 40` changes one with the file's comments kept, `bodh settings schema` shows what
+the window draws (`CONFIG.md` in prose).

@@ -228,6 +228,13 @@ def init(
         )
         return
     flags = {name: value for name, value in locals().items() if name in initmod.FLAG_NAMES}
+    _init_wizard(flags, yes=yes, live=live, install_schedule=install_schedule)
+
+
+def _init_wizard(flags: dict[str, Any], yes: bool, live: bool, install_schedule: bool | None) -> None:
+    """The questions, the files, doctor, the schedule: the end of `bodh init`."""
+    from . import init as initmod
+
     asking = not yes and _interactive()
     answers = initmod.gather(_asker(asking), flags)
     answers.live = live

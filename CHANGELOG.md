@@ -38,6 +38,12 @@ Every change a user could notice, newest first. The format follows
   profile, dashboard, prompts), nothing rewritten, idempotent; the app's first launch uses it.
 - The console's child runs end cleanly when `bodh serve` is stopped mid-run: the child gets
   Ctrl-C and twenty seconds, then SIGTERM (it used to be killed outright).
+- **bodh for Mac** (`mac/`): a SwiftUI menu bar app around the bundled engine, with Settings
+  drawn from the engine's schema, onboarding, notifications, a login item, the command line tool,
+  and the migration of a terminal install; `scripts/build_engine.sh` builds the bundled
+  interpreter, `mac/Makefile` the app, the signature, the notarized DMG; `docs/mac.md` and
+  `docs/release.md`. `bodh init --skeleton` writes a project's files without the questions, for
+  a wizard that asks elsewhere.
 
 ### Renamed
 
