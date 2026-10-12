@@ -69,7 +69,7 @@ class MemoryKeyring:
 
 @pytest.fixture
 def memory_keyring(monkeypatch):
-    import keyring
+    keyring = pytest.importorskip("keyring")  # the optional extra; the keychain test needs it
 
     ring = MemoryKeyring()
     monkeypatch.setattr(keyring, "get_password", ring.get_password)
