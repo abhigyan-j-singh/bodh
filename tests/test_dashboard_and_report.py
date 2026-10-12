@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from conftest import seed_scored
 
-from triage import dashboard, report, store
+from bodh import dashboard, report, store
 
 
 def test_dashboard_and_weekly_note_render(conn, cfg):
@@ -14,7 +14,8 @@ def test_dashboard_and_weekly_note_render(conn, cfg):
     store.finish_run(conn, run_id, True, summary="ok")
     path = dashboard.render(cfg, conn)
     html = path.read_text(encoding="utf-8")
-    assert "Near misses" in html and "Calibration" in html and "Article 9" in html
+    assert "Near misses" in html and "How often each band gets read" in html and "Article 9" in html
+    assert 'data-mode="export"' in html and 'id="bodh-document"' in html
     note = dashboard.weekly_note(cfg, conn, {"reason": "kept", "diff": ""})
     assert note is not None and "Learnings this week" in note.read_text(encoding="utf-8")
     rep = report.render(cfg, conn)
@@ -31,17 +32,21 @@ def test_calibration_bands(conn, cfg):
 
 
 def test_verdicts_panel_and_disagreements(conn, cfg):
-    ids = seed_scored(conn, cfg, [dict(n=1, score=95, concept="x"), dict(n=2, score=85), dict(n=3, score=20), dict(n=4, score=55)])
+    ids = seed_scored(
+        conn,
+        cfg,
+        [dict(n=1, score=95, concept="x"), dict(n=2, score=85), dict(n=3, score=20), dict(n=4, score=55)],
+    )
     store.set_verdict(conn, ids[0], "great", store.GRADES)
-    store.set_verdict(conn, ids[1], "bad", store.GRADES)      # the teacher's 85 the student calls junk
-    store.set_verdict(conn, ids[2], "good", store.GRADES)     # a 20 the student liked
-    store.set_verdict(conn, ids[3], "meh", store.GRADES)      # a 55: no disagreement
+    store.set_verdict(conn, ids[1], "bad", store.GRADES)  # the teacher's 85 the student calls junk
+    store.set_verdict(conn, ids[2], "good", store.GRADES)  # a 20 the student liked
+    store.set_verdict(conn, ids[3], "meh", store.GRADES)  # a 55: no disagreement
     verd = {v["band"]: v for v in dashboard.verdicts(conn)}
     assert verd["90 to 100"]["great"] == 1 and verd["70 to 89"]["bad"] == 1 and verd["0 to 29"]["good"] == 1
     dis = dashboard.disagreements(conn)
     assert {r["id"] for r in dis} == {ids[1], ids[2]}
     html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    assert "Your verdicts" in html and "disagree most" in html and "Article 2" in html
+    assert "Your grades" in html and "disagree most" in html and "Article 2" in html
 
 
 def test_proposal_thresholds(conn, cfg):
@@ -49,7 +54,7 @@ def test_proposal_thresholds(conn, cfg):
     after a day-0 bankruptcy the first report proposed unsubscribing from every big feed."""
     from conftest import make_item
 
-    from triage.config import FolderPolicy
+    from bodh.config import FolderPolicy
 
     now = store.utcnow_iso()
     # 60 unscored articles of one feed, all bankrupted
@@ -69,9 +74,9 @@ def test_proposal_thresholds(conn, cfg):
     assert report.proposal(rows["Big Unscored"], cfg) == ""
     assert report.proposal(rows["Junk Feed"], cfg).startswith("unsubscribe")
     # the strict folder comes from config: none configured, no "move to" proposal
-    cfg.cut.folders = {}
+    cfg.folders = {}
     assert report.strictest_folder(cfg) is None
-    cfg.cut.folders = {"Torrent": FolderPolicy(auto_cut_below=70), "Always": FolderPolicy(protected=True)}
+    cfg.folders = {"Torrent": FolderPolicy(cutoff=70), "Always": FolderPolicy(protected=True)}
     assert report.strictest_folder(cfg) == "Torrent"
     big = seed_scored(conn, cfg, [dict(n=1000 + i, score=40, feed="Loud Feed") for i in range(300)])
     store.mark_cut(conn, big[:200], run_id, "floor")
@@ -81,15 +86,19 @@ def test_proposal_thresholds(conn, cfg):
 
 
 def test_links_only_http(conn, cfg):
-    ids = seed_scored(conn, cfg, [dict(n=1, score=95, url="javascript:alert(1)"), dict(n=2, score=90, url="https://ok.test/a")])
+    ids = seed_scored(
+        conn,
+        cfg,
+        [dict(n=1, score=95, url="javascript:alert(1)"), dict(n=2, score=90, url="https://ok.test/a")],
+    )
     store.add_feedback(conn, ids[0], "read")
     store.add_feedback(conn, ids[1], "read")
     html = dashboard.render(cfg, conn).read_text(encoding="utf-8")
-    assert "javascript:" not in html and "href='https://ok.test/a'" in html and "href='#'" in html
+    assert "javascript:" not in html and 'href="https://ok.test/a"' in html and 'href="#"' in html
 
 
 def test_write_live_unique_tmp(conn, cfg):
-    from triage import progress
+    from bodh import progress
 
     path = progress.write_live(cfg, conn)
     assert path is not None and not list(path.parent.glob("*.tmp")) and path.name == "progress.json"

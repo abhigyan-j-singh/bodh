@@ -1,0 +1,8 @@
+"""bodh: keeps a BazQux unread list worth reading.
+
+A judge (a strong model) reads every unread article once; the worst are
+marked read in BazQux; you choose how deep the cut goes. BazQux is the only
+source of truth, any reader that syncs with it simply follows, and every machine action is a tag.
+"""
+
+__version__ = "1.0.0.dev0"  # the one place the version lives (pyproject reads it)

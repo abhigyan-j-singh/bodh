@@ -1,29 +1,76 @@
 [project]
-name = "triage"
-version = "0.1.0"
-description = "Keeps a BazQux unread list worth reading: a teacher scores every article, the worst are marked read, you choose the depth."
+name = "bodh"
+dynamic = ["version"]
+description = "A judge for your BazQux unread list: reads every article as teaching material for you, tags it, cuts the worst, learns from what you read."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Abhigyan J Singh" }]
 requires-python = ">=3.10"
+keywords = ["rss", "bazqux", "reading-list", "feed-reader", "claude", "anthropic", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: News/Diary",
+]
 dependencies = [
-    "anthropic>=0.40",
-    "httpx>=0.27",
-    "pydantic>=2.8",
-    "typer>=0.12",
-    "pyyaml>=6.0",
-    "python-dotenv>=1.0",
+    "anthropic>=0.77,<2",   # 0.77 is the first with output_config (structured outputs); 1.x passes the suite
+    "httpx>=0.27,<1",
+    "pydantic>=2.8,<3",
+    "typer>=0.12,<1",
+    "pyyaml>=6.0,<7",
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.2", "ruff>=0.5"]
+keychain = ["keyring>=24"]   # keys in the macOS Keychain, the Linux secret service or the Windows Credential Manager
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "tomli>=2.0; python_version < '3.11'",
+]
+browser = ["playwright>=1.45"]  # the visual and live-layer tests and scripts/screenshots.py; dev only
+
+[project.urls]
+Homepage = "https://github.com/abhigyan-j-singh/bodh"
+Repository = "https://github.com/abhigyan-j-singh/bodh"
+Issues = "https://github.com/abhigyan-j-singh/bodh/issues"
+Changelog = "https://github.com/abhigyan-j-singh/bodh/blob/main/CHANGELOG.md"
 
 [project.scripts]
-triage = "triage.cli:app"
+bodh = "bodh.cli:app"
+triage = "bodh.cli:triage_alias"   # the old name, for one release: prints a note, then runs
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+path = "src/bodh/__init__.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/triage"]
+packages = ["src/bodh"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# the example files `bodh init` starts a project from, one copy in the repository, shipped inside the package
+"config.example.yaml" = "bodh/templates/config.example.yaml"
+".env.example" = "bodh/templates/env.example"
+"profile.example/about.md" = "bodh/templates/profile.example/about.md"
+"profile.example/learned.md" = "bodh/templates/profile.example/learned.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -35,8 +82,27 @@ line-length = 110
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RET", "PL", "RUF"]
+ignore = [
+    "E501",     # the formatter wraps code; prose in strings and comments may run to 110
+    "PLR2004",  # scores, bands and counts are numbers by nature; a constant named SEVENTY says nothing
+    "PLC0415",  # imports inside functions are deliberate: the CLI starts fast and the modules avoid cycles
+    "PLR0913",  # a function that takes its options by keyword is clearer than an options object
+    "PLR0917",  # (the same, for positional arguments)
+    "RUF001",   # the middle dot and the ellipsis in user-facing strings are on purpose
+    "RUF012",   # pydantic models and dataclasses carry mutable defaults by design
+]
 
 [tool.ruff.lint.per-file-ignores]
-"src/triage/cli.py" = ["B008"]
+"src/bodh/cli.py" = ["B008"]        # typer's Option() in defaults is the library's idiom
+"tests/*" = ["PLR0911", "PLR0912", "PLR0915", "RUF059", "PLW2901", "RUF015"]   # a long test tells one story; a fake server returns from many branches; unused unpacked values document a shape
+
+[tool.mypy]
+strict = true
+files = ["src"]
+python_version = "3.10"
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["keyring", "keyring.*"]   # an optional extra, imported only when installed
+ignore_missing_imports = true

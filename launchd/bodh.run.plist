@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- bodh: one run every 30 minutes, and once at login or boot. install-launchd.sh fills in
+         the placeholders; as a LaunchAgent (laptop) it runs while you are logged in, as a
+         LaunchDaemon (an always-on Mac) it runs whether or not anyone is logged in. -->
+    <key>Label</key>
+    <string>bodh.run</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BODH_DIR__/.venv/bin/bodh</string>
+        <string>run</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__BODH_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BODH_HOME</key>
+        <string>__BODH_DIR__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+__USERNAME__
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- never restart a finished run; there is nothing to keep alive -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/bodh/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/bodh/launchd.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,1345 @@
+{
+ "$defs": {
+  "Article": {
+   "additionalProperties": false,
+   "properties": {
+    "age_text": {
+     "title": "Age Text",
+     "type": "string"
+    },
+    "arrived_at": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Arrived At"
+    },
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "concept": {
+     "title": "Concept",
+     "type": "string"
+    },
+    "feed": {
+     "title": "Feed",
+     "type": "string"
+    },
+    "folder": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Folder"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "judged_at": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Judged At"
+    },
+    "lesson": {
+     "title": "Lesson",
+     "type": "string"
+    },
+    "reader_url": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Reader Url"
+    },
+    "score": {
+     "title": "Score",
+     "type": "number"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "url": {
+     "title": "Url",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "title",
+    "url",
+    "score",
+    "band",
+    "lesson",
+    "concept",
+    "feed",
+    "age_text"
+   ],
+   "title": "Article",
+   "type": "object"
+  },
+  "Attention": {
+   "additionalProperties": false,
+   "properties": {
+    "dismissable": {
+     "default": false,
+     "title": "Dismissable",
+     "type": "boolean"
+    },
+    "key": {
+     "title": "Key",
+     "type": "string"
+    },
+    "level": {
+     "title": "Level",
+     "type": "string"
+    },
+    "link_text": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Link Text"
+    },
+    "link_url": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Link Url"
+    },
+    "text": {
+     "title": "Text",
+     "type": "string"
+    },
+    "word": {
+     "title": "Word",
+     "type": "string"
+    }
+   },
+   "required": [
+    "key",
+    "level",
+    "word",
+    "text"
+   ],
+   "title": "Attention",
+   "type": "object"
+  },
+  "BatchRow": {
+   "additionalProperties": false,
+   "properties": {
+    "age_text": {
+     "title": "Age Text",
+     "type": "string"
+    },
+    "articles": {
+     "title": "Articles",
+     "type": "integer"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "purpose": {
+     "title": "Purpose",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "purpose",
+    "articles",
+    "age_text"
+   ],
+   "title": "BatchRow",
+   "type": "object"
+  },
+  "CalibrationRow": {
+   "additionalProperties": false,
+   "properties": {
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "label": {
+     "title": "Label",
+     "type": "string"
+    },
+    "n": {
+     "title": "N",
+     "type": "integer"
+    },
+    "read_share": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Read Share"
+    },
+    "star_share": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Star Share"
+    }
+   },
+   "required": [
+    "band",
+    "label",
+    "n",
+    "read_share",
+    "star_share"
+   ],
+   "title": "CalibrationRow",
+   "type": "object"
+  },
+  "CloudItem": {
+   "additionalProperties": false,
+   "properties": {
+    "concept": {
+     "title": "Concept",
+     "type": "string"
+    },
+    "count": {
+     "title": "Count",
+     "type": "integer"
+    },
+    "frontier": {
+     "title": "Frontier",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "concept",
+    "count",
+    "frontier"
+   ],
+   "title": "CloudItem",
+   "type": "object"
+  },
+  "Concept": {
+   "additionalProperties": false,
+   "properties": {
+    "concept": {
+     "title": "Concept",
+     "type": "string"
+    },
+    "count": {
+     "title": "Count",
+     "type": "integer"
+    },
+    "items": {
+     "items": {
+      "$ref": "#/$defs/Learned"
+     },
+     "title": "Items",
+     "type": "array"
+    },
+    "more": {
+     "title": "More",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "concept",
+    "count",
+    "items",
+    "more"
+   ],
+   "title": "Concept",
+   "type": "object"
+  },
+  "DiffLine": {
+   "additionalProperties": false,
+   "properties": {
+    "kind": {
+     "title": "Kind",
+     "type": "string"
+    },
+    "text": {
+     "title": "Text",
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "text"
+   ],
+   "title": "DiffLine",
+   "type": "object"
+  },
+  "Disagreement": {
+   "additionalProperties": false,
+   "properties": {
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "concept": {
+     "title": "Concept",
+     "type": "string"
+    },
+    "grade": {
+     "title": "Grade",
+     "type": "string"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "score": {
+     "title": "Score",
+     "type": "number"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "url": {
+     "title": "Url",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "title",
+    "url",
+    "grade",
+    "score",
+    "band",
+    "concept"
+   ],
+   "title": "Disagreement",
+   "type": "object"
+  },
+  "FeedRow": {
+   "additionalProperties": false,
+   "properties": {
+    "articles": {
+     "title": "Articles",
+     "type": "integer"
+    },
+    "cut_share": {
+     "title": "Cut Share",
+     "type": "number"
+    },
+    "feed": {
+     "title": "Feed",
+     "type": "string"
+    },
+    "folder": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Folder"
+    },
+    "judged": {
+     "title": "Judged",
+     "type": "integer"
+    },
+    "mean_band": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Mean Band"
+    },
+    "mean_score": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Mean Score"
+    },
+    "proposal": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Proposal"
+    },
+    "read_share": {
+     "title": "Read Share",
+     "type": "number"
+    },
+    "star_share": {
+     "title": "Star Share",
+     "type": "number"
+    }
+   },
+   "required": [
+    "feed",
+    "folder",
+    "articles",
+    "judged",
+    "mean_score",
+    "mean_band",
+    "cut_share",
+    "read_share",
+    "star_share"
+   ],
+   "title": "FeedRow",
+   "type": "object"
+  },
+  "Feeds": {
+   "additionalProperties": false,
+   "properties": {
+    "days": {
+     "title": "Days",
+     "type": "integer"
+    },
+    "empty_text": {
+     "title": "Empty Text",
+     "type": "string"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "rows": {
+     "items": {
+      "$ref": "#/$defs/FeedRow"
+     },
+     "title": "Rows",
+     "type": "array"
+    }
+   },
+   "required": [
+    "lead",
+    "rows",
+    "empty_text",
+    "days"
+   ],
+   "title": "Feeds",
+   "type": "object"
+  },
+  "Footer": {
+   "additionalProperties": false,
+   "properties": {
+    "data_dir": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Data Dir"
+    },
+    "docs_url": {
+     "title": "Docs Url",
+     "type": "string"
+    },
+    "exported_text": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Exported Text"
+    },
+    "repo_url": {
+     "title": "Repo Url",
+     "type": "string"
+    },
+    "version": {
+     "title": "Version",
+     "type": "string"
+    }
+   },
+   "required": [
+    "version",
+    "data_dir",
+    "docs_url",
+    "repo_url"
+   ],
+   "title": "Footer",
+   "type": "object"
+  },
+  "GridRow": {
+   "additionalProperties": false,
+   "properties": {
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "counts": {
+     "additionalProperties": {
+      "type": "integer"
+     },
+     "title": "Counts",
+     "type": "object"
+    },
+    "label": {
+     "title": "Label",
+     "type": "string"
+    }
+   },
+   "required": [
+    "band",
+    "label",
+    "counts"
+   ],
+   "title": "GridRow",
+   "type": "object"
+  },
+  "Learned": {
+   "additionalProperties": false,
+   "properties": {
+    "lesson": {
+     "title": "Lesson",
+     "type": "string"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "url": {
+     "title": "Url",
+     "type": "string"
+    }
+   },
+   "required": [
+    "title",
+    "url",
+    "lesson"
+   ],
+   "title": "Learned",
+   "type": "object"
+  },
+  "Learning": {
+   "additionalProperties": false,
+   "properties": {
+    "cloud": {
+     "items": {
+      "$ref": "#/$defs/CloudItem"
+     },
+     "title": "Cloud",
+     "type": "array"
+    },
+    "cloud_empty": {
+     "title": "Cloud Empty",
+     "type": "string"
+    },
+    "concepts": {
+     "items": {
+      "$ref": "#/$defs/Concept"
+     },
+     "title": "Concepts",
+     "type": "array"
+    },
+    "concepts_empty": {
+     "title": "Concepts Empty",
+     "type": "string"
+    },
+    "concepts_more": {
+     "title": "Concepts More",
+     "type": "integer"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "profile": {
+     "$ref": "#/$defs/Profile"
+    }
+   },
+   "required": [
+    "lead",
+    "concepts",
+    "concepts_more",
+    "concepts_empty",
+    "cloud",
+    "cloud_empty",
+    "profile"
+   ],
+   "title": "Learning",
+   "type": "object"
+  },
+  "Machinery": {
+   "additionalProperties": false,
+   "properties": {
+    "batches": {
+     "items": {
+      "$ref": "#/$defs/BatchRow"
+     },
+     "title": "Batches",
+     "type": "array"
+    },
+    "batches_empty": {
+     "title": "Batches Empty",
+     "type": "string"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "log": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Log",
+     "type": "array"
+    },
+    "runs": {
+     "items": {
+      "$ref": "#/$defs/RunRow"
+     },
+     "title": "Runs",
+     "type": "array"
+    },
+    "runs_empty": {
+     "title": "Runs Empty",
+     "type": "string"
+    }
+   },
+   "required": [
+    "lead",
+    "batches",
+    "batches_empty",
+    "runs",
+    "runs_empty",
+    "log"
+   ],
+   "title": "Machinery",
+   "type": "object"
+  },
+  "Money": {
+   "additionalProperties": false,
+   "properties": {
+    "budget_usd": {
+     "title": "Budget Usd",
+     "type": "number"
+    },
+    "cache_hit": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Cache Hit"
+    },
+    "cache_hit_text": {
+     "title": "Cache Hit Text",
+     "type": "string"
+    },
+    "chart_title": {
+     "title": "Chart Title",
+     "type": "string"
+    },
+    "days": {
+     "items": {
+      "$ref": "#/$defs/SpendDay"
+     },
+     "title": "Days",
+     "type": "array"
+    },
+    "empty_text": {
+     "title": "Empty Text",
+     "type": "string"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "month_text": {
+     "title": "Month Text",
+     "type": "string"
+    },
+    "month_usd": {
+     "title": "Month Usd",
+     "type": "number"
+    },
+    "per_1000": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Per 1000"
+    },
+    "per_1000_text": {
+     "title": "Per 1000 Text",
+     "type": "string"
+    }
+   },
+   "required": [
+    "lead",
+    "days",
+    "budget_usd",
+    "chart_title",
+    "per_1000",
+    "per_1000_text",
+    "cache_hit",
+    "cache_hit_text",
+    "month_usd",
+    "month_text",
+    "empty_text"
+   ],
+   "title": "Money",
+   "type": "object"
+  },
+  "NearMiss": {
+   "additionalProperties": false,
+   "properties": {
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "concept": {
+     "title": "Concept",
+     "type": "string"
+    },
+    "cut_mode": {
+     "title": "Cut Mode",
+     "type": "string"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "lesson": {
+     "title": "Lesson",
+     "type": "string"
+    },
+    "score": {
+     "title": "Score",
+     "type": "number"
+    },
+    "title": {
+     "title": "Title",
+     "type": "string"
+    },
+    "url": {
+     "title": "Url",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "title",
+    "url",
+    "score",
+    "band",
+    "lesson",
+    "concept",
+    "cut_mode"
+   ],
+   "title": "NearMiss",
+   "type": "object"
+  },
+  "Profile": {
+   "additionalProperties": false,
+   "properties": {
+    "date_text": {
+     "title": "Date Text",
+     "type": "string"
+    },
+    "diff": {
+     "items": {
+      "$ref": "#/$defs/DiffLine"
+     },
+     "title": "Diff",
+     "type": "array"
+    },
+    "diff_empty": {
+     "title": "Diff Empty",
+     "type": "string"
+    },
+    "text": {
+     "title": "Text",
+     "type": "string"
+    },
+    "version": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Version"
+    }
+   },
+   "required": [
+    "version",
+    "date_text",
+    "text",
+    "diff",
+    "diff_empty"
+   ],
+   "title": "Profile",
+   "type": "object"
+  },
+  "ReadingList": {
+   "additionalProperties": false,
+   "properties": {
+    "articles": {
+     "items": {
+      "$ref": "#/$defs/Article"
+     },
+     "title": "Articles",
+     "type": "array"
+    },
+    "band": {
+     "title": "Band",
+     "type": "integer"
+    },
+    "bands": {
+     "items": {
+      "type": "integer"
+     },
+     "title": "Bands",
+     "type": "array"
+    },
+    "empty_text": {
+     "title": "Empty Text",
+     "type": "string"
+    },
+    "folders": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Folders",
+     "type": "array"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "pending": {
+     "title": "Pending",
+     "type": "integer"
+    },
+    "total": {
+     "title": "Total",
+     "type": "integer"
+    },
+    "verdicts": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Verdicts",
+     "type": "array"
+    }
+   },
+   "required": [
+    "lead",
+    "band",
+    "bands",
+    "folders",
+    "articles",
+    "total",
+    "pending",
+    "empty_text",
+    "verdicts"
+   ],
+   "title": "ReadingList",
+   "type": "object"
+  },
+  "RunRow": {
+   "additionalProperties": false,
+   "properties": {
+    "id": {
+     "title": "Id",
+     "type": "integer"
+    },
+    "kind": {
+     "title": "Kind",
+     "type": "string"
+    },
+    "ok": {
+     "title": "Ok",
+     "type": "boolean"
+    },
+    "started_at": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Started At"
+    },
+    "started_text": {
+     "title": "Started Text",
+     "type": "string"
+    },
+    "summary": {
+     "title": "Summary",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "kind",
+    "started_text",
+    "started_at",
+    "ok",
+    "summary"
+   ],
+   "title": "RunRow",
+   "type": "object"
+  },
+  "SpendDay": {
+   "additionalProperties": false,
+   "properties": {
+    "day": {
+     "title": "Day",
+     "type": "string"
+    },
+    "label": {
+     "title": "Label",
+     "type": "string"
+    },
+    "usd": {
+     "title": "Usd",
+     "type": "number"
+    }
+   },
+   "required": [
+    "day",
+    "label",
+    "usd"
+   ],
+   "title": "SpendDay",
+   "type": "object"
+  },
+  "State": {
+   "additionalProperties": false,
+   "properties": {
+    "attention": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/Attention"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "eta_min": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Eta Min"
+    },
+    "kind": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Kind"
+    },
+    "levers": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Levers",
+     "type": "array"
+    },
+    "mode": {
+     "title": "Mode",
+     "type": "string"
+    },
+    "mode_label": {
+     "title": "Mode Label",
+     "type": "string"
+    },
+    "next_run_in_s": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Next Run In S"
+    },
+    "phase": {
+     "default": "",
+     "title": "Phase",
+     "type": "string"
+    },
+    "progress_done": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Progress Done"
+    },
+    "progress_total": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Progress Total"
+    },
+    "rate_per_min": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Rate Per Min"
+    },
+    "running": {
+     "title": "Running",
+     "type": "boolean"
+    },
+    "sentence": {
+     "title": "Sentence",
+     "type": "string"
+    }
+   },
+   "required": [
+    "running",
+    "sentence",
+    "mode",
+    "mode_label"
+   ],
+   "title": "State",
+   "type": "object"
+  },
+  "Tile": {
+   "additionalProperties": false,
+   "properties": {
+    "delta": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Delta"
+    },
+    "delta_text": {
+     "default": "",
+     "title": "Delta Text",
+     "type": "string"
+    },
+    "direction": {
+     "default": "",
+     "title": "Direction",
+     "type": "string"
+    },
+    "key": {
+     "title": "Key",
+     "type": "string"
+    },
+    "label": {
+     "title": "Label",
+     "type": "string"
+    },
+    "series": {
+     "items": {
+      "type": "number"
+     },
+     "title": "Series",
+     "type": "array"
+    },
+    "series_label": {
+     "default": "",
+     "title": "Series Label",
+     "type": "string"
+    },
+    "text": {
+     "title": "Text",
+     "type": "string"
+    },
+    "value": {
+     "title": "Value",
+     "type": "number"
+    }
+   },
+   "required": [
+    "key",
+    "label",
+    "value",
+    "text"
+   ],
+   "title": "Tile",
+   "type": "object"
+  },
+  "Today": {
+   "additionalProperties": false,
+   "properties": {
+    "hero_text": {
+     "title": "Hero Text",
+     "type": "string"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "target": {
+     "title": "Target",
+     "type": "integer"
+    },
+    "tiles": {
+     "items": {
+      "$ref": "#/$defs/Tile"
+     },
+     "title": "Tiles",
+     "type": "array"
+    },
+    "unread": {
+     "title": "Unread",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "unread",
+    "target",
+    "hero_text",
+    "lead",
+    "tiles"
+   ],
+   "title": "Today",
+   "type": "object"
+  },
+  "Verdicts": {
+   "additionalProperties": false,
+   "properties": {
+    "calibration": {
+     "items": {
+      "$ref": "#/$defs/CalibrationRow"
+     },
+     "title": "Calibration",
+     "type": "array"
+    },
+    "calibration_empty": {
+     "title": "Calibration Empty",
+     "type": "string"
+    },
+    "calibration_sentence": {
+     "title": "Calibration Sentence",
+     "type": "string"
+    },
+    "disagreements": {
+     "items": {
+      "$ref": "#/$defs/Disagreement"
+     },
+     "title": "Disagreements",
+     "type": "array"
+    },
+    "disagreements_empty": {
+     "title": "Disagreements Empty",
+     "type": "string"
+    },
+    "grid": {
+     "items": {
+      "$ref": "#/$defs/GridRow"
+     },
+     "title": "Grid",
+     "type": "array"
+    },
+    "grid_sentence": {
+     "title": "Grid Sentence",
+     "type": "string"
+    },
+    "lead": {
+     "title": "Lead",
+     "type": "string"
+    },
+    "near_misses": {
+     "items": {
+      "$ref": "#/$defs/NearMiss"
+     },
+     "title": "Near Misses",
+     "type": "array"
+    },
+    "near_misses_empty": {
+     "title": "Near Misses Empty",
+     "type": "string"
+    }
+   },
+   "required": [
+    "lead",
+    "grid",
+    "grid_sentence",
+    "disagreements",
+    "disagreements_empty",
+    "calibration",
+    "calibration_sentence",
+    "calibration_empty",
+    "near_misses",
+    "near_misses_empty"
+   ],
+   "title": "Verdicts",
+   "type": "object"
+  }
+ },
+ "$id": "https://github.com/abhigyan-j-singh/bodh/blob/main/docs/dashboard.schema.json",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "properties": {
+  "as_of": {
+   "title": "As Of",
+   "type": "string"
+  },
+  "as_of_text": {
+   "title": "As Of Text",
+   "type": "string"
+  },
+  "feeds": {
+   "$ref": "#/$defs/Feeds"
+  },
+  "footer": {
+   "$ref": "#/$defs/Footer"
+  },
+  "learning": {
+   "$ref": "#/$defs/Learning"
+  },
+  "list": {
+   "$ref": "#/$defs/ReadingList"
+  },
+  "machinery": {
+   "$ref": "#/$defs/Machinery"
+  },
+  "money": {
+   "$ref": "#/$defs/Money"
+  },
+  "schema": {
+   "default": 1,
+   "title": "Schema",
+   "type": "integer"
+  },
+  "state": {
+   "$ref": "#/$defs/State"
+  },
+  "timezone": {
+   "title": "Timezone",
+   "type": "string"
+  },
+  "today": {
+   "$ref": "#/$defs/Today"
+  },
+  "verdicts": {
+   "$ref": "#/$defs/Verdicts"
+  }
+ },
+ "required": [
+  "as_of",
+  "as_of_text",
+  "timezone",
+  "state",
+  "today",
+  "list",
+  "verdicts",
+  "learning",
+  "feeds",
+  "money",
+  "machinery",
+  "footer"
+ ],
+ "title": "DashboardDocument",
+ "type": "object"
+}

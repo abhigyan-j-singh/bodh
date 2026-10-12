@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- the bodh console: a small local web server (http://127.0.0.1:8766), kept alive.
+         Publish it on your tailnet with tailscale serve (port 8766). -->
+    <key>Label</key>
+    <string>bodh.console</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BODH_DIR__/.venv/bin/bodh</string>
+        <string>console</string>
+        <string>--port</string>
+        <string>8766</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__BODH_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BODH_HOME</key>
+        <string>__BODH_DIR__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+__USERNAME__
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- a port already taken (another console) would otherwise restart it every 10 s -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/bodh/console.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/bodh/console.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

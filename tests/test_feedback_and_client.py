@@ -5,20 +5,22 @@ import json
 import httpx
 from conftest import FakeClient, make_item, seed_scored
 
-from triage import feedback, store
-from triage.bazqux import READ, BazQuxClient, _parse_item, label
-from triage.ids import short_to_long
+from bodh import feedback, store
+from bodh.ids import short_to_long
+from bodh.readers.bazqux import READ, BazQuxClient, _parse_item, label
 
 
 def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
-    cfg.breakers.bulk_dismiss_threshold = 3
-    ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 4}", crawled_msec=None) for i in range(1, 8)])
+    cfg.safety.mark_all_read_threshold = 3
+    ids = seed_scored(
+        conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 4}", crawled_msec=None) for i in range(1, 8)]
+    )
     # the student read two of them (no longer unread upstream), two others got cut by us earlier
     run_id = store.begin_run(conn, "run")
     store.mark_cut(conn, ids[5:7], run_id, "floor")
     store.set_flags(conn, ids[5:7], cut_tagged=1, read_marked=1)
     unread_now = set(ids[2:5]) | {ids[5]}  # ids[0], ids[1] were read; ids[5] (cut) is unread again: a rescue
-    client = FakeClient(labels={cfg.tags.wrong: [], cfg.tags.meh: [ids[3]], cfg.tags.prune: [ids[4]]})
+    client = FakeClient(labels={cfg.tags.rescue: [], cfg.tags.meh: [ids[3]], cfg.tags.prune: [ids[4]]})
     stats = feedback.collect(client, conn, cfg, unread_now, starred_now={ids[2]})
     assert stats["reads"] == 2 and stats["dismissed"] == 0
     assert stats["rescues"] == 1 and stats["verdicts"] == 1 and stats["prune_requested"] is True
@@ -33,8 +35,10 @@ def test_reads_vs_bulk_dismiss_and_rescue(conn, cfg):
 
 
 def test_bulk_dismiss(conn, cfg):
-    cfg.breakers.bulk_dismiss_threshold = 3
-    ids = seed_scored(conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 3}", crawled_msec=None) for i in range(1, 6)])
+    cfg.safety.mark_all_read_threshold = 3
+    ids = seed_scored(
+        conn, cfg, [dict(n=i, score=60, feed=f"Feed {i % 3}", crawled_msec=None) for i in range(1, 6)]
+    )
     client = FakeClient()
     stats = feedback.collect(client, conn, cfg, unread_now=set(), starred_now=set())
     assert stats["dismissed"] == 5 and stats["reads"] == 0
@@ -42,11 +46,18 @@ def test_bulk_dismiss(conn, cfg):
 
 
 def test_parse_item_shapes():
-    raw = {"id": "tag:google.com,2005:reader/item/000000a00000ecc3", "title": "T", "published": 1700000000,
-           "crawlTimeMsec": "1700000000123", "alternate": [{"href": "https://x.test/a"}], "canonical": {"href": "https://x.test/c"},
-           "summary": {"content": "<p>short</p>"}, "content": {"content": "<p>much longer content here</p>"},
-           "origin": {"streamId": "feed/https://x.test/rss", "title": "X", "htmlUrl": "https://x.test"},
-           "categories": ["user/1/state/com.google/reading-list", "user/1/label/Folder"]}
+    raw = {
+        "id": "tag:google.com,2005:reader/item/000000a00000ecc3",
+        "title": "T",
+        "published": 1700000000,
+        "crawlTimeMsec": "1700000000123",
+        "alternate": [{"href": "https://x.test/a"}],
+        "canonical": {"href": "https://x.test/c"},
+        "summary": {"content": "<p>short</p>"},
+        "content": {"content": "<p>much longer content here</p>"},
+        "origin": {"streamId": "feed/https://x.test/rss", "title": "X", "htmlUrl": "https://x.test"},
+        "categories": ["user/1/state/com.google/reading-list", "user/1/label/Folder"],
+    }
     item = _parse_item(raw)
     assert item.url == "https://x.test/c" and item.html.startswith("<p>much longer")
     assert item.feed_title == "X" and item.crawled_msec == 1700000000123 and item.published == 1700000000
@@ -67,7 +78,10 @@ def _mock_transport(state: dict):
         if path == "/reader/api/0/stream/items/ids":
             page = request.url.params.get("c")
             if page is None:
-                return httpx.Response(200, json={"itemRefs": [{"id": "1", "timestampUsec": "5"}, {"id": "2"}], "continuation": "p2"})
+                return httpx.Response(
+                    200,
+                    json={"itemRefs": [{"id": "1", "timestampUsec": "5"}, {"id": "2"}], "continuation": "p2"},
+                )
             return httpx.Response(200, json={"itemRefs": [{"id": "-3"}]})
         if path == "/reader/api/0/edit-tag":
             return httpx.Response(200, text="OK")
@@ -75,7 +89,9 @@ def _mock_transport(state: dict):
             from urllib.parse import parse_qs
 
             ids = parse_qs(request.content.decode()).get("i", [])
-            items = [{"id": i, "title": f"t{i[-4:]}", "origin": {"streamId": "feed/x", "title": "X"}} for i in ids]
+            items = [
+                {"id": i, "title": f"t{i[-4:]}", "origin": {"streamId": "feed/x", "title": "X"}} for i in ids
+            ]
             return httpx.Response(200, json={"items": items})
         return httpx.Response(404)
 
@@ -83,7 +99,7 @@ def _mock_transport(state: dict):
 
 
 def test_client_pagination_relogin_and_edit_batches(monkeypatch):
-    import triage.bazqux as bq
+    import bodh.readers.bazqux as bq
 
     monkeypatch.setattr(bq, "MIN_REQUEST_INTERVAL", 0.0)
     monkeypatch.setattr(bq, "EDIT_BATCH", 2)
@@ -106,13 +122,24 @@ def test_client_pagination_relogin_and_edit_batches(monkeypatch):
 def test_store_rebuild_marks_and_scores(conn, cfg):
     item = make_item(1)
     store.upsert_article(conn, item, "Core")
-    verdict = {"quality": 70, "learning": 70, "fit": 70, "breadth": 70, "relevance": 70, "lesson": "l", "concept": "c",
-               "kind": "reporting", "flags": [], "dupe_of": None, "confidence": "high"}
+    verdict = {
+        "quality": 70,
+        "learning": 70,
+        "fit": 70,
+        "breadth": 70,
+        "relevance": 70,
+        "lesson": "l",
+        "concept": "c",
+        "kind": "reporting",
+        "flags": [],
+        "dupe_of": None,
+        "confidence": "high",
+    }
     store.record_score(conn, item.id, verdict, 70.0, 70.0, "score-70", "teacher.v1", "m")
-    assert store.untagged_buckets(conn) == {"score-70": [item.id]}
-    store.mark_bucket_tagged(conn, [item.id])
-    store.record_second_look(conn, item.id, 92.0, "opus", 92.0, "score-90")
-    assert store.untagged_buckets(conn) == {"score-90": [item.id]}
+    assert store.untagged_bands(conn) == {"score-70": [item.id]}
+    store.mark_band_tagged(conn, [item.id])
+    store.record_review(conn, item.id, 92.0, "opus", 92.0, "score-90")
+    assert store.untagged_bands(conn) == {"score-90": [item.id]}
     row = store.article(conn, item.id)
     assert row["score"] == 92.0 and row["second_look_score"] == 92.0 and json.loads(row["flags"]) == []
 
@@ -133,26 +160,59 @@ def test_costs_can_be_recorded_from_worker_threads(conn):
 
 
 def test_duplicate_index(conn, cfg):
-    from triage.teacher import DupIndex
+    from bodh.judgment import DupIndex
 
-    seed_scored(conn, cfg, [dict(n=1, score=50, title="A long enough title to be matched exactly", url="https://a.test/x?utm_source=rss")])
+    seed_scored(
+        conn,
+        cfg,
+        [
+            dict(
+                n=1,
+                score=50,
+                title="A long enough title to be matched exactly",
+                url="https://a.test/x?utm_source=rss",
+            )
+        ],
+    )
     index = DupIndex(conn)
     twin = {"id": short_to_long(2), "url": "https://a.test/x", "title": "different", "feed_title": "Other"}
     assert index.find(twin)["id"] == short_to_long(1)
-    same_title = {"id": short_to_long(3), "url": "https://b.test/y", "title": "A long enough title to be matched exactly", "feed_title": "Other"}
+    same_title = {
+        "id": short_to_long(3),
+        "url": "https://b.test/y",
+        "title": "A long enough title to be matched exactly",
+        "feed_title": "Other",
+    }
     assert index.find(same_title)["id"] == short_to_long(1)
-    same_feed = {"id": short_to_long(4), "url": "https://b.test/z", "title": "A long enough title to be matched exactly", "feed_title": "Feed A"}
+    same_feed = {
+        "id": short_to_long(4),
+        "url": "https://b.test/z",
+        "title": "A long enough title to be matched exactly",
+        "feed_title": "Feed A",
+    }
     assert index.find(same_feed) is None
 
 
 def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     cfg.root = tmp_path
     (tmp_path / "profile").mkdir(exist_ok=True)
-    (tmp_path / "profile" / "learner.md").write_text("## What the student has been learning\nnothing yet\n", encoding="utf-8")
-    monkeypatch.setattr("triage.learner.git_commit", lambda *a, **k: True)
+    # an install from before October 2026 still has learner.md: it is read and written in place
+    (tmp_path / "profile" / "learned.md").unlink()
+    (tmp_path / "profile" / "learner.md").write_text(
+        "## What the student has been learning\nnothing yet\n", encoding="utf-8"
+    )
+    assert cfg.learned_path.name == "learner.md"
+    monkeypatch.setattr("bodh.profiler.git_commit", lambda *a, **k: True)
     ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 7)])
-    labels = {cfg.tags.great: [ids[0]], cfg.tags.good: [ids[1], ids[2]], cfg.tags.bad: [ids[2]],
-              cfg.tags.basic: [ids[3]], cfg.tags.more: [ids[4]], cfg.tags.less: [ids[5]], cfg.tags.meh: []}
+    labels = {
+        cfg.tags.great: [ids[0]],
+        cfg.tags.good: [ids[1], ids[2]],
+        cfg.tags.bad: [ids[2]],
+        cfg.tags.basic: [ids[3]],
+        cfg.tags.more: [ids[4]],
+        cfg.tags.less: [ids[5]],
+        cfg.tags.meh: [],
+    }
     client = FakeClient(labels=labels)
     stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
     # one grade per article, the harsher present tag wins; levels and steers each recorded once
@@ -161,15 +221,16 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     assert store.verdicts(conn, store.STEERS) == {ids[4]: "more", ids[5]: "less"}
     assert stats["verdicts"] == 6 and stats["steers"] == 2
     # the tags stay on the articles: nothing untagged but the commands
-    assert all(name in (cfg.tags.cut, cfg.tags.wrong, cfg.tags.prune) for name, _ in client.untagged)
-    # the steers reached the learner model, with the article's concept, in one version
+    assert all(name in (cfg.tags.cut, cfg.tags.rescue, cfg.tags.prune) for name, _ in client.untagged)
+    # the steers reached the learned profile (under its old file name), with the article's concept, in one version
     text = (tmp_path / "profile" / "learner.md").read_text(encoding="utf-8")
-    assert "wants more on concept 5" in text and "wants less of concept 6" in text and "## Nudges" in text
-    assert len(store.learner_versions(conn, 10)) == 2  # initial + one nudge version
+    assert not (tmp_path / "profile" / "learned.md").exists()
+    assert "wants more on concept 5" in text and "wants less of concept 6" in text and "## Steers" in text
+    assert len(store.learned_versions(conn, 10)) == 2  # initial + one nudge version
     # a second run with the same tags changes nothing and nudges nothing
     stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
     assert stats["verdicts"] == 0 and stats["steers"] == 0
-    assert len(store.learner_versions(conn, 10)) == 2
+    assert len(store.learned_versions(conn, 10)) == 2
     # changing your mind: the good tag removed, bad added
     client.labels[cfg.tags.good] = [ids[2]]
     client.labels[cfg.tags.bad] = [ids[1], ids[2]]
@@ -180,7 +241,7 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
     assert store.verdicts(conn, store.GRADES)[ids[0]] == "great"
     # the teacher's lists and the article's record
-    from triage.teacher import concept_context
+    from bodh.judge import concept_context
 
     ctx = concept_context(conn, cfg)
     assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
@@ -193,7 +254,7 @@ def test_login_and_heartbeat_logs_carry_no_secrets(caplog, monkeypatch):
     (whose path is the check's secret) must never appear in them."""
     import logging
 
-    from triage.ops import Heartbeat
+    from bodh.heartbeat import Heartbeat
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("ClientLogin"):

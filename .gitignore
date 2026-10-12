@@ -1,5 +1,6 @@
 # secrets and personal state: never committed
 .env
+/config.yaml
 profile/
 data/
 dashboard/
@@ -9,6 +10,7 @@ dashboard/
 __pycache__/
 *.pyc
 .pytest_cache/
+.hypothesis/
 .ruff_cache/
 .mypy_cache/
 .coverage
@@ -17,10 +19,13 @@ htmlcov/
 build/
 dist/
 
-# your own prompt overrides (./prompts/ next to config.yaml; the packaged ones live in src/triage/prompts/)
+# your own prompt overrides (./prompts/ next to config.yaml; the packaged ones live in src/bodh/prompts/)
 /prompts/
 
 # scratch
 *.log
 *.bak*
 .DS_Store
+
+# the browser tests' latest screenshots (the baselines beside them are committed)
+tests/visual/out/
