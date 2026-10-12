@@ -22,13 +22,13 @@ HELP = "bodh (बोध): keeps your BazQux unread list worth reading."
 
 EPILOG = """\
 \b
-Set up        init, doctor, keys, models, version
+Set up        init, doctor, keys, models, settings, version
 Every run     run, catch-up, serve
 Look          status, progress, why, find, list
 Cut           prune, undo, clear-old
 Teach         mark, steer, profile, tags, eval
 Control       stop, schedule, autocut, safety, console
-Housekeeping  backup, rebuild, weekly, report, dashboard, upgrade
+Housekeeping  backup, rebuild, weekly, report, dashboard, upgrade, migrate-home
 
 \b
 Every command takes -v for debug lines; --json prints one object (docs/json.md); --dry-run
@@ -595,29 +595,79 @@ def blast(
 @_handled
 def serve(
     every: int = typer.Option(30, "--every", min=1, help="Minutes between runs."),
-    port: int = typer.Option(8766, "--port", help="The console's port."),
+    port: int = typer.Option(8766, "--port", help="The console's port; 0 takes a free one."),
     host: str = typer.Option("127.0.0.1", "--host", help="127.0.0.1 keeps the console local."),
     no_console: bool = typer.Option(False, "--no-console", help="The schedule only."),
+    app_mode: bool = typer.Option(
+        False, "--app", help="For the Mac app: the port as JSON on the first line, exit when stdin closes."
+    ),
+    token_file: Path | None = typer.Option(
+        None, "--token-file", help="A file holding the per-launch token every request must carry."
+    ),
+    home: Path | None = typer.Option(None, "--home", help="The project folder (the same as BODH_HOME)."),
     verbose: bool = VERBOSE,
 ) -> None:
     """The schedule and the console in one process: a run every --every minutes, the weekly
     rewrite on Sunday mornings, the report on the first of the month, the console on its port.
     For Docker, Windows, and any machine without launchd or systemd. Ctrl-C stops it.
+    With --app it is the Mac app's engine: a free port, a token, and the end when the app goes.
 
     \b
     Examples:
       bodh serve                     every 30 minutes, console on http://127.0.0.1:8766
       bodh serve --every 15 --no-console
+      bodh serve --app --port 0 --token-file "$HOME/Library/Application Support/bodh/token" --home "$HOME/Library/Application Support/bodh"
     """
+    import os
+
     from . import serve as servemod
 
+    if home is not None:
+        os.environ["BODH_HOME"] = str(home.expanduser().resolve())
     found = _app(verbose)
+    token = None
+    if token_file is not None:
+        from .service import read_token_file
+
+        token = read_token_file(token_file.expanduser())
+    if app_mode:
+        if token is None:
+            _fail("--app needs --token-file: the app writes the token before it starts the engine", 2)
+        _serve_app(found, every, host, port, token, token_file)
+        return
     typer.echo(
         f"serving: a run every {every} min"
         + ("" if no_console else f", console on http://{host}:{port}")
         + " (Ctrl-C stops it)"
     )
-    servemod.serve(found.cfg, found.conn, every_minutes=every, host=host, port=port, console=not no_console)
+    servemod.serve(
+        found.cfg, found.conn, every_minutes=every, host=host, port=port, console=not no_console, token=token
+    )
+
+
+def _serve_app(
+    found: api.App, every: int, host: str, port: int, token: str | None, token_file: Path | None
+) -> None:
+    """`serve --app`: the port line first on stdout, then the engine until stdin closes."""
+    from . import serve as servemod
+
+    def announce(info: dict[str, Any]) -> None:
+        typer.echo(api.dumps(info).replace("\n", " "))  # one line, the first on stdout
+        sys.stdout.flush()
+
+    servemod.serve(
+        found.cfg,
+        found.conn,
+        every_minutes=every,
+        host=host,
+        port=port,
+        console=True,
+        token=token,
+        app_mode=True,
+        token_file=token_file,
+        on_ready=announce,
+        exit_on_stdin_close=True,
+    )
 
 
 # == Look =============================================================================
@@ -1429,6 +1479,107 @@ def dashboard_command(verbose: bool = VERBOSE) -> None:
     """
     found = _app(verbose)
     typer.echo(str(found.dashboard()))
+
+
+@app.command()
+@_handled
+def settings(
+    action: str = typer.Argument("list", help="list, get, set or schema"),
+    key: str | None = typer.Argument(None, help="A dotted key, autocut.cutoff say (get, set)."),
+    value: str | None = typer.Argument(None, help="The new value, as YAML reads it (set)."),
+    as_json: bool = JSON,
+    verbose: bool = VERBOSE,
+) -> None:
+    """Every setting of config.yaml from the terminal, the way the Mac app's Settings window
+    reads and writes them: list every value with its source, get one, set one (validated, the
+    file's comments kept), or print the schema the window is drawn from (CONFIG.md is the same
+    source in prose).
+
+    \b
+    Examples:
+      bodh settings
+      bodh settings get autocut.cutoff
+      bodh settings set autocut.cutoff 40
+      bodh settings set judge.weights "{quality: 0.4, learning: 0.3, fit: 0.1, breadth: 0.1, relevance: 0.1}"
+      bodh settings schema --json
+    """
+    from . import settings as settingsmod
+
+    if action not in ("list", "get", "set", "schema"):
+        _fail(f"unknown action {action!r}: say list, get, set or schema")
+    found = _app(verbose)
+    if action == "schema":
+        _settings_schema(found, as_json)
+        return
+    vals, srcs = settingsmod.values(found.cfg), settingsmod.sources(found.cfg)
+    if action == "list":
+        if as_json:
+            _emit({"settings": vals, "sources": srcs, "path": str(found.cfg.root / "config.yaml")})
+        else:
+            for k in vals:
+                typer.echo(f"{k:36} {api.dumps(vals[k]).replace(chr(10), ' '):40} ({srcs[k]})")
+        return
+    if not key:
+        _fail("say which key (`bodh settings schema` lists them)")
+    name = str(key)
+    if name not in vals:
+        _fail(f"{name!r} is not a setting (`bodh settings schema` lists them)")
+    if action == "get":
+        if as_json:
+            _emit({"key": name, "value": vals[name], "source": srcs[name]})
+        else:
+            typer.echo(f"{name} = {api.dumps(vals[name])} ({srcs[name]})")
+        return
+    _settings_set(found, name, value)
+
+
+def _settings_schema(found: api.App, as_json: bool) -> None:
+    from . import settings as settingsmod
+
+    if as_json:
+        typer.echo(api.dumps(settingsmod.schema_json(found.cfg)))
+        return
+    for s in settingsmod.schema():
+        typer.echo(f"{s.key:36} {s.control:9} {s.group:12} {s.help}")
+
+
+def _settings_set(found: api.App, key: str, value: str | None) -> None:
+    from . import settings as settingsmod
+
+    if value is None:
+        _fail("say the value (`null` for empty)")
+    try:
+        cfg, notes = settingsmod.apply(found.cfg.root, {key: settingsmod.parse_cli_value(str(value))})
+    except settingsmod.SettingsError as exc:
+        _fail("; ".join(f"{e['key']}: {e['message']}" for e in exc.errors), EXIT_CONFIG)
+        raise
+    for note in notes:
+        typer.echo(f"note: {note} (an old key name, moved)")
+    typer.echo(f"{key} = {api.dumps(settingsmod.values(cfg)[key])}; written to config.yaml, comments kept")
+
+
+@app.command("migrate-home")
+@_handled
+def migrate_home(
+    source: Path = typer.Argument(..., help="The project folder now (FROM)."),
+    target: Path = typer.Argument(..., help="Where it should live (TO)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would move; move nothing."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Move a project to another folder: config.yaml, .env, data, profile, dashboard, prompts.
+    Nothing is rewritten; a second run moves nothing. The Mac app's first launch uses this to
+    move ~/bodh into Application Support.
+
+    \b
+    Examples:
+      bodh migrate-home ~/bodh "~/Library/Application Support/bodh" --dry-run
+      bodh migrate-home ~/bodh "~/Library/Application Support/bodh"
+    """
+    from . import migrate
+
+    out = migrate.migrate_home(source, target, dry_run=dry_run)
+    for line in migrate.describe(out, dry_run=dry_run):
+        typer.echo(line)
 
 
 @app.command()

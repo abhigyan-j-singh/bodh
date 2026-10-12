@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "ok": true,
+  "message": "anthropic (claude-sonnet-5-5): ok",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "cents": 0.0065
+}

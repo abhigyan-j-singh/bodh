@@ -45,13 +45,14 @@ class Strict(BaseModel):
 
 
 class Attention(Strict):
-    key: str
+    key: str  # safety, signin, provider, failed, budget, weekly
     level: str  # warning | critical | good
     word: str
     text: str
     link_text: str | None = None
     link_url: str | None = None
     dismissable: bool = False
+    fingerprint: str = ""  # what instance of the condition this is (a run id, a day); a dismissal names it
 
 
 class State(Strict):
@@ -500,35 +501,49 @@ def _state_sentence(
 
 
 def _attention(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Attention | None:
-    """The one banner, the most severe first; None when nothing needs the reader."""
+    """The one banner: the most severe condition the reader has not waved away, or None."""
+    items = attentions(cfg, conn, now)
+    return items[0] if items else None
+
+
+def attentions(cfg: Config, conn: sqlite3.Connection, now: datetime) -> list[Attention]:
+    """Every condition that needs the reader, the most severe first, minus the ones dismissed
+    (a dismissal names the instance by its fingerprint: the next failed run or the next day's
+    budget comes back). The Mac app shows them all; the page shows the first."""
+    from ..service import dismissed
+
+    waved = dismissed(conn)
+    return [a for a in _conditions(cfg, conn, now) if waved.get(a.key) != a.fingerprint]
+
+
+def _conditions(cfg: Config, conn: sqlite3.Connection, now: datetime) -> list[Attention]:
+    out: list[Attention] = []
     runs = [dict(r) for r in store.last_runs(conn, 5)]
     last = runs[0] if runs else None
     tripped = store.kv_get(conn, store.SAFETY_KEY)
     if tripped:
-        return Attention(
-            key="safety",
-            level="critical",
-            word="The safety limit tripped",
-            text=f"Run {tripped} would have cut nearly everything newly judged; autocut cuts nothing until you run bodh safety reset.",
+        out.append(
+            Attention(
+                key="safety",
+                level="critical",
+                word="The safety limit tripped",
+                text=f"Run {tripped} would have cut nearly everything newly judged; autocut cuts nothing until you run bodh safety reset.",
+                fingerprint=str(tripped),
+            )
         )
     if last and not last["ok"] and last.get("error") and last["kind"] in ("run", "weekly", "catch-up"):
-        error = str(last["error"])
-        if "403" in error or "login" in error.lower() or "YearSubscriptionExpired" in error:
-            return Attention(
-                key="signin",
-                level="critical",
-                word="Sign-in failed",
-                text=f"BazQux refused the login: {error[:140]}. Check the password in .env.",
-            )
-        return Attention(key="failed", level="critical", word="The last run failed", text=error[:200])
+        out.append(_failed_run(last))
     spent = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     if spent >= cfg.models.daily_budget_usd:
-        return Attention(
-            key="budget",
-            level="warning",
-            word="Budget reached",
-            text=f"{usd(spent)} of {usd(cfg.models.daily_budget_usd)} spent today; judging pauses until midnight and nothing is cut because of it.",
-            dismissable=True,
+        out.append(
+            Attention(
+                key="budget",
+                level="warning",
+                word="Budget reached",
+                text=f"{usd(spent)} of {usd(cfg.models.daily_budget_usd)} spent today; judging pauses until midnight and nothing is cut because of it.",
+                dismissable=True,
+                fingerprint=now.strftime("%Y-%m-%d"),
+            )
         )
     weekly = next((r for r in runs if r["kind"] == "weekly" and r["ok"]), None)
     if (
@@ -540,16 +555,56 @@ def _attention(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Attentio
             weekly.get("summary") or ""
         )
         if applied:
-            return Attention(
-                key="weekly",
-                level="good",
-                word="Profile rewritten",
-                text="Sunday's rewrite passed the gate.",
-                link_text="Show the diff",
-                link_url="#learning",
-                dismissable=True,
+            out.append(
+                Attention(
+                    key="weekly",
+                    level="good",
+                    word="Profile rewritten",
+                    text="Sunday's rewrite passed the gate.",
+                    link_text="Show the diff",
+                    link_url="#learning",
+                    dismissable=True,
+                    fingerprint=str(weekly["id"]),
+                )
             )
-    return None
+    return out
+
+
+def _failed_run(last: dict[str, Any]) -> Attention:
+    """A failed run as its banner: the reader's sign-in, the provider's key, or the run itself.
+    The error is recorded as `TypeName: message`, so the type says which."""
+    error = str(last["error"])
+    fingerprint = str(last["id"])
+    if (
+        error.startswith("BazQuxAuthError")
+        or "403" in error
+        or "login" in error.lower()
+        or "YearSubscriptionExpired" in error
+    ):
+        return Attention(
+            key="signin",
+            level="critical",
+            word="Sign-in failed",
+            text=f"BazQux refused the login: {_message(error)[:140]}. Check the email and the password.",
+            fingerprint=fingerprint,
+        )
+    if error.startswith("ModelConfigError"):
+        return Attention(
+            key="provider",
+            level="critical",
+            word="The model provider refused the call",
+            text=f"{_message(error)[:160]}. Check the key and the model ids.",
+            fingerprint=fingerprint,
+        )
+    return Attention(
+        key="failed", level="critical", word="The last run failed", text=error[:200], fingerprint=fingerprint
+    )
+
+
+def _message(error: str) -> str:
+    """`ModelConfigError: the reason` -> `the reason`."""
+    head, sep, tail = error.partition(": ")
+    return tail if sep and head.replace("Error", "").isalpha() else error
 
 
 def _today(cfg: Config, conn: sqlite3.Connection, now: datetime, tz: ZoneInfo) -> Today:
@@ -928,7 +983,7 @@ def _learning(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Learning:
         concepts_empty="Nothing read yet this week. Read or star an article in BazQux; its lesson appears here after the next run.",
         cloud=cloud,
         cloud_empty="The concept map fills as you read: every concept you read or starred in the last 90 days, sized by count, with the frontier (seen at 70 and above this fortnight, not yet read) marked.",
-        profile=_profile(cfg, conn, now),
+        profile=profile_part(cfg, conn, now),
     )
 
 
@@ -943,7 +998,7 @@ def _frontier(conn: sqlite3.Connection, known: set[str]) -> list[tuple[str, int]
     return out[:15]
 
 
-def _profile(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Profile:
+def profile_part(cfg: Config, conn: sqlite3.Connection, now: datetime) -> Profile:
     versions = store.learned_versions(conn, 2)
     text = cfg.read_learned()
     diff: list[DiffLine] = []

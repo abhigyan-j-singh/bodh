@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "attention": [
+    {
+      "key": "provider",
+      "level": "critical",
+      "word": "The model provider refused the call",
+      "text": "model call rejected: HTTP 401. Check the key and the model ids.",
+      "link_text": null,
+      "link_url": null,
+      "dismissable": false,
+      "fingerprint": "2"
+    }
+  ]
+}

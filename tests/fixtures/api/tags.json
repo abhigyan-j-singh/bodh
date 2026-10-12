@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "tags": [
+    {
+      "tag": "score-90",
+      "group": "band",
+      "writer": "bodh",
+      "meaning": "the judge's score is 90 or more"
+    },
+    {
+      "tag": "score-70",
+      "group": "band",
+      "writer": "bodh",
+      "meaning": "the judge's score is 70 or more"
+    },
+    {
+      "tag": "score-50",
+      "group": "band",
+      "writer": "bodh",
+      "meaning": "the judge's score is 50 or more"
+    },
+    {
+      "tag": "score-30",
+      "group": "band",
+      "writer": "bodh",
+      "meaning": "the judge's score is 30 or more"
+    },
+    {
+      "tag": "score-0",
+      "group": "band",
+      "writer": "bodh",
+      "meaning": "the judge's score is 0 or more"
+    },
+    {
+      "tag": "cut",
+      "group": "cut",
+      "writer": "bodh",
+      "meaning": "bodh marked it read (autocut, a prune or clear-old); `bodh undo` reverses the last cut"
+    },
+    {
+      "tag": "rescue",
+      "group": "command",
+      "writer": "you",
+      "meaning": "a cut article you wanted: back to unread, never cut again (the run removes the tag; `wrong` still works)"
+    },
+    {
+      "tag": "prune",
+      "group": "command",
+      "writer": "you",
+      "meaning": "on any article: the next run with autocut prunes to prune.keep (40)"
+    },
+    {
+      "tag": "great",
+      "group": "grade",
+      "writer": "you",
+      "meaning": "the best kind: more like this; the eval gate protects it"
+    },
+    {
+      "tag": "good",
+      "group": "grade",
+      "writer": "you",
+      "meaning": "worth the time"
+    },
+    {
+      "tag": "meh",
+      "group": "grade",
+      "writer": "you",
+      "meaning": "not worth it"
+    },
+    {
+      "tag": "bad",
+      "group": "grade",
+      "writer": "you",
+      "meaning": "junk; the judge was wrong to keep it"
+    },
+    {
+      "tag": "basic",
+      "group": "level",
+      "writer": "you",
+      "meaning": "too elementary for you"
+    },
+    {
+      "tag": "heavy",
+      "group": "level",
+      "writer": "you",
+      "meaning": "too dense or too specialist for you now"
+    },
+    {
+      "tag": "more",
+      "group": "steer",
+      "writer": "you",
+      "meaning": "more of this article's concept, from the next run"
+    },
+    {
+      "tag": "less",
+      "group": "steer",
+      "writer": "you",
+      "meaning": "less of it"
+    },
+    {
+      "tag": "Must read",
+      "group": "stream",
+      "writer": "you",
+      "meaning": "a smart stream in BazQux (a saved search); its unread members are never cut"
+    }
+  ]
+}

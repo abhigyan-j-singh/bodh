@@ -1,0 +1,7 @@
+event: tick
+data: {"schema": 1, "generation": 13, "as_of": "2026-10-12T07:14:51.337983+00:00", "state": {"running": false, "kind": null, "phase": "", "sentence": "Idle \u00b7 no run yet", "progress_done": null, "progress_total": null, "rate_per_min": null, "eta_min": null, "mode": "scoring-only", "mode_label": "Scoring only", "next_run_in_s": null, "attention": null, "levers": ["run", "pause"]}, "child": {"running": false, "args": ["run", "--shadow", "--limit", "5"], "started": 1791789290.911648, "elapsed": 0.32033658027648926, "code": 0, "output": ["run starting", "unread 10 \u00b7 judged 3"]}}
+
+id: 5
+event: settings
+data: {"what": "config", "changed": ["prune.keep"], "notes": []}
+

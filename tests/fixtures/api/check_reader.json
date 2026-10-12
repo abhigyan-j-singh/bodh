@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "ok": true,
+  "message": "signed in: 2 feeds in 2 folders, 2 unread",
+  "email": "reader@example.com",
+  "feeds": 2,
+  "folders": [
+    "Essays",
+    "News"
+  ],
+  "unread": 2,
+  "must_read_stream": "Must read",
+  "must_read_stream_present": true
+}

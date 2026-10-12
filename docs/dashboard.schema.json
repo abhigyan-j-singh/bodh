@@ -110,6 +110,11 @@
      "title": "Dismissable",
      "type": "boolean"
     },
+    "fingerprint": {
+     "default": "",
+     "title": "Fingerprint",
+     "type": "string"
+    },
     "key": {
      "title": "Key",
      "type": "string"

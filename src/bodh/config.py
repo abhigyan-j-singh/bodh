@@ -1,5 +1,10 @@
 """Configuration: config.yaml (behaviour) + .env (secrets). Validated at start;
-a run refuses to do anything with a broken config."""
+a run refuses to do anything with a broken config.
+
+Every field carries its help and its place in the Settings window as `Field` metadata
+(`description`, and `json_schema_extra` with `group`, `control`, `unit`, `advanced`, `choices`),
+so `bodh settings schema`, `CONFIG.md` and the Mac app's panes read one source and cannot
+disagree (`bodh/settings.py`)."""
 
 from __future__ import annotations
 
@@ -23,6 +28,29 @@ log = logging.getLogger(__name__)
 EXAMPLE_ABOUT_MARKER = "worked example for an invented student"
 
 
+def ui(
+    group: str,
+    control: str | None = None,
+    unit: str | None = None,
+    advanced: bool = False,
+    choices: list[str] | None = None,
+    columns: list[str] | None = None,
+) -> dict[str, Any]:
+    """The Settings metadata of one field: the pane it belongs to (`group`), the control the
+    app draws (derived from the type when not given), the unit shown after the value, whether
+    it hides behind Advanced, and the choices of a picker."""
+    extra: dict[str, Any] = {"group": group, "advanced": advanced}
+    if control:
+        extra["control"] = control
+    if unit:
+        extra["unit"] = unit
+    if choices:
+        extra["choices"] = choices
+    if columns:
+        extra["columns"] = columns
+    return extra
+
+
 class Strict(BaseModel):
     """Every section: a key that is not known is a typo, and a typo must not load as a default."""
 
@@ -30,9 +58,23 @@ class Strict(BaseModel):
 
 
 class FolderPolicy(Strict):
-    protected: bool = False  # never cut
-    cutoff: int | None = Field(default=None, ge=0, le=100)  # this folder's own cut-off; None: autocut.cutoff
-    judge: bool = True  # false: never sent to the judge, never cut (comics, say)
+    protected: bool = Field(
+        default=False,
+        description="Never cut: articles in this folder stay unread whatever their score.",
+        json_schema_extra=ui("folders"),
+    )
+    cutoff: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="This folder's own cut-off; empty means the default (autocut.cutoff).",
+        json_schema_extra=ui("folders", unit="points"),
+    )
+    judge: bool = Field(
+        default=True,
+        description="Sent to the judge at all. Off for folders whose articles are never reading material (comics, say): never judged, never cut.",
+        json_schema_extra=ui("folders"),
+    )
 
 
 class Models(Strict):
@@ -40,21 +82,59 @@ class Models(Strict):
     `gemini/gemini-2.5-pro`, `openrouter/qwen/qwen3-235b`, `openai-compatible/llama3.3`); a bare
     model id means Anthropic, as before October 2026."""
 
-    judge: str = "claude-sonnet-5-5"  # reads every article once
-    reviewer: str = "claude-opus-5-5"  # re-reads close calls with the full text; can only save an article
-    profiler: str = "claude-opus-5-5"  # rewrites the learned profile on Sundays
-    batch: bool = True  # Message Batches API: half price; judgments arrive on the next run
-    batch_discount: float = Field(default=0.5, ge=0.0, le=1.0)
-    cache_ttl: str = "1h"  # "5m" or "1h": how long the judge's cached prefix stays warm between runs
-    daily_budget_usd: float = Field(default=8.0, ge=0.0)
-    est_usd_per_article: float = Field(default=0.001, ge=0.0)  # the budget check before a batch is submitted
+    judge: str = Field(
+        default="claude-sonnet-5-5",
+        description="Reads every article once: the judgment. Changing it re-judges every unread article another model rated catch_up.rejudge_at or more; `bodh models compare` tries a model first.",
+        json_schema_extra=ui("models", control="model"),
+    )
+    reviewer: str = Field(
+        default="claude-opus-5-5",
+        description="Re-reads close calls with the full text; it can only save an article, never cut one.",
+        json_schema_extra=ui("models", control="model"),
+    )
+    profiler: str = Field(
+        default="claude-opus-5-5",
+        description="Rewrites the learned profile on Sundays.",
+        json_schema_extra=ui("models", control="model"),
+    )
+    batch: bool = Field(
+        default=True,
+        description="Message Batches API where the provider has one: half price, judgments arrive on the next run. Off: every call at once, at full price.",
+        json_schema_extra=ui("models"),
+    )
+    batch_discount: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="What the API charges for a batch, as a share of the full price; for the spend figures.",
+        json_schema_extra=ui("models", advanced=True),
+    )
+    cache_ttl: str = Field(
+        default="1h",
+        description="How long the judge's cached prompt prefix stays warm between runs. An hour costs more to write and less to read: a batch may take the hour, and the next run reads the same prefix.",
+        json_schema_extra=ui("models", control="choice", choices=["5m", "1h"], advanced=True),
+    )
+    daily_budget_usd: float = Field(
+        default=8.0,
+        ge=0.0,
+        description="Judging pauses when a day's spend passes this; nothing is cut because of it.",
+        json_schema_extra=ui("providers", unit="USD a day"),
+    )
+    est_usd_per_article: float = Field(
+        default=0.001,
+        ge=0.0,
+        description="The budget check before a batch is submitted, before its usage is known.",
+        json_schema_extra=ui("providers", unit="USD", advanced=True),
+    )
     prices_per_mtok: dict[str, list[float]] = Field(
         default_factory=lambda: {
             "claude-sonnet-5-5": [2.0, 10.0, 0.10],
             "claude-opus-5-5": [4.0, 20.0, 0.20],
             "claude-haiku-5-5": [0.10, 0.50, 0.01],
             "claude-haiku-4-5": [1.0, 5.0, 0.10],
-        }
+        },
+        description="USD per million tokens: input, output and cache read, per model (a bare id for Anthropic, provider/model-id for the rest). A model not listed is charged as the dearest one here, with a warning.",
+        json_schema_extra=ui("providers", control="prices", columns=["input", "output", "cache read"]),
     )
 
     @field_validator("cache_ttl")
@@ -136,7 +216,11 @@ _warned_models: set[str] = set()
 class Judge(Strict):
     """What the judge reads and how its judgment becomes a score."""
 
-    prompt_version: str = "teacher.v2"  # the prompt file in src/bodh/prompts/ (./prompts/ overrides)
+    prompt_version: str = Field(
+        default="teacher.v2",
+        description="The judge's prompt in the package's prompts folder (a prompts/ folder next to config.yaml overrides it). Changing it re-judges everything unread.",
+        json_schema_extra=ui("judging", advanced=True),
+    )
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "quality": 0.30,
@@ -144,16 +228,42 @@ class Judge(Strict):
             "fit": 0.15,
             "breadth": 0.15,
             "relevance": 0.10,
-        }
+        },
+        description="How the five sub-scores become the score; they must sum to 1.",
+        json_schema_extra=ui("judging", control="weights"),
     )
     expansion_bonus: int = Field(
-        default=10, ge=0, le=100
-    )  # points for an article on one of this week's expansion topics
-    home_angle: str = ""  # the student's home ground ("India", say): an article
-    # with that angle gets home_bonus; empty turns the flag off
-    home_bonus: int = Field(default=10, ge=0, le=100)
-    articles_per_call: int = Field(default=20, ge=1, le=100)  # articles in one judge call
-    text_chars: int = Field(default=1200, ge=100)  # the opening the judge sees on the first pass
+        default=10,
+        ge=0,
+        le=100,
+        description="Points for an article on one of this week's expansion topics (from the learned profile).",
+        json_schema_extra=ui("judging", unit="points"),
+    )
+    home_angle: str = Field(
+        default="",
+        description='Your home ground ("India", "Brazil", "the Pacific Northwest"): an article with that angle gets the home bonus. Empty turns it off.',
+        json_schema_extra=ui("judging"),
+    )
+    home_bonus: int = Field(
+        default=10,
+        ge=0,
+        le=100,
+        description="The points a home-angle article gets.",
+        json_schema_extra=ui("judging", unit="points"),
+    )
+    articles_per_call: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Articles in one judge call.",
+        json_schema_extra=ui("models", unit="articles", advanced=True),
+    )
+    text_chars: int = Field(
+        default=1200,
+        ge=100,
+        description="The opening of each article the judge sees on the first pass.",
+        json_schema_extra=ui("models", unit="characters", advanced=True),
+    )
 
     @field_validator("home_angle")
     @classmethod
@@ -173,21 +283,41 @@ class Review(Strict):
     """The second reading of a close call by the reviewer, with the full text."""
 
     window: int = Field(
-        default=10, ge=0, le=100
-    )  # a candidate within this many points of the cut-off is reviewed
-    chars: int = Field(default=6000, ge=100)  # the text the reviewer sees
-    max_per_run: int = Field(default=50, ge=0)  # synchronous runs: reviews per run, so a backlog of close
-    # calls cannot eat the run's fifteen minutes
+        default=10,
+        ge=0,
+        le=100,
+        description="An autocut candidate within this many points of the cut-off is reviewed; 0 turns the review off.",
+        json_schema_extra=ui("cutting", unit="points"),
+    )
+    chars: int = Field(
+        default=6000,
+        ge=100,
+        description="The text the reviewer sees; a review happens only when the article has more than the opening.",
+        json_schema_extra=ui("models", unit="characters", advanced=True),
+    )
+    max_per_run: int = Field(
+        default=50,
+        ge=0,
+        description="Synchronous runs: at most this many reviews per run, so a backlog of close calls cannot eat the run's fifteen minutes.",
+        json_schema_extra=ui("models", unit="reviews", advanced=True),
+    )
 
 
 class CatchUp(Strict):
     """One deliberate pass over everything pending, usually with the quick judge."""
 
-    model: str = "claude-haiku-5-5"  # the quick judge `bodh catch-up` uses by default (provider/model-id)
+    model: str = Field(
+        default="claude-haiku-5-5",
+        description="The quick judge `bodh catch-up` uses unless told otherwise (provider/model-id).",
+        json_schema_extra=ui("models", control="model"),
+    )
     rejudge_at: float | None = Field(
-        default=50.0, ge=0, le=100
-    )  # what the quick judge rates at or above this,
-    # the judge reads again; null turns it off
+        default=50.0,
+        ge=0,
+        le=100,
+        description="What the quick judge rated at least this, the judge reads again; empty: never. What it rated below keeps the quick judge's verdict: a catch-up's junk is final.",
+        json_schema_extra=ui("models", unit="points"),
+    )
 
     @field_validator("model")
     @classmethod
@@ -199,57 +329,153 @@ class CatchUp(Strict):
 
 
 class Limits(Strict):
-    per_run_sync: int = Field(default=400, ge=0)  # synchronous runs: articles judged per run
-    per_run_batch: int = Field(default=1200, ge=0)  # batch runs: articles submitted per run
-    parallel_calls: int = Field(default=4, ge=1, le=64)  # synchronous runs: model calls running at once
+    per_run_sync: int = Field(
+        default=400,
+        ge=0,
+        description="Synchronous runs: articles judged per run.",
+        json_schema_extra=ui("models", unit="articles", advanced=True),
+    )
+    per_run_batch: int = Field(
+        default=1200,
+        ge=0,
+        description="Batch runs: articles submitted per run.",
+        json_schema_extra=ui("models", unit="articles", advanced=True),
+    )
+    parallel_calls: int = Field(
+        default=4,
+        ge=1,
+        le=64,
+        description="Synchronous runs: judge calls and reviews running at once.",
+        json_schema_extra=ui("models", unit="calls", advanced=True),
+    )
     max_age_days: int | None = Field(
-        default=14, ge=0
-    )  # older unread articles are never judged; clear-old is for them
+        default=14,
+        ge=0,
+        description="Unread articles older than this are never judged; `bodh clear-old` is for them. Empty: no age limit.",
+        json_schema_extra=ui("cutting", unit="days"),
+    )
 
 
 class Autocut(Strict):
     """The automatic cut every run makes below the cut-off, when it is enabled."""
 
-    enabled: bool = False  # false = scoring-only mode: judge and tag, cut nothing
-    cutoff: int = Field(default=35, ge=0, le=100)  # the cut-off for folders without their own
-    max_per_run: int = Field(default=500, ge=0)  # a broken prompt costs one undo, not a library
+    enabled: bool = Field(
+        default=False,
+        description="Off is scoring-only mode: judge and tag, cut nothing. On: every run marks read what scores under its folder's cut-off, within the safety limits.",
+        json_schema_extra=ui("cutting"),
+    )
+    cutoff: int = Field(
+        default=35,
+        ge=0,
+        le=100,
+        description="The cut-off for folders without their own.",
+        json_schema_extra=ui("cutting", unit="points"),
+    )
+    max_per_run: int = Field(
+        default=500,
+        ge=0,
+        description="Most cuts in one run: a broken prompt costs one undo, not a library.",
+        json_schema_extra=ui("cutting", unit="articles"),
+    )
     new_ground_share: float = Field(
-        default=0.20, ge=0.0, le=1.0
-    )  # share of what autocut leaves kept for new ground
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description="The share of what autocut leaves that is kept for new ground (a concept you have not read).",
+        json_schema_extra=ui("cutting", unit="share"),
+    )
 
 
 class Prune(Strict):
     """The student's own cut."""
 
-    keep: int = Field(default=40, ge=0)  # `bodh prune` with no arguments keeps this many
+    keep: int = Field(
+        default=40,
+        ge=0,
+        description="`bodh prune` with no arguments keeps this many.",
+        json_schema_extra=ui("cutting", unit="articles"),
+    )
     max_share_per_concept: float = Field(
-        default=0.25, ge=0.0, le=1.0
-    )  # no concept may hold more of the survivors
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+        description="No concept may hold more than this share of the survivors.",
+        json_schema_extra=ui("cutting", unit="share"),
+    )
 
 
 class Protect(Strict):
-    must_read_stream: str = Field(default="Must read", min_length=1)  # the BazQux smart stream never cut
+    must_read_stream: str = Field(
+        default="Must read",
+        min_length=1,
+        description="The BazQux smart stream whose unread members are never cut (README: how to create it).",
+        json_schema_extra=ui("account"),
+    )
 
 
 class Tags(Strict):
     bands: dict[int, str] = Field(
-        default_factory=lambda: {90: "score-90", 70: "score-70", 50: "score-50", 30: "score-30", 0: "score-0"}
+        default_factory=lambda: {
+            90: "score-90",
+            70: "score-70",
+            50: "score-50",
+            30: "score-30",
+            0: "score-0",
+        },
+        description="Score band to tag name: the tag the judge writes for a score at or above each threshold.",
+        json_schema_extra=ui("learning", control="bands"),
     )
-    cut: str = "cut"
+    cut: str = Field(
+        default="cut",
+        description="On every article bodh marked read; mark it unread anywhere to rescue it.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
     # commands: the run acts on them and removes them
-    rescue: str = (
-        "rescue"  # a cut article you wanted: back to unread, never cut again (was `wrong`, still read)
+    rescue: str = Field(
+        default="rescue",
+        description="On a cut article you wanted: back to unread, never cut again (the old name `wrong` is still read).",
+        json_schema_extra=ui("learning", control="tag"),
     )
-    prune: str = "prune"  # on any article: the next run with autocut prunes to prune.keep
+    prune: str = Field(
+        default="prune",
+        description="On any article: the next run with autocut on prunes to prune.keep.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
     # verdicts: your opinion of an article, left on it as your record, recorded once
-    great: str = "great"  # the best kind: more like this, and the eval gate protects it
-    good: str = "good"  # worth the time
-    meh: str = "meh"  # not worth it
-    bad: str = "bad"  # junk; the judge was wrong to keep it
-    basic: str = "basic"  # too elementary for you
-    heavy: str = "heavy"  # too dense or too specialist for you now
-    more: str = "more"  # more of this article's concept, from the next run
-    less: str = "less"  # less of it
+    great: str = Field(
+        default="great",
+        description="The best kind: more like this; the Sunday rewrite may not lose it.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    good: str = Field(
+        default="good", description="Worth the time.", json_schema_extra=ui("learning", control="tag")
+    )
+    meh: str = Field(
+        default="meh", description="Not worth it.", json_schema_extra=ui("learning", control="tag")
+    )
+    bad: str = Field(
+        default="bad",
+        description="Junk; the judge was wrong to keep it.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    basic: str = Field(
+        default="basic",
+        description="Too elementary for you.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    heavy: str = Field(
+        default="heavy",
+        description="Too dense or too specialist for you now.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    more: str = Field(
+        default="more",
+        description="More of this article's concept, from the next run.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    less: str = Field(
+        default="less", description="Less of it.", json_schema_extra=ui("learning", control="tag")
+    )
 
     @model_validator(mode="after")
     def _distinct(self) -> Tags:
@@ -287,21 +513,47 @@ class Safety(Strict):
     """The limits that stop a broken judge from cutting."""
 
     max_cut_share: float = Field(
-        default=0.95, ge=0.0, le=1.0
-    )  # a run that would cut more than this share of...
-    min_judged: int = Field(default=50, ge=1)  # ...at least this many newly judged articles stops
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="A run that would cut more than this share of at least min_judged newly judged articles stops before writing, and autocut stays off until `bodh safety reset`.",
+        json_schema_extra=ui("cutting", unit="share"),
+    )
+    min_judged: int = Field(
+        default=50,
+        ge=1,
+        description="The fewest newly judged articles the share above is measured on.",
+        json_schema_extra=ui("cutting", unit="articles"),
+    )
     rescue_rate_week: float = Field(
-        default=0.05, ge=0.0, le=1.0
-    )  # rescues above this share of a week's cuts...
-    lowered_cutoff: int = Field(default=25, ge=0, le=100)  # ...lower the cut-off to this until they fall
-    mark_all_read_threshold: int = Field(default=30, ge=1)  # this many kept articles going read in one run is
-    # mark-all-as-read, not that many reads
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Rescues above this share of a week's cuts (20 cuts at least) lower the cut-off to the lowered value until they fall.",
+        json_schema_extra=ui("cutting", unit="share"),
+    )
+    lowered_cutoff: int = Field(
+        default=25,
+        ge=0,
+        le=100,
+        description="The cut-off while the rescue rate is high.",
+        json_schema_extra=ui("cutting", unit="points"),
+    )
+    mark_all_read_threshold: int = Field(
+        default=30,
+        ge=1,
+        description="This many kept articles going read in one run is mark-all-as-read, not that many reads.",
+        json_schema_extra=ui("cutting", unit="articles", advanced=True),
+    )
 
 
 class Profile(Strict):
     concept_window_days: int = Field(
-        default=90, ge=1
-    )  # how far back stars, reads and verdicts count as what you know
+        default=90,
+        ge=1,
+        description="How far back stars, reads and verdicts count as what you know.",
+        json_schema_extra=ui("learning", unit="days"),
+    )
 
 
 def _zone_name_ok(name: str | None) -> bool:
@@ -352,11 +604,31 @@ def system_timezone() -> str:
 
 
 class Config(Strict):
-    timezone: str = Field(default_factory=system_timezone)  # the day boundary for the budget and the counts
-    data_dir: Path = Path("./data")
-    profile_dir: Path = Path("./profile")
-    dashboard_dir: Path = Path("./dashboard")
-    obsidian_note: str = ""
+    timezone: str = Field(
+        default_factory=system_timezone,
+        description="IANA name (Europe/Lisbon, say): the day boundary for the budget and the daily counts. Empty: this computer's zone.",
+        json_schema_extra=ui("schedule", control="timezone"),
+    )
+    data_dir: Path = Field(
+        default=Path("./data"),
+        description="The database, the run logs, progress.json and the lock; relative to config.yaml.",
+        json_schema_extra=ui("data", control="path", advanced=True),
+    )
+    profile_dir: Path = Field(
+        default=Path("./profile"),
+        description="about.md (yours) and learned.md (rewritten weekly); its own git repository.",
+        json_schema_extra=ui("data", control="path", advanced=True),
+    )
+    dashboard_dir: Path = Field(
+        default=Path("./dashboard"),
+        description="The exported dashboard page, the weekly note and the feed report.",
+        json_schema_extra=ui("data", control="path", advanced=True),
+    )
+    obsidian_note: str = Field(
+        default="",
+        description='Also write the weekly note here (a Markdown file in an Obsidian vault, say: "~/Obsidian/Main/Bodh/Weekly.md"); empty writes it to the dashboard folder only.',
+        json_schema_extra=ui("connections", control="path"),
+    )
     models: Models = Field(default_factory=Models)
     judge: Judge = Field(default_factory=Judge)
     review: Review = Field(default_factory=Review)
@@ -366,8 +638,10 @@ class Config(Strict):
     prune: Prune = Field(default_factory=Prune)
     protect: Protect = Field(default_factory=Protect)
     folders: dict[str, FolderPolicy] = Field(
-        default_factory=dict
-    )  # your BazQux folders, by their exact names
+        default_factory=dict,
+        description="Your BazQux folders by their exact names, each with its own policy; a folder not listed is judged and cut at the default cut-off.",
+        json_schema_extra=ui("folders", control="folders"),
+    )
     safety: Safety = Field(default_factory=Safety)
     tags: Tags = Field(default_factory=Tags)
     profile: Profile = Field(default_factory=Profile)

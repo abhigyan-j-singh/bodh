@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "keys": [
+    {
+      "provider": "anthropic",
+      "set": true,
+      "required": true,
+      "variables": [
+        {
+          "variable": "ANTHROPIC_API_KEY",
+          "set": true,
+          "source": "keychain"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "set": false,
+      "required": false,
+      "variables": [
+        {
+          "variable": "OPENAI_API_KEY",
+          "set": false,
+          "source": null
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "set": true,
+      "required": false,
+      "variables": [
+        {
+          "variable": "GEMINI_API_KEY",
+          "set": true,
+          "source": "keychain"
+        }
+      ]
+    },
+    {
+      "provider": "openrouter",
+      "set": true,
+      "required": false,
+      "variables": [
+        {
+          "variable": "OPENROUTER_API_KEY",
+          "set": true,
+          "source": ".env"
+        }
+      ]
+    },
+    {
+      "provider": "openai-compatible",
+      "set": false,
+      "required": false,
+      "variables": [
+        {
+          "variable": "OPENAI_COMPATIBLE_BASE_URL",
+          "set": false,
+          "source": null
+        },
+        {
+          "variable": "OPENAI_COMPATIBLE_API_KEY",
+          "set": false,
+          "source": null
+        }
+      ]
+    },
+    {
+      "provider": "bazqux",
+      "set": true,
+      "required": true,
+      "variables": [
+        {
+          "variable": "BAZQUX_EMAIL",
+          "set": true,
+          "source": "keychain"
+        },
+        {
+          "variable": "BAZQUX_PASSWORD",
+          "set": true,
+          "source": "keychain"
+        }
+      ]
+    },
+    {
+      "provider": "healthchecks",
+      "set": false,
+      "required": false,
+      "variables": [
+        {
+          "variable": "HEALTHCHECK_URL",
+          "set": false,
+          "source": null
+        }
+      ]
+    }
+  ],
+  "env_file": true,
+  "keychain_service": "bodh"
+}

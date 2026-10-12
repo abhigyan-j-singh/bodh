@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "ok": true,
+  "plan": {
+    "cut": 2,
+    "unread_scored": 4,
+    "boundary": 75.0,
+    "by_band": {
+      "score-30": 1,
+      "score-0": 1
+    },
+    "by_folder": {
+      "News": 2
+    },
+    "best": [
+      {
+        "id": "tag:google.com,2005:reader/item/0000000000000003",
+        "title": "Article 3",
+        "url": "https://example.com/FeedA/3",
+        "feed": "Feed A",
+        "folder": "News",
+        "score": 40.0,
+        "band": "score-30",
+        "lesson": "l",
+        "concept": "c",
+        "judged_at": "2026-10-12T07:14:56.375917+00:00"
+      },
+      {
+        "id": "tag:google.com,2005:reader/item/0000000000000004",
+        "title": "Article 4",
+        "url": "https://example.com/FeedA/4",
+        "feed": "Feed A",
+        "folder": "News",
+        "score": 12.0,
+        "band": "score-0",
+        "lesson": "l",
+        "concept": "c",
+        "judged_at": "2026-10-12T07:14:56.378195+00:00"
+      }
+    ],
+    "next_run_id": 1
+  },
+  "sentence": "Cut 2 of 4 judged unread articles, keeping the 2 best? They are marked read in BazQux; Undo reverses it; it takes about a minute.",
+  "button": "Cut 2"
+}

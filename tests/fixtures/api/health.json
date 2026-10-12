@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "engine": "bodh",
+  "version": "1.0.0.dev0",
+  "pid": 2155,
+  "port": 60189,
+  "app_mode": true,
+  "uptime_s": 0.057524919509887695,
+  "schema_version": 5,
+  "root": "/Users/you/bodh",
+  "data_dir": "/Users/you/bodh/data",
+  "config_ok": true,
+  "about_is_example": false,
+  "reader_configured": false,
+  "keys_missing": [
+    "anthropic",
+    "bazqux"
+  ],
+  "mode": "scoring-only",
+  "running": null,
+  "last_run": null,
+  "next_run_in_s": null,
+  "paused_until": null,
+  "setup_needed": [
+    "reader",
+    "key"
+  ]
+}

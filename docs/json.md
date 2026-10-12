@@ -266,3 +266,60 @@ app.close()
 The API returns the dataclasses behind these objects (`Hit`, `ListRow`, `ArticleView`,
 `TagInfo`, `PrunePlan`, `CatchUpPlan`), each with `to_dict()`; `docs/api.md` (Phase 8)
 documents every method.
+
+## The service: `bodh serve --app` and `GET /api/health`
+
+The Mac app (and any client) talks to the engine over the console's server with a token.
+`bodh serve --app --port 0 --token-file PATH --home DIR` binds a free port on 127.0.0.1, reads
+the token from the file the client wrote (32 random bytes, hex, mode 600), prints one JSON line
+on stdout first (`{"port": 51234, "pid": 812, "started": 1760000000.0, "url": "http://127.0.0.1:51234",
+"token_file": "..."}`), writes the same to `data/serve.json` (beside `console.json` and the pid
+file), and exits cleanly on SIGTERM and when its stdin closes. Every request must carry the
+token as `Authorization: Bearer <token>` (or `?token=` for an event source, which cannot set a
+header); without it the answer is 401. The same routes answer on a plain `bodh console` or
+`bodh serve` (no token: the page's own `X-Bodh` header guards the writes, as before). Every
+answer is JSON with `schema` first; a refusal is `{"schema": 1, "ok": false, "message": "..."}`
+with 400 (a bad request), 404 (nothing there), 409 (a command is already running), 422 (the
+settings models refused, with `errors: [{key, message}]`).
+
+| Route | What it answers |
+| --- | --- |
+| `GET /api/health` | `engine`, `version`, `pid`, `port`, `app_mode`, `uptime_s`, `schema_version`, `root`, `data_dir`, `config_ok`, `about_is_example`, `reader_configured`, `keys_missing`, `mode`, `running`, `last_run`, `next_run_in_s`, `paused_until`, `setup_needed` (`reader`, `key`, `profile`: what onboarding still has to do, in order) |
+| `GET /api/status` | the `status` object of `bodh status --json`, plus `child` (the console's own command), `serve` (`{pid, every_seconds, started}` while `bodh serve` runs here), `paused_until` and `attention` (every banner, the most severe first, each `{key, level, word, text, link_text, link_url, dismissable, fingerprint}`; keys `safety`, `signin` (the reader refused the login), `provider` (the model provider refused the key or the model id), `failed`, `budget`, `weekly`) |
+| `GET /api/dashboard` | the dashboard document (above) |
+| `GET /api/list?band=70&folder=&limit=50` | `{band, folder, articles}` as `bodh list --json` |
+| `GET /api/why/{id}` or `?ref=` | `{article}` as `bodh why --json`; the id percent-encoded, or the URL |
+| `GET /api/find?q=words&unread=1&limit=50` | `{query, unread, hits}` as `bodh find --json` |
+| `GET /api/tags` | `{tags}` as `bodh tags --json` |
+| `GET /api/settings` | `{settings: {dotted key: value}, sources: {key: "config.yaml" or "default"}, path, old_keys, version}` |
+| `PUT /api/settings` | `{changes: {dotted key: value}}` or `{settings: {the whole object}}` (only the differences are written); the file keeps its comments; answers `{ok, changed, notes, settings, sources, ...}` or 422 with `errors` |
+| `GET /api/settings/schema` | `{version, groups: [{key, title, help}], settings: [{key, title, help, type, control, group, default, unit, min, max, choices, nullable, advanced, columns, fields?, value, source}]}`; `control` is `switch`, `number`, `text`, `choice`, `model`, `tag`, `path`, `timezone`, `weights`, `bands`, `prices` or `folders` |
+| `GET /api/folders?live=1` | `{folders: [{name, articles_per_day, feeds, judge, protected, cutoff, cutoff_in_effect, in_config, in_account}], live, default_cutoff}`; `live` asks BazQux for the account's own list |
+| `GET /api/keys` | `{keys: [{provider, set, required, variables: [{variable, set, source}]}], env_file, keychain_service}`; never a value |
+| `PUT /api/keys/{provider}` | `{key}` (a provider), `{email, password}` (`bazqux`), `{base_url, api_key?}` (`openai-compatible`), `{url}` (`healthchecks`); into the keychain through the engine (the same program reads it back, so the Keychain never asks), or `.env` with `{where: "env"}` |
+| `DELETE /api/keys/{provider}` | removes the item from the keychain and `.env`; `{removed}` |
+| `POST /api/keys/import-env` | every value of `.env` into the keychain; `{delete: true}` removes the file; `{imported, env_deleted}` |
+| `GET /api/profile` | `{about, learned, about_is_example, about_path, learned_path, version, rewritten_at, questions}` |
+| `PUT /api/profile` | `{answers: {who, knows, goal, decisions, never}}` or `{about: text}` writes about.md; `{learned: text}` writes a new version of the learned profile |
+| `GET /api/profile/diff` | `{version, date_text, diff: [{kind, text}]}`, the Sunday diff |
+| `GET /api/attention` | `{attention}` as in the status |
+| `POST /api/attention/dismiss` | `{key}`: the banner goes until the condition comes back (a new failed run, the next day's budget) |
+| `POST /api/check/reader` | `{email?, password?}`: one sign-in; `{ok, message, email, feeds, folders, unread, must_read_stream, must_read_stream_present}` or `{ok: false, message}` (a failure is an answer, not an error) |
+| `POST /api/check/provider` | `{provider, key?, model?}`: one five-token completion; `{ok, message, provider, model, cents}` |
+| `POST /api/run` | `{mode: normal, shadow or sync, limit?}` starts `bodh run` as the console's command; 409 while one runs |
+| `POST /api/stop` | interrupts the console's command, else the run holding the lock |
+| `POST /api/pause` | `{minutes: 60}`, `{until: ISO 8601}`, `{until: "tomorrow"}` (07:00 in the configured zone) or `{until: null}` (resume); `bodh serve` runs nothing until then; `{paused_until}` |
+| `POST /api/mark` | `{id or url, kind}`: a verdict (`great` … `less`) or `rescue`; `{ok, message}` |
+| `POST /api/steer` | `{direction: more or less, phrase}` |
+| `POST /api/prune` | `{keep or fraction or below, dry_run: true}` answers the plan (`{plan: {cut, unread_scored, boundary, by_band, by_folder, best, next_run_id}, sentence, button}`); `{..., confirm: true}` starts `bodh prune --yes` with the same arguments |
+| `POST /api/undo` | `{run_id?}`: `bodh undo`, waited for; `{ok, message, output}` |
+| `POST /api/clear_old` | `{days, dry_run: true}` answers `{days, count, sentence, button}`; `{days, confirm: true}` starts `bodh clear-old --yes` |
+| `POST /api/catch_up` | `{model?, all_ages?, budget?, workers?, dry_run: true}` answers the plan; `confirm: true` starts it |
+| `POST /api/safety/reset` | `bodh safety reset`, waited for |
+| `GET /api/log?n=120` | `{lines}` |
+| `GET /api/events` | server-sent events: `tick` as above, and the named events `run` (`{state: started or finished, kind, run_id, ok, summary, error}`), `attention` (`{attention}`), `settings` (`{what: config, pause, profile or keys, changed, notes}`), each with an `id`; `Last-Event-ID` on a reconnect replays what was missed (the last 500); a new stream starts now |
+| `GET /?section=list` | the app's page (no chrome) with one section: `today`, `list`, `verdicts`, `learning`, `feeds` or `money`; `?mode=console` the console's page; the token is stamped as `<meta name="bodh-token">` so the page's own fetches carry it |
+
+`tests/contracts/test_app_api.py` runs every route; with `BODH_UPDATE_FIXTURES=1` it writes
+`tests/fixtures/api/*.json`, the answers the Mac app's Swift tests decode, so a change on
+either side fails one suite or the other.

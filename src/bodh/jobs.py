@@ -368,6 +368,9 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
     if jobs is None:
         jobs = {name: job_state(label) for name, label in JOBS.items()}
     now = time.time()
+    from . import service
+    from .web import document
+
     return {
         "now": store.utcnow_iso(),
         "console": console_state(cfg),
@@ -379,7 +382,12 @@ def status(cfg: Config, conn: sqlite3.Connection, jobs: dict[str, Any] | None = 
         else {**proc, "elapsed": now - proc["started"], "phase": snap.get("phase") or ""},
         "jobs": jobs,
         "launchctl": launchctl_available(),
-        "next_run_in": _next_run_in(proc, jobs, runs, now),
+        "serve": service.serve_state(conn),
+        "paused_until": service.paused_until(conn),
+        "next_run_in": _next_run_in(proc, jobs, runs, now)
+        if jobs["run"]["loaded"]
+        else service.next_run_in(conn, cfg),
+        "attention": [a.model_dump() for a in document.attentions(cfg, conn, document.local_now(cfg))],
         "config": _config_summary(cfg),
         "pile": {
             "unread": snap["unread"],

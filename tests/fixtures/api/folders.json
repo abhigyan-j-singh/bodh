@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "folders": [
+    {
+      "name": "Essays",
+      "articles_per_day": 0.1,
+      "feeds": null,
+      "judge": true,
+      "protected": false,
+      "cutoff": null,
+      "cutoff_in_effect": 35,
+      "in_config": false,
+      "in_account": null
+    },
+    {
+      "name": "News",
+      "articles_per_day": 0.1,
+      "feeds": null,
+      "judge": true,
+      "protected": false,
+      "cutoff": 70,
+      "cutoff_in_effect": 70,
+      "in_config": true,
+      "in_account": null
+    }
+  ],
+  "live": false,
+  "default_cutoff": 35
+}

@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "query": "Article",
+  "unread": true,
+  "hits": [
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000001",
+      "title": "Article 1",
+      "url": "https://example.com/FeedA/1",
+      "feed": "Feed A",
+      "folder": "Essays",
+      "score": 92.0,
+      "band": "score-90",
+      "status": "unread",
+      "lesson": "l"
+    },
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000002",
+      "title": "Article 2",
+      "url": "https://example.com/FeedA/2",
+      "feed": "Feed A",
+      "folder": "Essays",
+      "score": 75.0,
+      "band": "score-70",
+      "status": "unread",
+      "lesson": "l"
+    },
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000003",
+      "title": "Article 3",
+      "url": "https://example.com/FeedA/3",
+      "feed": "Feed A",
+      "folder": "News",
+      "score": 40.0,
+      "band": "score-30",
+      "status": "unread",
+      "lesson": "l"
+    },
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000004",
+      "title": "Article 4",
+      "url": "https://example.com/FeedA/4",
+      "feed": "Feed A",
+      "folder": "News",
+      "score": 12.0,
+      "band": "score-0",
+      "status": "unread",
+      "lesson": "l"
+    }
+  ]
+}

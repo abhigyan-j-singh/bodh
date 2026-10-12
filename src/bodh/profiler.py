@@ -68,11 +68,11 @@ def steers(cfg: Config, conn: sqlite3.Connection, items: list[tuple[str, str]]) 
         text = text.rstrip() + "\n\n## Steers\n"
     text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
     reason = "; ".join(f"{kind} {phrase.strip()[:40]}" for kind, phrase in items)
-    _write_version(cfg, conn, text, f"steer: {reason}")
+    write_version(cfg, conn, text, f"steer: {reason}")
     return lines
 
 
-def _write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str) -> int:
+def write_version(cfg: Config, conn: sqlite3.Connection, text: str, reason: str) -> int:
     cfg.learned_path.parent.mkdir(parents=True, exist_ok=True)
     if not store.learned_versions(conn, 1) and cfg.learned_path.exists():
         store.save_learned_version(conn, cfg.read_learned(), "initial")
@@ -123,7 +123,7 @@ def revert(cfg: Config, conn: sqlite3.Connection) -> int | None:
     if len(versions) < 2:
         return None
     previous = versions[1]
-    return _write_version(cfg, conn, previous["text"], f"revert to v{previous['version']}")
+    return write_version(cfg, conn, previous["text"], f"revert to v{previous['version']}")
 
 
 def diff(old: str, new: str) -> str:
@@ -183,7 +183,7 @@ def weekly_rewrite(
     if dry_run:
         result["reason"] = "dry run: rewrite passed the gate but was not written"
         return result
-    _write_version(cfg, conn, new_text, "weekly rewrite")
+    write_version(cfg, conn, new_text, "weekly rewrite")
     result["applied"] = True
     result["reason"] = "rewrite applied"
     return result

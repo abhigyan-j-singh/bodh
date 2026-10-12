@@ -9,10 +9,10 @@
   const mode = root.dataset.mode || 'export';
   const live = mode !== 'export'; // the export is a snapshot: filters and tooltips only
   root.classList.add('js');
-  const $ = (sel, from) => (from || document).querySelector(sel);
-  const $$ = (sel, from) => Array.from((from || document).querySelectorAll(sel));
+  const $ = (sel, from) => (from || document).querySelector(sel), $$ = (sel, from) => Array.from((from || document).querySelectorAll(sel));
   const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const HEADERS = { 'Content-Type': 'application/json', 'X-Bodh': 'console' };
+  const TOKEN = ($('meta[name="bodh-token"]') || {}).content || '', AUTH = TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}; // the app's per-launch token
+  const HEADERS = Object.assign({ 'Content-Type': 'application/json', 'X-Bodh': 'console' }, AUTH);
   const KEYS = { 1: 'great', 2: 'good', 3: 'meh', 4: 'bad', 5: 'basic', 6: 'heavy', 7: 'more', 8: 'less', r: 'rescue' };
   const warn = (code, detail) => console.warn('bodh:' + code, detail === undefined ? '' : detail);
 
@@ -127,7 +127,7 @@
     if (refetching || !live) return;
     refetching = true;
     try {
-      const r = await fetch(location.pathname + location.search, { cache: 'no-store', headers: { 'X-Bodh': 'console' } });
+      const r = await fetch(location.pathname + location.search, { cache: 'no-store', headers: Object.assign({ 'X-Bodh': 'console' }, AUTH) });
       if (!r.ok) throw new Error('status ' + r.status);
       const fresh = new DOMParser().parseFromString(await r.text(), 'text/html');
       const g = fresh.querySelector('meta[name="bodh-generation"]');
@@ -188,7 +188,7 @@
     const ul = $('#list-rows');
     if (!ul) return;
     try {
-      const d = await (await fetch('/list?band=' + band + '&offset=' + offset, { cache: 'no-store' })).json();
+      const d = await (await fetch('/list?band=' + band + '&offset=' + offset, { cache: 'no-store', headers: AUTH })).json();
       const tpl = document.createElement('template');
       tpl.innerHTML = d.rows; // the server's own rendering of its own rows, as on first paint
       if (!offset) ul.replaceChildren();
@@ -317,7 +317,7 @@
   async function confirmed(action, label) {
     try {
       const q = new URLSearchParams(Object.assign({ action }, params()));
-      const d = await (await fetch('/api/plan?' + q, { cache: 'no-store' })).json();
+      const d = await (await fetch('/api/plan?' + q, { cache: 'no-store', headers: AUTH })).json();
       if (!d.ok) return say(d.message || 'It cannot run now.', true);
       if (await confirmDialog(d.sentence, d.button)) act(action, label);
     } catch (e) { warn('plan', e); say('The console did not answer.', true); }
@@ -328,7 +328,7 @@
     const action = b.dataset.action, label = b.textContent.trim();
     if (action === 'list_more') return loadRows(list.band, $$('#list-rows .list-row').length);
     if (action === 'log_more') {
-      return fetch('/api/log?n=200', { cache: 'no-store' }).then((r) => r.json())
+      return fetch('/api/log?n=200', { cache: 'no-store', headers: AUTH }).then((r) => r.json())
         .then((d) => { setText($('#log'), d.lines.join('\n') || '(the log is empty)'); b.hidden = true; }).catch((e) => warn('log', e));
     }
     if (b.dataset.confirm) return confirmed(action, label);
@@ -381,7 +381,7 @@
   function connect() {
     if (!live) return;
     if (!window.EventSource) return poll();
-    try { source = new EventSource('/api/events'); } catch (e) { warn('events', e); return poll(); }
+    try { source = new EventSource('/api/events' + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : '')); } catch (e) { warn('events', e); return poll(); }
     source.addEventListener('tick', (ev) => { try { onTick(JSON.parse(ev.data)); } catch (e) { warn('tick', e); } });
     source.onopen = () => { failures = 0; note(''); };
     source.onerror = () => { if (++failures >= 3) { source.close(); poll(); } };
@@ -389,7 +389,7 @@
   function poll() {
     cycle = 30000;
     note('Live updates are unavailable here; the page checks every 30 s.');
-    const once = () => fetch('/api/tick', { cache: 'no-store' }).then((r) => r.json()).then(onTick).catch((e) => warn('poll', e));
+    const once = () => fetch('/api/tick', { cache: 'no-store', headers: AUTH }).then((r) => r.json()).then(onTick).catch((e) => warn('poll', e));
     once();
     setInterval(once, cycle);
   }

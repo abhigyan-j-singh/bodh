@@ -6,6 +6,39 @@ Every change a user could notice, newest first. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The service for the Mac app.** `bodh serve --app --port 0 --token-file PATH --home DIR` is the
+  engine the app runs: a free port on 127.0.0.1, a per-launch token every request must carry
+  (`Authorization: Bearer`, or `?token=` for an event source), the port as one JSON line on stdout
+  and in `data/serve.json`, a clean exit on SIGTERM and when stdin closes. The console's server
+  gained the routes the app needs, all in `docs/json.md`: `/api/health`, `/api/list`, `/api/why`,
+  `/api/find`, `/api/tags`, the settings (`GET`/`PUT /api/settings`, `GET /api/settings/schema`),
+  `/api/folders`, the keys (`GET /api/keys`, `PUT`/`DELETE /api/keys/{provider}`,
+  `POST /api/keys/import-env`), the profile (`GET`/`PUT /api/profile`, `/api/profile/diff`), the
+  live checks of onboarding (`POST /api/check/reader`, `POST /api/check/provider`), the attention
+  states (`GET /api/attention`, `POST /api/attention/dismiss`) and the levers (`/api/run`,
+  `/api/stop`, `/api/pause`, `/api/steer`, `/api/prune`, `/api/undo`, `/api/clear_old`,
+  `/api/catch_up`, `/api/safety/reset`). `/api/events` carries named events (`run`, `attention`,
+  `settings`) beside the ticks, replayed from `Last-Event-ID` on a reconnect. The page serves one
+  section at a time (`/?section=list`) for the app's window. `bodh status --json` gained
+  `attention` (every banner, with a fingerprint), `paused_until` and `serve`.
+- **Settings from one source.** Every field of the configuration models carries its help and its
+  place in the Settings window; `bodh settings` lists every value with its source, `bodh settings
+  set KEY VALUE` changes one (validated by the models; the file's comments and order kept, old key
+  names moved to their new places on the way), `bodh settings schema --json` prints what the app
+  draws, and `CONFIG.md` is generated from the same source (`scripts/gen_config_md.py`; the suite
+  fails when it is stale). The writer uses `ruamel.yaml`, a new dependency.
+- **A pause.** `POST /api/pause` (and the app's menu) holds `bodh serve`'s schedule for an hour,
+  until tomorrow or until resumed; `bodh status` shows `paused_until`.
+- **The attention states** are a list now, not one banner: the safety limit, the reader's
+  sign-in, the provider's refusal (new: a run that ended with `ModelConfigError`), a failed run,
+  the budget, the Sunday rewrite; each can be dismissed and comes back when its condition does.
+- `bodh migrate-home FROM TO`: a project moved whole to another folder (config.yaml, .env, data,
+  profile, dashboard, prompts), nothing rewritten, idempotent; the app's first launch uses it.
+- The console's child runs end cleanly when `bodh serve` is stopped mid-run: the child gets
+  Ctrl-C and twenty seconds, then SIGTERM (it used to be killed outright).
+
 ### Renamed
 
 One word per thing, the same word everywhere (`docs/glossary.md`). Every old name keeps working

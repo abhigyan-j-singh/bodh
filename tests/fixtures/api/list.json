@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "band": 70.0,
+  "folder": null,
+  "articles": [
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000001",
+      "title": "Article 1",
+      "url": "https://example.com/FeedA/1",
+      "feed": "Feed A",
+      "folder": "Essays",
+      "score": 92.0,
+      "band": "score-90",
+      "lesson": "l",
+      "concept": "reefs",
+      "judged_at": "2026-10-12T07:14:45.744625+00:00"
+    },
+    {
+      "id": "tag:google.com,2005:reader/item/0000000000000002",
+      "title": "Article 2",
+      "url": "https://example.com/FeedA/2",
+      "feed": "Feed A",
+      "folder": "Essays",
+      "score": 75.0,
+      "band": "score-70",
+      "lesson": "l",
+      "concept": "c",
+      "judged_at": "2026-10-12T07:14:45.745904+00:00"
+    }
+  ]
+}

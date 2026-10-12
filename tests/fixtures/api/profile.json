@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "about": "# About the student\n\nStudent: A\n\nAlready knows well, at a practitioner level: B\n\nGoal: C\n\nDecisions this quarter: D\n\nNever worth attention: E",
+  "learned": "## What the student has been learning\nreefs",
+  "about_is_example": false,
+  "about_path": "/Users/you/bodh",
+  "learned_path": "/Users/you/bodh",
+  "version": 2,
+  "rewritten_at": "2026-10-12T07:14:47.000025+00:00",
+  "questions": [
+    {
+      "key": "who",
+      "question": "Who are you? Your work, what you run or build, what you read to decide (two or three sentences)"
+    },
+    {
+      "key": "knows",
+      "question": "What do you already know well, at a practitioner level? (routine news in these teaches you nothing)"
+    },
+    {
+      "key": "goal",
+      "question": "What is reading for this year? Which fields do you want to read fluently?"
+    },
+    {
+      "key": "decisions",
+      "question": "Which decisions are in front of you this quarter?"
+    },
+    {
+      "key": "never",
+      "question": "What is never worth your attention?"
+    }
+  ]
+}

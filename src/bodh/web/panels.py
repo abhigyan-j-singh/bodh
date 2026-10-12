@@ -36,13 +36,30 @@ SECTIONS = (
 
 
 def render(
-    doc: DashboardDocument, mode: str = "console", theme: str | None = None, generation: int | None = None
+    doc: DashboardDocument,
+    mode: str = "console",
+    theme: str | None = None,
+    generation: int | None = None,
+    section: str | None = None,
+    token: str | None = None,
 ) -> str:
     """The whole page. `console`: levers, verdict menus, the log, the live layer; `export`:
     none of those, the document embedded, the snapshot stamp; `app`: the console without
-    the page chrome the Mac window supplies. `generation` is the console's change counter,
-    stamped so the page knows whether a tick means a refetch."""
+    the page chrome the Mac window supplies, and with `section` one section only (the window's
+    sidebar picks it). `generation` is the console's change counter, stamped so the page knows
+    whether a tick means a refetch; `token` is the service's per-launch token, stamped so the
+    page's own fetches and event source carry it."""
     chrome = mode != "app"
+    parts = {
+        "today": today(doc),
+        "list": article_list(doc, mode),
+        "verdicts": verdicts(doc, mode),
+        "learning": learning(doc),
+        "feeds": feeds(doc),
+        "money": money(doc, mode),
+    }
+    if section is not None and section in parts:
+        parts = {section: parts[section]}
     body = [
         '<a class="skip" href="#main">Skip to the content</a>' if chrome else "",
         '<div class="frame">',
@@ -50,12 +67,7 @@ def render(
         nav() if chrome else "",
         '<main id="main">',
         state(doc, mode),
-        today(doc),
-        article_list(doc, mode),
-        verdicts(doc, mode),
-        learning(doc),
-        feeds(doc),
-        money(doc, mode),
+        *parts.values(),
         footer(doc, mode) if chrome else "",
         "</main></div>",
     ]
@@ -63,6 +75,10 @@ def render(
         embedded = doc.to_json().replace("</", "<\\/")
         body.append(f'<script type="application/json" id="bodh-document">{embedded}</script>')
     head = f'<meta name="bodh-generation" content="{generation}">\n' if generation is not None else ""
+    if token:
+        head += f'<meta name="bodh-token" content="{esc(token)}">\n'
+    if section:
+        head += f'<meta name="bodh-section" content="{esc(section)}">\n'
     return page("bodh", "\n".join(part for part in body if part), mode=mode, theme=theme, extra_head=head)
 
 

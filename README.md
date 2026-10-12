@@ -29,6 +29,8 @@ old name against its new one.
 | `PLAN.md` | The complete prompt: the three plans combined in the order they run, with the gates between them | yes, until the release |
 | `OPEN_SOURCE_PLAN.md` | The plan for the public release: the audit's findings, the test plan, ten phases with acceptance criteria; exported from its Claude Doc | yes, until the release |
 | `MAC_APP_PLAN.md` | The plan for the Mac app: a native menu bar shell around the bundled engine, in four stages with acceptance criteria; exported from its Claude Doc | yes, until the app ships |
+| `CONFIG.md` | Every setting, pane by pane, with its default, range and help; generated from the configuration models (`scripts/gen_config_md.py`) | yes |
+| `mac/` | The Mac app: a SwiftUI menu bar app around the bundled engine (`mac/README.md`: how to build it) | yes |
 | `DASHBOARD_PLAN.md` | The specification of the dashboard: the five questions, the design system, every panel, the chart rules, the data contract, the quality bar; replaces Phase 7 of the open-source plan | yes, until the release |
 | `src/bodh/` | The package: the BazQux client, the store, the judge, the cut, the feedback, the profiler, the dashboard, the progress page, the console | yes |
 | `src/bodh/prompts/` | The judge's, the reviewer's and the profiler's prompts (`./prompts/` next to `config.yaml` overrides them) | yes |
@@ -61,6 +63,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | `bodh doctor [--live] [--values]` | Configuration and connectivity checks, the database's integrity and backups; exit code 1 when one fails. Run after every update. `--live` logs in and calls each role's model once (a few cents); `--values` prints every setting in effect with its source. |
 | `bodh keys [list\|set <provider>]` | Which provider keys are set (never a value); `set` asks for one with hidden input and writes `.env` owner-only (`--keychain` for the system keychain). |
 | `bodh models [list\|compare --with provider/model]` | The four roles with their models, prices and capabilities, and the providers with keys; `compare` judges a sample of already-judged unread articles with the judge and a second model and prints the band agreement, the largest disagreements, the cost per 1,000 and the seconds per article for both. Nothing stored changes. |
+| `bodh settings [list\|get KEY\|set KEY VALUE\|schema]` | Every setting of `config.yaml` from the terminal, the way the Mac app's Settings window reads and writes them: every value with its source, one value, one change (validated; the file's comments kept), or the schema the window is drawn from. `CONFIG.md` is the same source in prose. |
 | `bodh version [--check]` | The version; `--check` asks PyPI for the newest. |
 
 **Every run**
@@ -69,7 +72,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | --- | --- |
 | `bodh run` | The timer's job, every 30 minutes: collect feedback (stars, reads, rescues, verdicts), fetch new articles, collect the judgments the Batches API finished, submit the new articles, tag judged ones `score-90` … `score-0`, apply autocut (with an Opus 5.5 review of close calls that have more to read), regenerate the dashboard, ping the heartbeat. Cuts nothing while `autocut.enabled: false`. `--sync` waits for every model call instead of batching; `--shadow` is one run without cutting even with autocut on; `--rejudge` has the judge read again everything another model judged. |
 | `bodh catch-up` | One deliberate pass over everything pending, as fast as the API allows: synchronous, 8 calls at once (`--workers`), rounds of 1,000 until nothing is pending, with the quick judge (`catch_up.model`, Haiku: 20x cheaper; it never touches the judge's judgments, and the judge reads again what it rates 50 or more on the next runs, `catch_up.rejudge_at`). `--model` names another model, the judge itself for a full-price pass. `--all-ages` includes the articles older than `limits.max_age_days`; `--budget 40` raises today's cap; `--max-seconds 600` stops starting calls after ten minutes; `--rejudge` is the judge's pass over everything other models judged. Judges and tags, cuts nothing; Ctrl-C and run again to continue. |
-| `bodh serve [--every 30]` | The schedule and the console in one process: a run every 30 minutes, the weekly rewrite on Sunday mornings, the report on the first of the month, the console on its port. For Docker, Windows, and any machine without launchd or systemd. |
+| `bodh serve [--every 30]` | The schedule and the console in one process: a run every 30 minutes, the weekly rewrite on Sunday mornings, the report on the first of the month, the console on its port. For Docker, Windows, and any machine without launchd or systemd. `--app` is the Mac app's engine: a free port, a per-launch token, every route of `docs/json.md`, and the end when the app goes. |
 
 **Look**
 
@@ -107,6 +110,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | `bodh schedule [status\|pause\|resume\|kick\|install\|uninstall]` | The scheduled jobs: show them, pause them all (nothing fires until resume, the console included; `--job run` for one), resume, kick a run now, or install and uninstall them: launchd agents on a Mac, systemd user units on Linux, one Task Scheduler entry running `bodh serve` on Windows (`--dry-run` shows everything first). |
 | `bodh autocut on\|off` | Flip autocut in config.yaml: on cuts under the cut-off from the next run, off is scoring-only mode. |
 | `bodh safety [reset]` | The safety limit (a run whose autocut would cut nearly everything newly judged trips it, and autocut stays off until a person resets it) and the articles the judge gave up on. |
+| `bodh migrate-home FROM TO` | Move a project to another folder whole (config, keys, data, profile, dashboard); nothing rewritten, a second run moves nothing. The Mac app's first launch uses it. |
 | `bodh console` | The console in the browser (`http://127.0.0.1:8766`, kept alive by the schedule): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
 
 **Housekeeping**

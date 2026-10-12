@@ -5,7 +5,9 @@ seconds while a run is in progress, a heartbeat between) and the page refetches 
 the console's generation moves. Actions start the same commands you would type (`bodh run`,
 `prune`, `undo`, `catch-up` …) as child processes and stream their output; a verdict is
 recorded in process through the API; Stop interrupts whatever run holds the lock. No
-framework, one file."""
+framework, one file. With a token (`bodh serve --app`) the same server is the Mac app's
+service: every route of `service.py` answers beside the page, and every request must carry
+the token."""
 
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import jobs, locks, logs, progress
 from .config import Config, load_config
 from .errors import BodhError
+from .service import Service
 from .web import document, panels
 
 log = logging.getLogger(__name__)
@@ -139,11 +143,14 @@ class Console:
         command: list[str] | None = None,
         host: str = "127.0.0.1",
         port: int = 8766,
+        token: str | None = None,
+        app_mode: bool = False,
     ) -> None:
         self.cfg = cfg
         self.conn = conn
         self.command = command or [sys.executable, "-m", "bodh.cli"]
         self.host, self.port = host, port
+        self.service = Service(self, token=token, app_mode=app_mode)
         self.child = Child()
         self.db_lock = threading.Lock()
         self.env = {**os.environ, "BODH_HOME": str(cfg.root), "PYTHONUNBUFFERED": "1"}
@@ -155,13 +162,18 @@ class Console:
         self._tick_cache: tuple[float, dict[str, Any]] | None = None
         self._seen: dict[str, Any] = {}  # what the last tick saw: running, the attention, the child
         self.changed = threading.Condition()  # wakes the event streams when the generation moves
+        self.server: ThreadingHTTPServer | None = None
 
     # -- the page and its document ---------------------------------------------
-    def page(self, mode: str = "console", theme: str | None = None) -> str:
+    def page(self, mode: str = "console", theme: str | None = None, section: str | None = None) -> str:
+        """The page; `section` (app mode) renders one section only, for the window's sidebar.
+        With a token the page is stamped with it, so its own fetches and event source carry it."""
         self._reload_config()
         with self.db_lock:
             doc = self.cache.get(self.cfg, self.conn, mode)
-        return panels.render(doc, mode, theme, generation=self.generation)
+        return panels.render(
+            doc, mode, theme, generation=self.generation, section=section, token=self.service.token
+        )
 
     def document_json(self, mode: str = "console") -> str:
         self._reload_config()
@@ -215,6 +227,7 @@ class Console:
             self.generation += 1
             self.cache.invalidate()
         self._seen = seen
+        self.service.notice(live)
 
     # -- data -----------------------------------------------------------------
 
@@ -253,6 +266,20 @@ class Console:
         return host in {"127.0.0.1", "localhost", "[::1]", "::1", self.host.lower()} or host.endswith(
             ".ts.net"
         )
+
+    def config_changed(self) -> None:
+        """After the service wrote config.yaml: the next request reads it afresh."""
+        self._config_mtime = None
+        self._reload_config()
+
+    def refresh(self) -> None:
+        """Before a request: config.yaml edited since is read again."""
+        self._reload_config()
+
+    def run_action_args(self, args: list[str], background: bool = True) -> dict[str, Any]:
+        """A bodh command by its arguments, as the service's levers start them: in the
+        background with its output in the child, or waited for."""
+        return self._start_command(args) if background else self._run_command(args)
 
     def _reload_config(self) -> None:
         """config.yaml edited by hand (or by `bodh autocut` in a terminal) shows on the next
@@ -362,8 +389,9 @@ class Console:
 
     # -- server ---------------------------------------------------------------
 
-    def serve(self) -> None:
-        """Listen until stopped; console.json beside the data says where, for `bodh status`."""
+    def serve(self, ready: Callable[[int], None] | None = None) -> None:
+        """Listen until stopped; console.json beside the data says where, for `bodh status`.
+        Port 0 takes a free port; `ready` is told the port once the server listens."""
         data_dir = self.cfg.root / self.cfg.data_dir
         try:
             server = ThreadingHTTPServer((self.host, self.port), _handler_for(self))
@@ -371,6 +399,8 @@ class Console:
             console_log(data_dir, f"cannot listen on {self.host}:{self.port}: {exc}")
             raise
         server.daemon_threads = True
+        self.port = int(server.server_address[1])
+        self.server = server
         self.url = f"http://{self.host}:{self.port}"
         info = data_dir / "console.json"
         with contextlib.suppress(OSError):
@@ -388,6 +418,8 @@ class Console:
             )
         console_log(data_dir, f"serving on {self.url} (pid {os.getpid()})")
         log.info("console: serving on %s", self.url)
+        if ready is not None:
+            ready(self.port)
         try:
             server.serve_forever()
         finally:
@@ -404,8 +436,9 @@ def _handler_for(console: Console) -> type[_Handler]:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """The page, the status and log APIs, the dashboard's files, and the actions (POST, from our
-    own page only). `console` is set on the subclass `_handler_for` makes."""
+    """The page, the status and log APIs, the dashboard's files, the actions (POST, from our
+    own page only) and the service's routes. `console` is set on the subclass `_handler_for`
+    makes."""
 
     console: Console
 
@@ -420,54 +453,85 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:
+    def _json(self, code: int, payload: Any) -> None:
+        self._send(code, json.dumps(payload, default=str).encode("utf-8"))
+
+    def _admitted(self, query: dict[str, list[str]]) -> bool:
+        """The Host check (a page that rebound a DNS name gets nothing), then the token when
+        the console has one."""
         console = self.console
         if not console.host_allowed(self.headers.get("Host")):
-            self._send(403, b'{"error":"forbidden: unexpected Host"}')
-            return
+            self._json(403, {"ok": False, "message": "forbidden: unexpected Host"})
+            return False
+        if not console.service.authorised(self.headers, query):
+            self._json(401, {"ok": False, "message": "unauthorised: the token is missing or wrong"})
+            return False
+        return True
+
+    def do_GET(self) -> None:
+        console = self.console
         url = urlsplit(self.path)
         query = parse_qs(url.query)
-        if url.path in ("/", "/index.html"):
-            mode = "app" if query.get("mode", [""])[0] == "app" else "console"
-            self._send(
-                200,
-                console.page(mode, query.get("theme", [None])[0]).encode("utf-8"),
-                "text/html; charset=utf-8",
-            )
+        if not self._admitted(query):
+            return
+        served = console.service.get(url.path, query)
+        if served is not None:
+            self._json(*served)
+        elif url.path in ("/", "/index.html"):
+            self._page(query)
         elif url.path == "/design":
             from .web.templates import design_page
 
             self._send(200, design_page().encode("utf-8"), "text/html; charset=utf-8")
-        elif url.path == "/api/dashboard":
-            mode = "export" if query.get("mode", [""])[0] == "export" else "console"
-            self._send(200, console.document_json(mode).encode("utf-8"))
-        elif url.path == "/api/tick":
-            self._send(200, json.dumps(console.tick(), default=str).encode("utf-8"))
         elif url.path == "/api/events":
             self._events()
-        elif url.path == "/list":
-            band = int(query.get("band", [str(document.LIST_BAND)])[0])
-            offset = max(0, int(query.get("offset", ["0"])[0]))
-            self._send(200, json.dumps(console.list_rows(band, offset)).encode("utf-8"))
-        elif url.path == "/api/plan":
-            params = {k: v[0] for k, v in query.items()}
-            self._send(
-                200, json.dumps(console.plan(params.get("action", ""), params), default=str).encode("utf-8")
-            )
-        elif url.path == "/api/status":
-            self._send(200, _status_body(console))
-        elif url.path == "/api/log":
-            n = int(query.get("n", ["120"])[0])
-            lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
-            self._send(200, json.dumps({"lines": lines}).encode("utf-8"))
         elif url.path.startswith("/dashboard/"):
             self._static(url.path[len("/dashboard/") :] or "index.html")
         else:
-            self._send(404, b'{"error":"not found"}')
+            self._data(url.path, query)
+
+    def _page(self, query: dict[str, list[str]]) -> None:
+        """The page: the console's, or the app's (no chrome) when the server runs for the app
+        or the query says so; `section` renders one section for the window's sidebar."""
+        console = self.console
+        wanted = query.get("mode", [""])[0]
+        mode = "app" if wanted == "app" or (console.service.app_mode and wanted != "console") else "console"
+        section = query.get("section", [None])[0]
+        self._send(
+            200,
+            console.page(mode, query.get("theme", [None])[0], section=section).encode("utf-8"),
+            "text/html; charset=utf-8",
+        )
+
+    def _data(self, path: str, query: dict[str, list[str]]) -> None:
+        """The console's own JSON routes."""
+        console = self.console
+        if path == "/api/dashboard":
+            mode = "export" if query.get("mode", [""])[0] == "export" else "console"
+            self._send(200, console.document_json(mode).encode("utf-8"))
+        elif path == "/api/tick":
+            self._json(200, console.tick())
+        elif path == "/list":
+            band = int(query.get("band", [str(document.LIST_BAND)])[0])
+            offset = max(0, int(query.get("offset", ["0"])[0]))
+            self._json(200, console.list_rows(band, offset))
+        elif path == "/api/plan":
+            params = {k: v[0] for k, v in query.items()}
+            self._json(200, console.plan(params.get("action", ""), params))
+        elif path == "/api/status":
+            self._send(200, _status_body(console))
+        elif path == "/api/log":
+            n = int(query.get("n", ["120"])[0])
+            lines = progress.log_tail(logs.log_file(console.cfg.root / console.cfg.data_dir), n)
+            self._json(200, {"schema": 1, "lines": lines})
+        else:
+            self._json(404, {"error": "not found"})
 
     def _events(self) -> None:
         """Server-sent events: a `tick` whenever it changes, and at least every heartbeat; two
-        seconds apart while a run is in progress, five between. Ends when the page goes."""
+        seconds apart while a run is in progress, five between; and the named events (`run`,
+        `attention`, `settings`) with ids, replayed from `Last-Event-ID` on a reconnect. Ends
+        when the page goes."""
         console = self.console
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -476,14 +540,22 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         last_sent, last_payload = 0.0, ""
         try:
+            seen = int(self.headers.get("Last-Event-ID") or console.service.seq)
+        except ValueError:
+            seen = console.service.seq
+        try:
             while True:
                 tick = console.tick()
                 payload = json.dumps(tick, default=str)
                 now = time.monotonic()
                 if payload != last_payload or now - last_sent >= HEARTBEAT_S:
                     self.wfile.write(f"event: tick\ndata: {payload}\n\n".encode())
-                    self.wfile.flush()
                     last_sent, last_payload = now, payload
+                for seq, name, data in console.service.events_since(seen):
+                    body = json.dumps(data, default=str)
+                    self.wfile.write(f"id: {seq}\nevent: {name}\ndata: {body}\n\n".encode())
+                    seen = seq
+                self.wfile.flush()
                 busy = tick["state"]["running"] or console.child.alive()
                 with console.changed:
                     console.changed.wait(TICK_RUNNING_S if busy else TICK_IDLE_S)
@@ -494,39 +566,56 @@ class _Handler(BaseHTTPRequestHandler):
         base = (self.console.cfg.root / self.console.cfg.dashboard_dir).resolve()
         path = (base / rel).resolve()
         if (base not in path.parents and path != base) or not path.is_file():
-            self._send(404, b'{"error":"not found"}')
+            self._json(404, {"error": "not found"})
             return
         ctype = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         text_like = ctype.startswith("text/") or ctype.endswith("json")
         self._send(200, path.read_bytes(), ctype + ("; charset=utf-8" if text_like else ""))
 
     def do_POST(self) -> None:
+        self._write("POST")
+
+    def do_PUT(self) -> None:
+        self._write("PUT")
+
+    def do_DELETE(self) -> None:
+        self._write("DELETE")
+
+    def _write(self, method: str) -> None:
+        """POST, PUT and DELETE: the console's own page sends `X-Bodh: console`; a client with
+        the token needs nothing else; anything else is refused (a stray form, another site)."""
         console = self.console
-        if not console.host_allowed(self.headers.get("Host")):
-            self._send(403, b'{"ok":false,"message":"forbidden: unexpected Host"}')
+        url = urlsplit(self.path)
+        query = parse_qs(url.query)
+        if not self._admitted(query):
             return
-        if self.headers.get("X-Bodh") not in ("console", "panel"):  # our own page, not a stray form
-            self._send(403, b'{"ok":false,"message":"forbidden"}')
+        if not console.service.token and self.headers.get("X-Bodh") not in ("console", "panel"):
+            self._json(403, {"ok": False, "message": "forbidden"})
             return
         length = int(self.headers.get("Content-Length") or 0)
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
             payload = {}
-        path = urlsplit(self.path).path
-        if path not in ("/api/action", "/api/mark"):
-            self._send(404, b'{"ok":false,"message":"not found"}')
-            return
+        if not isinstance(payload, dict):
+            payload = {}
         try:
-            if path == "/api/mark":
+            served = console.service.post(method, url.path, payload)
+            if served is not None:
+                self._json(*served)
+                return
+            if url.path == "/api/mark" and method == "POST":
                 result = console.mark(str(payload.get("id", "")), str(payload.get("kind", "")))
-            else:
+            elif url.path == "/api/action" and method == "POST":
                 result = console.run_action(str(payload.get("action", "")), payload)
                 console.forget()
+            else:
+                self._json(404, {"ok": False, "message": "not found"})
+                return
         except Exception as exc:  # the page gets the reason as a message; the log keeps the traceback
             log.exception("console: action failed")
             result = {"ok": False, "message": f"{type(exc).__name__}: {exc}"}
-        self._send(200, json.dumps(result, default=str).encode("utf-8"))
+        self._json(200, result)
 
 
 def _status_body(console: Console) -> bytes:
