@@ -13,7 +13,11 @@ struct MigrationOffer: Equatable {
     static func detect() -> MigrationOffer? {
         guard Paths.home == Paths.applicationSupport,
               !FileManager.default.fileExists(atPath: Paths.configFile.path) else { return nil }
-        let candidates = [Paths.legacyHome] + (ProcessInfo.processInfo.environment["TRIAGE_HOME"].map { [URL(fileURLWithPath: $0)] } ?? [])
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var candidates = [Paths.legacyHome, home.appendingPathComponent("triage", isDirectory: true)]  // the old name's home
+        if let env = ProcessInfo.processInfo.environment["TRIAGE_HOME"], !env.isEmpty {
+            candidates.append(URL(fileURLWithPath: (env as NSString).expandingTildeInPath, isDirectory: true))
+        }
         for source in candidates where FileManager.default.fileExists(atPath: source.appendingPathComponent("config.yaml").path) {
             let agents = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
             let labels = ["bodh.run", "bodh.weekly", "bodh.report", "bodh.console", "com.antriksh.triage"]
