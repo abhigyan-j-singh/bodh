@@ -199,6 +199,8 @@ def serve(
 
     stop = stop or threading.Event()
     server = None
+    scheduler = Scheduler(cfg, store.connect(cfg.db_path), every_minutes, spawn=spawn)
+    _record_state(scheduler.conn, every_minutes)  # before the port is announced: the status sees it at once
     if console:
         from .console import Console
 
@@ -211,16 +213,12 @@ def serve(
                 on_ready(info)
             listening.set()
 
-        thread = threading.Thread(
-            target=server.serve, kwargs={"ready": ready}, name="bodh-console", daemon=True
-        )
+        thread = threading.Thread(target=server.serve, kwargs={"ready": ready}, name="bodh-console", daemon=True)
         thread.start()
         listening.wait(10)
         log.info("serve: console on http://%s:%d", host, server.port)
     if exit_on_stdin_close:
         watch_stdin(stop)
-    scheduler = Scheduler(cfg, store.connect(cfg.db_path), every_minutes, spawn=spawn)
-    _record_state(scheduler.conn, every_minutes)
     try:
         with graceful_sigterm():
             scheduler.loop(stop, tick_seconds)
