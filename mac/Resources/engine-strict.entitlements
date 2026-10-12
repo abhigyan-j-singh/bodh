@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The engine without the executable-memory entitlement, for the test that says whether
+	     it is still needed: ENTITLEMENTS=strict make sign, then the Keychain read. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

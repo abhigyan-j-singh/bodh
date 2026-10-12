@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app: the hardened runtime, the network as a client (BazQux, the model providers,
+	     healthchecks.io, the appcast). Nothing else. The App Sandbox is not set for 1.0
+	     (docs/app-store.md lists what it would need). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

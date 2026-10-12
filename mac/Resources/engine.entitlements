@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The engine's interpreter and every Mach-O under it, hardened runtime on.
+	     allow-unsigned-executable-memory: keyring's macOS backend goes through ctypes, whose
+	     libffi closures need executable memory the hardened runtime otherwise refuses. Not yet
+	     proven on this app: `ENTITLEMENTS=strict make sign` signs without it; if the Keychain
+	     read (Settings > Account > Check, with the key stored) still works, drop this key.
+	     Library validation stays on: every library in the engine is signed with the same identity. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

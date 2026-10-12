@@ -1,0 +1,106 @@
+# The Mac app: the BodhEngine tests and a build of the app on every change under mac/ (and of
+# the engine's service, which the app's fixtures come from); on a tag v*, the signed, notarized
+# DMGs for both architectures, uploaded to the release. The release job runs only when the
+# signing secrets exist (docs/release.md names them); without them it is skipped, not failed.
+name: mac
+
+on:
+  push:
+    branches: [main, mac]
+    paths: ["mac/**", "scripts/build_engine.sh", "src/bodh/service.py", "src/bodh/settings.py", "tests/fixtures/api/**", ".github/workflows/mac.yml"]
+    tags: ["v*"]
+  pull_request:
+    paths: ["mac/**", "scripts/build_engine.sh", "tests/fixtures/api/**"]
+
+jobs:
+  build:
+    name: build and test (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-13]  # Apple silicon and Intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The engine's own fixtures are current
+        run: |
+          python -m pip install -e ".[dev]" >/dev/null
+          python -m pytest -q tests/contracts/test_app_api.py
+      - name: BodhEngine tests
+        working-directory: mac
+        run: swift test
+      - name: The app
+        working-directory: mac
+        run: make app
+      - name: Figures
+        working-directory: mac
+        run: |
+          du -sh build/Bodh.app build/engine-* | sed 's/^/size: /'
+          codesign --verify --deep --strict build/Bodh.app && echo "ad hoc signature verifies"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bodh-${{ matrix.runner }}
+          path: mac/build/Bodh.app
+          if-no-files-found: error
+
+  release:
+    name: signed DMG (${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    env:
+      HAVE_SECRETS: ${{ secrets.MAC_CERTIFICATE_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag is the package's version
+        run: |
+          version="$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/bodh/__init__.py').read_text()).group(1))")"
+          test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} but the package says $version" >&2; exit 1; }
+      - name: Import the Developer ID certificate
+        if: env.HAVE_SECRETS == 'true'
+        env:
+          P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$P12" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          rm cert.p12
+          echo "IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_ENV"
+      - name: The notarytool profile
+        if: env.HAVE_SECRETS == 'true'
+        env:
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: xcrun notarytool store-credentials bodh --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD"
+      - name: Build, sign, notarize, DMG
+        if: env.HAVE_SECRETS == 'true'
+        working-directory: mac
+        run: make ARCH=${{ matrix.arch }} dist
+      - name: Without the secrets
+        if: env.HAVE_SECRETS != 'true'
+        run: echo "no signing secrets in this repository: the release DMG is built on the owner's Mac (docs/release.md)"
+      - name: Upload to the release
+        if: env.HAVE_SECRETS == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mac/build/bodh-*-${{ matrix.arch }}.dmg
+            mac/build/bodh-*-${{ matrix.arch }}.dmg.sha256

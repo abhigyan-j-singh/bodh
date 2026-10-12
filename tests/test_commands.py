@@ -783,3 +783,17 @@ def test_the_api_mirrors_the_commands(cfg, conn):
     assert found.status()["pile"]["unread"] == 2 and found.progress()["unread"] == 2
     assert found.keys()[0]["provider"] == "anthropic" and found.next_run_id() == 3
     found.close()
+
+
+def test_init_skeleton_writes_the_files_and_leaves_a_project_alone(tmp_path):
+    root = tmp_path / "home"
+    result = invoke(["init", str(root), "--skeleton", "--timezone", "Asia/Kolkata"])
+    assert result.exit_code == 0 and "wrote the project files" in result.output
+    assert 'timezone: "Asia/Kolkata"' in (root / "config.yaml").read_text(encoding="utf-8")
+    assert "invented student" in (root / "profile" / "about.md").read_text(encoding="utf-8")
+    assert (root / "data").is_dir() and (root / "dashboard").is_dir() and not (root / ".env").exists()
+    (root / "config.yaml").write_text("prune:\n  keep: 5\n", encoding="utf-8")
+    result = invoke(["init", str(root), "--skeleton"])
+    assert (
+        result.exit_code == 0 and (root / "config.yaml").read_text(encoding="utf-8") == "prune:\n  keep: 5\n"
+    )

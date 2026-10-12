@@ -202,11 +202,15 @@ def init(
         None, "--install-schedule/--no-install-schedule", help="Schedule the jobs when doctor passes."
     ),
     yes: bool = typer.Option(False, "--yes", help="Take the defaults for anything not given."),
+    skeleton: bool = typer.Option(
+        False, "--skeleton", help="The files only, no questions: config.yaml, the example profile, data/."
+    ),
     verbose: bool = VERBOSE,
 ) -> None:
     """A new project in one sitting: the directory, your BazQux login, a provider and its key
     (each checked live), five questions that become your profile, the timezone; then doctor
-    runs and the schedule is offered. Every answer has a flag, for scripts.
+    runs and the schedule is offered. Every answer has a flag, for scripts. `--skeleton` writes
+    the files alone, for a wizard that asks elsewhere (the Mac app's onboarding).
 
     \b
     Examples:
@@ -217,6 +221,12 @@ def init(
     """
     from . import init as initmod
 
+    if skeleton:
+        root = initmod.write_skeleton(directory or initmod.default_directory(), timezone or "")
+        typer.echo(
+            f"wrote the project files in {root}; the profile is still the example until it is replaced"
+        )
+        return
     flags = {name: value for name, value in locals().items() if name in initmod.FLAG_NAMES}
     asking = not yes and _interactive()
     answers = initmod.gather(_asker(asking), flags)

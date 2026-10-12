@@ -174,6 +174,30 @@ def config_text(answers: Answers) -> str:
     return text
 
 
+def write_skeleton(directory: Path, timezone: str = "") -> Path:
+    """The files alone, for a wizard that asks its questions elsewhere (the Mac app's
+    onboarding fills them in through the service): config.yaml from the template with this
+    computer's zone, the example profile (still the worked example, so the engine refuses to
+    judge until it is replaced), data/ and dashboard/. An existing project is left alone."""
+    root = directory.expanduser()
+    if (root / "config.yaml").exists():
+        return root
+    if root.exists() and (root / "data").exists():
+        raise BodhError(
+            f"{root} holds a data folder but no config.yaml: an older install? restore its config.yaml"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+    answers = Answers(directory=root, timezone=timezone or system_timezone())
+    (root / "config.yaml").write_text(config_text(answers), encoding="utf-8")
+    profile = root / "profile"
+    profile.mkdir(exist_ok=True)
+    (profile / "about.md").write_text(template_text("profile/about.md"), encoding="utf-8")
+    (profile / "learned.md").write_text(template_text("profile/learned.md"), encoding="utf-8")
+    (root / "data").mkdir(exist_ok=True)
+    (root / "dashboard").mkdir(exist_ok=True)
+    return root
+
+
 def write_project(answers: Answers, say: Callable[[str], None]) -> Path:
     """The files: config.yaml, .env (owner-only), profile/about.md and learned.md, data/ and
     dashboard/. Nothing is overwritten: `validate` refused a project that exists."""
