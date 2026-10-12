@@ -4,7 +4,7 @@ import BodhEngine
 /// The first launch on a Mac that already runs bodh from the terminal: move the folder into
 /// Application Support, import .env into the Keychain, remove the launchd jobs, start at
 /// login. Each line a checkbox, all on; one Continue; the summary names every path touched.
-struct MigrationView: View {
+@MainActor struct MigrationView: View {
     @EnvironmentObject private var model: AppModel
     let offer: MigrationOffer
     @State private var choices = Migration.Choices()

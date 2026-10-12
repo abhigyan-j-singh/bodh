@@ -37,7 +37,7 @@ enum WindowSection: String, CaseIterable, Identifiable {
     var engineSection: String? { self == .log ? nil : rawValue }
 }
 
-struct MainWindow: View {
+@MainActor struct MainWindow: View {
     @EnvironmentObject private var model: AppModel
     @State private var section: WindowSection? = .today
 
@@ -125,7 +125,7 @@ struct MainWindow: View {
 }
 
 /// The one banner: the most severe condition, its sentence, Dismiss when it may be waved away.
-struct AttentionBanner: View {
+@MainActor struct AttentionBanner: View {
     @EnvironmentObject private var model: AppModel
     let item: Attention
 
@@ -153,7 +153,7 @@ struct AttentionBanner: View {
 }
 
 /// What the last action answered, for a few seconds.
-struct NoticeBar: View {
+@MainActor struct NoticeBar: View {
     @EnvironmentObject private var model: AppModel
     let text: String
 
@@ -176,7 +176,7 @@ struct NoticeBar: View {
 }
 
 /// The engine is starting, down or given up: the sentence, the last lines it said, Retry.
-struct EngineStateView: View {
+@MainActor struct EngineStateView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -207,7 +207,7 @@ struct EngineStateView: View {
 }
 
 /// The last lines the engine printed, from the app's own log.
-struct EngineLogTail: View {
+@MainActor struct EngineLogTail: View {
     var body: some View {
         let lines = AppLog.tail(400).filter { $0.contains(" ENGINE ") }.suffix(12)
         if !lines.isEmpty {
@@ -225,7 +225,7 @@ struct EngineLogTail: View {
     }
 }
 
-struct EngineMissingView: View {
+@MainActor struct EngineMissingView: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 40)).foregroundStyle(.orange)
@@ -242,7 +242,7 @@ struct EngineMissingView: View {
 }
 
 /// The engine's log tail, refreshed every few seconds while the section is open.
-struct LogView: View {
+@MainActor struct LogView: View {
     @EnvironmentObject private var model: AppModel
     @State private var lines: [String] = []
 

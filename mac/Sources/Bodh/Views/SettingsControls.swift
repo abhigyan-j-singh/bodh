@@ -5,7 +5,7 @@ import BodhEngine
 /// unit, a picker, a text field, or one of the small editors. A change applies when the field
 /// loses focus or Return is pressed and is confirmed by the engine; a refusal shows under
 /// the field in the engine's words. The config key shows on hover for those who want it.
-struct SettingRow: View {
+@MainActor struct SettingRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
 
@@ -52,7 +52,7 @@ struct SettingRow: View {
 }
 
 /// A text setting: the draft is committed on Return or when the focus leaves.
-struct TextRow: View {
+@MainActor struct TextRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
     @State private var draft = ""
@@ -84,7 +84,7 @@ struct TextRow: View {
 }
 
 /// A number with its unit and range; an empty field is "empty" when the setting allows it.
-struct NumberRow: View {
+@MainActor struct NumberRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
     @State private var draft = ""
@@ -136,7 +136,7 @@ struct NumberRow: View {
 }
 
 /// Back to the default, shown only when the value differs from it.
-struct ResetButton: View {
+@MainActor struct ResetButton: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
 
@@ -156,7 +156,7 @@ struct ResetButton: View {
 }
 
 /// The five weights, summing to one; committed together when the sum is right.
-struct WeightsRow: View {
+@MainActor struct WeightsRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
     @State private var drafts: [String: String] = [:]
@@ -207,7 +207,7 @@ struct WeightsRow: View {
 }
 
 /// The score bands: threshold and tag name per row, best first.
-struct BandsRow: View {
+@MainActor struct BandsRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
     @State private var rows: [(threshold: String, name: String)] = []
@@ -250,7 +250,7 @@ struct BandsRow: View {
 }
 
 /// The price table: a model per row, input, output and cache read per million tokens.
-struct PricesRow: View {
+@MainActor struct PricesRow: View {
     @EnvironmentObject private var store: SettingsStore
     let setting: Setting
     @State private var rows: [(model: String, prices: [String])] = []
@@ -310,7 +310,7 @@ struct PricesRow: View {
 }
 
 /// A whole pane drawn from the schema: the plain settings, then the advanced ones folded.
-struct GenericPane: View {
+@MainActor struct GenericPane: View {
     @EnvironmentObject private var store: SettingsStore
     let group: String
     let title: String

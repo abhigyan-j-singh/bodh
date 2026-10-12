@@ -7,7 +7,7 @@ import BodhEngine
 /// student profile; the folders to protect and to skip; scoring-only or cutting. The last
 /// screen starts the first run and shows it live. Every answer goes through the engine's
 /// service; the app keeps none of it.
-struct OnboardingView: View {
+@MainActor struct OnboardingView: View {
     @EnvironmentObject private var model: AppModel
     @State private var step = 0
     @State private var busy = false
@@ -334,7 +334,7 @@ struct OnboardingView: View {
 }
 
 /// The folders as a table: name, articles a day, Judge, Never cut, the cut-off.
-struct FolderTable: View {
+@MainActor struct FolderTable: View {
     @Binding var rows: [FolderRow]
 
     var body: some View {

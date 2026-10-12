@@ -61,7 +61,7 @@ enum Pane: String, CaseIterable, Identifiable {
     }
 }
 
-struct SettingsView: View {
+@MainActor struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var store = SettingsStore()
     @State private var pane: Pane? = .general
@@ -120,7 +120,7 @@ struct SettingsView: View {
 }
 
 /// Every setting whose title, help or key matches the search, whatever its pane.
-struct SearchResults: View {
+@MainActor struct SearchResults: View {
     @EnvironmentObject private var store: SettingsStore
     let query: String
 
@@ -146,7 +146,7 @@ struct SearchResults: View {
 
 // MARK: General
 
-struct GeneralPane: View {
+@MainActor struct GeneralPane: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("menubar.showCount") private var showCount = true
     @AppStorage("window.stayClosedAtLaunch") private var stayClosed = false
@@ -202,7 +202,7 @@ struct GeneralPane: View {
 
 // MARK: Account
 
-struct AccountPane: View {
+@MainActor struct AccountPane: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var store: SettingsStore
     @State private var email = ""
@@ -281,7 +281,7 @@ struct AccountPane: View {
 
 // MARK: Folders
 
-struct FoldersPane: View {
+@MainActor struct FoldersPane: View {
     @EnvironmentObject private var store: SettingsStore
     @State private var loading = false
     @State private var message: String?
@@ -327,7 +327,7 @@ struct FoldersPane: View {
 
 // MARK: Providers and keys
 
-struct ProvidersPane: View {
+@MainActor struct ProvidersPane: View {
     @EnvironmentObject private var store: SettingsStore
 
     private struct ProviderInfo: Identifiable {
@@ -369,7 +369,7 @@ struct ProvidersPane: View {
     }
 }
 
-struct ProviderRow: View {
+@MainActor struct ProviderRow: View {
     @EnvironmentObject private var store: SettingsStore
     let provider: String
     let name: String
@@ -447,7 +447,7 @@ struct ProviderRow: View {
     }
 }
 
-struct EnvImportRow: View {
+@MainActor struct EnvImportRow: View {
     @EnvironmentObject private var store: SettingsStore
     @State private var message: String?
 
@@ -477,7 +477,7 @@ struct EnvImportRow: View {
 
 // MARK: Notifications
 
-struct NotificationsPane: View {
+@MainActor struct NotificationsPane: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("notify.run_failed") private var runFailed = true
     @AppStorage("notify.budget") private var budget = true
@@ -515,7 +515,7 @@ struct NotificationsPane: View {
 
 // MARK: Advanced
 
-struct AdvancedPane: View {
+@MainActor struct AdvancedPane: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var store: SettingsStore
     @State private var message: String?
