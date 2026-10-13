@@ -29,20 +29,24 @@ ENTITLEMENTS ?= default
 
 .PHONY: engine build app run test icon sign notarize dmg dist clean check
 
-engine:
+# the engine is rebuilt when the engine's sources, its script or the pinned dependencies
+# change, not only when it is missing: `make app` ships the checkout as it is
+ENGINE_SOURCES := $(shell find ../src/bodh -type f ! -name '*.pyc' ! -path '*/__pycache__/*')
+
+engine: $(ENGINE)/engine.json
+
+$(ENGINE)/engine.json: ../scripts/build_engine.sh engine/constraints.txt ../pyproject.toml $(ENGINE_SOURCES)
 	../scripts/build_engine.sh --arch $(ARCH) --out $(ENGINE)
 
 build:
 	swift build -c release --arch $(ARCH)
 
-app: build icon
-	@test -x $(ENGINE)/python/bin/python3 || $(MAKE) engine
+app: build icon engine
 	scripts/make_app.sh --binary $(BINARY) --engine $(ENGINE) --out $(APP) --version $(VERSION) --build $(BUILD) --bundle-id $(BUNDLE_ID)
 	scripts/sign.sh $(APP)
 	@echo "open $(APP)"
 
-run: build
-	@test -x $(ENGINE)/python/bin/python3 || $(MAKE) engine
+run: build engine
 	BODH_ENGINE=$(abspath $(ENGINE)) $(BINARY)
 
 test:  # the engine library's tests; with an engine built, the live ones against `bodh serve --app` too

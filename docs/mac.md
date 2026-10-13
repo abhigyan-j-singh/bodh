@@ -39,7 +39,8 @@ shows in the window within a minute.
 ## The command line
 
 Settings › Advanced › Install command line tool makes `/usr/local/bin/bodh` point at the
-engine inside the app (an administrator prompt). In your shell profile:
+launcher beside the engine inside the app (`Contents/Resources/engine/bodh`; an administrator
+prompt). In your shell profile:
 `export BODH_HOME="$HOME/Library/Application Support/bodh"`. The CLI and the app share the lock,
 so they never run at once; `bodh status` in Terminal agrees with the menu bar.
 

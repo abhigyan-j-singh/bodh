@@ -102,16 +102,21 @@ rm -rf "$site/test" "$site/idlelib" "$site/tkinter" "$site/turtledemo" "$site/en
        "$out/python/lib/libpython3.12.a" "$site/lib-dynload/_tkinter"* "$out/python/lib/tcl"* "$out/python/lib/tk"* \
        "$out/python/lib/libtcl"* "$out/python/lib/libtk"* "$out/python/lib/itcl"* "$out/python/lib/Tix"* "$out/python/lib/thread"*
 find "$out/python/lib/python3.12/site-packages" -type d -name "tests" -prune -exec rm -rf {} + 2>/dev/null || true
-find "$out/python/bin" -type f ! -name 'python3*' -delete 2>/dev/null || true
-find "$out/python/bin" -type l ! -name 'python3*' -delete 2>/dev/null || true
+# bin/ keeps the interpreter and its python3 link alone: pip, idle, pydoc and python3.12-config
+# (a shell script `python3*` used to let through) have no run to serve
+find "$out/python/bin" -mindepth 1 ! -name 'python3' ! -name 'python3.12' -delete 2>/dev/null || true
 find "$out/python" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
 "$python" -m compileall -q -j 0 --invalidation-mode unchecked-hash "$site" >/dev/null
 
-# 6. the launcher and the record
+# 6. the launcher and the record. The app's Install command line tool makes /usr/local/bin/bodh
+#    a symlink to the launcher, hence the readlink: the engine is beside the script itself.
 cat > "$out/bodh" <<'EOF'
 #!/bin/sh
-# bodh's command line from inside the Mac app: the bundled interpreter, the bundled package.
-exec "$(cd "$(dirname "$0")" && pwd)/python/bin/python3" -m bodh.cli "$@"
+# bodh's command line: the bundled interpreter, the bundled package.
+self="$(readlink -f "$0" 2>/dev/null)" || self="$0"
+engine="$(cd "$(dirname "$self")" && pwd)"
+[ -x "$engine/python/bin/python3" ] || { echo "bodh: no engine beside $self" >&2; exit 1; }
+exec "$engine/python/bin/python3" -m bodh.cli "$@"
 EOF
 chmod +x "$out/bodh"
 bodh_version="$("$python" -c 'import bodh; print(bodh.__version__)')"

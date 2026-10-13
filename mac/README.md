@@ -52,7 +52,7 @@ notarytool profile).
 - On launch the app writes a 32-byte token to `~/Library/Application Support/bodh/token`
   (mode 600), makes the project files there if there are none (`bodh init --skeleton`), and
   starts `python3 -m bodh.cli serve --app --port 0 --token-file … --home …` from
-  `Contents/Frameworks/engine`. The engine prints its port on the first line; the app polls
+  `Contents/Resources/engine`. The engine prints its port on the first line; the app polls
   `/api/health` until it answers, then opens the event stream. A crash restarts the engine
   with backoff (1, 2, 4, 8, 30 s); ten in an hour and it gives up with a Retry button. Quit
   sends SIGTERM, waits five seconds, then SIGKILL; the engine also ends when its stdin closes,

@@ -230,7 +230,7 @@ enum WindowSection: String, CaseIterable, Identifiable {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 40)).foregroundStyle(.orange)
             Text("The engine is missing from this copy of bodh.").font(.title3)
-            Text("The app was built without Contents/Frameworks/engine. Build it with `make app` in mac/, or point BODH_ENGINE at an engine folder made by scripts/build_engine.sh while developing.")
+            Text("The app was built without Contents/Resources/engine. Build it with `make app` in mac/, or point BODH_ENGINE at an engine folder made by scripts/build_engine.sh while developing.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

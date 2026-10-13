@@ -28,14 +28,16 @@ enum Paths {
     /// The CLI's old home, offered for migration on the first launch.
     static var legacyHome: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("bodh", isDirectory: true) }
 
-    /// The bundled engine: `Contents/Frameworks/engine/python/bin/python3` in the app bundle,
-    /// `BODH_ENGINE` (a folder made by scripts/build_engine.sh) when developing.
+    /// The bundled engine: `Contents/Resources/engine/python/bin/python3` in the app bundle
+    /// (under Resources, as py2app and Briefcase keep an interpreter: codesign takes
+    /// everything under Frameworks for code), `BODH_ENGINE` (a folder made by
+    /// scripts/build_engine.sh) when developing.
     static var engineDirectory: URL? {
         if let env = ProcessInfo.processInfo.environment["BODH_ENGINE"], !env.isEmpty {
             return URL(fileURLWithPath: env, isDirectory: true)
         }
         let bundled = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Frameworks/engine", isDirectory: true)
+            .appendingPathComponent("Contents/Resources/engine", isDirectory: true)
         if FileManager.default.fileExists(atPath: bundled.appendingPathComponent("python/bin/python3").path) {
             return bundled
         }
@@ -43,6 +45,8 @@ enum Paths {
     }
 
     static var enginePython: URL? { engineDirectory?.appendingPathComponent("python/bin/python3") }
+
+    /// The command line launcher beside the engine, the symlink target of Install command line tool.
     static var engineCLI: URL? { engineDirectory?.appendingPathComponent("bodh") }
 
     static func ensureDirectories() throws {

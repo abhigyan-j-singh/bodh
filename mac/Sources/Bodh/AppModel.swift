@@ -94,7 +94,7 @@ final class AppModel: ObservableObject {
         }
         guard let python = Paths.enginePython else {
             engineMissing = true
-            AppLog.error("no engine: neither Contents/Frameworks/engine nor BODH_ENGINE")
+            AppLog.error("no engine: neither Contents/Resources/engine nor BODH_ENGINE")
             return
         }
         engineMissing = false
