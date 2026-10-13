@@ -13,12 +13,22 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     brought to the current shape on connect; a current one is left alone."""
     path = tmp_path / "old.db"
     old = sqlite3.connect(str(path))
+    # the shape before October 2026: no exempt, no judge_failures, no indexes, and the names
+    # before the glossary (runs.cut_floor, learner_versions)
     v1 = store.SCHEMA.replace("  exempt INTEGER DEFAULT 0,\n", "").replace(
         "  judge_failures INTEGER DEFAULT 0,\n", ""
+    )
+    v1 = v1.replace("cut_autocut INTEGER", "cut_floor INTEGER").replace(
+        "learned_versions", "learner_versions"
     )
     v1 = "\n".join(line for line in v1.splitlines() if not any(name in line for name in store.INDEXES))
     old.executescript(v1)
     old.execute("INSERT INTO state (article_id, status) VALUES ('a', 'unread')")
+    old.execute("INSERT INTO runs (kind, ok, cut_floor, cut_prune) VALUES ('run', 1, 7, 2)")
+    old.executemany(
+        "INSERT INTO learner_versions (text, reason, created_at) VALUES (?, ?, ?)",
+        [("v1 text", "initial", "2026-09-01"), ("v2 text", "sunday", "2026-09-07")],
+    )
     # the kv keys before October 2026, as the old code left them
     old.executemany(
         "INSERT INTO kv (key, value) VALUES (?, ?)",
@@ -32,6 +42,12 @@ def test_schema_version_and_migrations_apply_in_order(tmp_path):
     assert tuple(
         conn.execute("SELECT exempt, judge_failures FROM state WHERE article_id = 'a'").fetchone()
     ) == (0, 0)
+    # migration 6: the tables carry the glossary's names, with what they held
+    assert "cut_floor" not in store._columns(conn, "runs")
+    assert tuple(conn.execute("SELECT cut_autocut, cut_prune FROM runs").fetchone()) == (7, 2)
+    assert not store._table_exists(conn, "learner_versions")
+    assert [r["text"] for r in store.learned_versions(conn)] == ["v2 text", "v1 text"]
+    store.finish_run(conn, store.begin_run(conn, "run"), True, cut_autocut=3)  # the write that failed before
     # migration 4: the kv keys carry the glossary's names; the old safety key stays for a rollback
     assert store.kv_get(conn, store.PHASE_KEY) == "judging" and store.kv_get(conn, "phase") is None
     assert store.kv_get(conn, store.PLAIN_JSON_KEY) == "1" and store.kv_get(conn, "plain_json") is None

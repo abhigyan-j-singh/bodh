@@ -120,5 +120,7 @@ print it.
 Database column names and stored values keep their first spelling (`bucket`, `exploration`,
 `floor`, `bankruptcy`, `blast`, `nudge`, `wrong`, `second_look`, `teacher`); the glossary's
 names are used at the boundary (`store.cut_mode_name` and friends, the console, `--json`).
+The two exceptions, `runs.cut_autocut` and the `learned_versions` table, were renamed in the
+schema in October 2026 and are brought along by migration 6.
 Schema changes are numbered migrations in `store.py`, each idempotent and tested from the
 previous shape; the kv keys are the named constants in `store.py`.

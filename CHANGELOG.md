@@ -110,9 +110,19 @@ of the aliases go away in the release after 1.0.0.
 - The database's kv keys: `run_phase`, `provider.plain_json`, `provider.cache_ttl` and
   `safety_tripped` (were `phase`, `plain_json`, `cache_ttl_fallback`, `breaker_tripped`), moved
   by schema migration 4 on the first open; `breaker_tripped` is kept in step so that a rollback
-  to the code before October 2026 still sees a tripped safety limit. Nothing else in the
-  database changes: stored words such as `floor`, `bankruptcy`, `blast` and `nudge` stay as they
-  are and are shown under the new names.
+  to the code before October 2026 still sees a tripped safety limit. Two names in the schema
+  itself: the `runs` table's `cut_autocut` column (was `cut_floor`) and the `learned_versions`
+  table (was `learner_versions`), renamed in an older database by schema migration 6 on the
+  first open, with the learned profile's history carried over; the code before October 2026
+  cannot run on a database past that migration. Stored words such as `floor`, `bankruptcy`,
+  `blast` and `nudge` stay as they are and are shown under the new names.
+
+### Fixed
+
+- On a database from before October 2026, every run ended with `no such column: cut_autocut`
+  after doing its work, and the learned profile's history sat in a table nothing read: the
+  renaming had changed two names in the schema without a migration. Schema migration 6 renames
+  them on the first open.
 
 ### Changed
 

@@ -134,7 +134,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # existed); each numbered step below brings it one version on, inside one transaction, and
 # is written so that running it on a database that already has the change is harmless.
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SCHEMA_VERSION_KEY = "schema_version"
 
 # The kv keys, named by the glossary. The names before October 2026 are moved by _migrate_4.
@@ -188,7 +188,42 @@ def _migrate_5(conn: sqlite3.Connection) -> None:
         conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {columns}")
 
 
-MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4, 5: _migrate_5}
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        is not None
+    )
+
+
+def _migrate_6(conn: sqlite3.Connection) -> None:
+    """The glossary's names in the tables too. The renaming of October 2026 changed SCHEMA
+    (`runs.cut_floor` to `cut_autocut`, `learner_versions` to `learned_versions`) and nothing
+    else: CREATE TABLE IF NOT EXISTS leaves an old table as it was, so on a database from
+    before, every run ended with "no such column: cut_autocut", and the learned profile's
+    history sat in a table nothing read, beside a new empty one."""
+    columns = _columns(conn, "runs")
+    if "cut_autocut" not in columns:
+        if "cut_floor" in columns:
+            conn.execute("ALTER TABLE runs RENAME COLUMN cut_floor TO cut_autocut")
+        else:
+            conn.execute("ALTER TABLE runs ADD COLUMN cut_autocut INTEGER")
+    if _table_exists(conn, "learner_versions"):
+        # the old history first, then what the new code wrote into the new table since,
+        # except its "initial" seed (a copy of the file, which the old history already ends with)
+        rows = conn.execute(
+            "SELECT text, reason, created_at FROM learner_versions ORDER BY version"
+        ).fetchall()
+        rows += [
+            r
+            for r in conn.execute("SELECT text, reason, created_at FROM learned_versions ORDER BY version")
+            if r["reason"] != "initial"
+        ]
+        conn.execute("DELETE FROM learned_versions")
+        conn.executemany("INSERT INTO learned_versions (text, reason, created_at) VALUES (?, ?, ?)", rows)
+        conn.execute("DROP TABLE learner_versions")
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4, 5: _migrate_5, 6: _migrate_6}
 
 
 def schema_version(conn: sqlite3.Connection) -> int:

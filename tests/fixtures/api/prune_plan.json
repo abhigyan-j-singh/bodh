@@ -23,7 +23,7 @@
         "band": "score-30",
         "lesson": "l",
         "concept": "c",
-        "judged_at": "2026-10-12T07:14:56.375917+00:00"
+        "judged_at": "2026-10-13T14:04:39.531357+00:00"
       },
       {
         "id": "tag:google.com,2005:reader/item/0000000000000004",
@@ -35,7 +35,7 @@
         "band": "score-0",
         "lesson": "l",
         "concept": "c",
-        "judged_at": "2026-10-12T07:14:56.378195+00:00"
+        "judged_at": "2026-10-13T14:04:39.534500+00:00"
       }
     ],
     "next_run_id": 1

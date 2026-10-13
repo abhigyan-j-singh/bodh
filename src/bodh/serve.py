@@ -213,7 +213,9 @@ def serve(
                 on_ready(info)
             listening.set()
 
-        thread = threading.Thread(target=server.serve, kwargs={"ready": ready}, name="bodh-console", daemon=True)
+        thread = threading.Thread(
+            target=server.serve, kwargs={"ready": ready}, name="bodh-console", daemon=True
+        )
         thread.start()
         listening.wait(10)
         log.info("serve: console on http://%s:%d", host, server.port)
