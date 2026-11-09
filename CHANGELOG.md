@@ -46,6 +46,12 @@ Every change a user could notice, newest first. The format follows
 
 ### Added
 
+- **`bodh console --open`** opens the console that is already running for the project (the Mac
+  app's engine, or `bodh serve`) in the browser, with the app's per-launch token in the URL, so
+  a bare `http://127.0.0.1:<port>` no longer answers "unauthorised" to a person.
+- **`bodh keys set healthchecks`** stores the healthchecks.io ping URL (`HEALTHCHECK_URL`) in
+  `.env` or the keychain like a provider key, so the dead-man's switch can be set up without
+  editing files.
 - **An attention for silence.** When no run has finished successfully for three hours and the
   schedule is not paused, the page, `bodh status` and the Mac app show a critical banner (`stale`,
   dismissable) and the app sends a notification: the condition FeedBrain died of, and the one

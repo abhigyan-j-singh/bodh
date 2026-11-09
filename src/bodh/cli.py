@@ -5,6 +5,7 @@ they are used (`bodh --help` lists them); each has examples at the end of its ow
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import sys
 import time
@@ -295,7 +296,7 @@ def doctor(
 def keys(
     action: str = typer.Argument("list", help="list, or set <provider>"),
     provider: str | None = typer.Argument(
-        None, help="anthropic, openai, gemini, openrouter or openai-compatible"
+        None, help="anthropic, openai, gemini, openrouter, openai-compatible, or healthchecks (the ping URL)"
     ),
     keychain: bool = typer.Option(
         False, "--keychain", help="Store in the system keychain instead of .env (pip install bodh[keychain])."
@@ -312,6 +313,7 @@ def keys(
       bodh keys                     one line per provider: set or not set
       bodh keys set openai          asks for the key, writes .env
       bodh keys set gemini --keychain
+      bodh keys set healthchecks --keychain   # the healthchecks.io ping URL, the dead-man's switch
     """
     found = _app(verbose)
     if action == "list":
@@ -330,10 +332,11 @@ def keys(
         return
     from .providers.base import PROVIDERS
 
-    if provider not in PROVIDERS:
-        _fail(f"unknown provider {provider!r}; one of {', '.join(PROVIDERS)}")
+    names = {**PROVIDERS, **api.EXTRA_SECRETS}
+    if provider not in names:
+        _fail(f"unknown provider {provider!r}; one of {', '.join(names)}")
         return
-    value = typer.prompt(PROVIDERS[provider], hide_input=True, default="", show_default=False).strip()
+    value = typer.prompt(names[provider], hide_input=True, default="", show_default=False).strip()
     if not value:
         _fail("nothing entered; the key is unchanged")
         return
@@ -1306,6 +1309,9 @@ def console(
         "--host",
         help="127.0.0.1 keeps it local; publish it on your tailnet with `tailscale serve`.",
     ),
+    open_: bool = typer.Option(
+        False, "--open", help="Open the running console in the browser (with the app's token) instead."
+    ),
     verbose: bool = VERBOSE,
 ) -> None:
     """The console: status, run, stop, schedule, prune, undo, catch-up, log, dashboard, in one page.
@@ -1314,12 +1320,16 @@ def console(
     Examples:
       bodh console
       bodh console --port 8800
+      bodh console --open        # the one the app (or `bodh serve`) is already running
     """
     import traceback
 
     from .console import Console, console_log
 
     found = _app(verbose)
+    if open_:
+        typer.echo(_open_console(found.cfg))
+        return
     typer.echo(
         f"console on http://{host}:{port}  (Ctrl-C stops it; the schedule keeps it alive when installed)"
     )
@@ -1335,6 +1345,31 @@ def console(
             f"failed: {type(exc).__name__}: {exc}\n{traceback.format_exc()}",
         )
         _fail(f"console failed: {exc}")
+
+
+def _open_console(cfg: Config) -> str:
+    """The URL of the console that is running for this project, opened in the browser. With the
+    app's engine every request needs its per-launch token, so the URL carries it (`?token=`);
+    the page stamps it into its own requests from there."""
+    import webbrowser
+
+    from . import jobs
+
+    state = jobs.console_state(cfg)
+    if not state["up"]:
+        raise ConfigError("no console is running for this project (open the app, or `bodh console`)")
+    url = state["url"]
+    data_dir = cfg.root / cfg.data_dir
+    try:
+        serve_info = json.loads((data_dir / "serve.json").read_text(encoding="utf-8"))
+        token_file = serve_info.get("token_file")
+        token = Path(token_file).read_text(encoding="utf-8").strip() if token_file else ""
+    except (OSError, ValueError):
+        token = ""
+    if token:
+        url = f"{url}/?token={token}"
+    webbrowser.open(url)
+    return f"opened {state['url']}" + (" (with the app's token)" if token else "")
 
 
 @app.command(hidden=True)

@@ -111,7 +111,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | `bodh autocut on\|off` | Flip autocut in config.yaml: on cuts under the cut-off from the next run, off is scoring-only mode. |
 | `bodh safety [reset]` | The safety limit (a run whose autocut would cut nearly everything newly judged trips it, and autocut stays off until a person resets it) and the articles the judge gave up on. |
 | `bodh migrate-home FROM TO` | Move a project to another folder whole (config, keys, data, profile, dashboard); nothing rewritten, a second run moves nothing. The Mac app's first launch uses it. |
-| `bodh console` | The console in the browser (`http://127.0.0.1:8766`, kept alive by the schedule): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
+| `bodh console [--open]` | The console in the browser (`http://127.0.0.1:8766`, kept alive by the schedule; `--open` opens the one the Mac app or `bodh serve` is already running, token included): the same status live, buttons for run, stop, pause/resume the schedule, autocut on/off, prune (dry run first), undo, clear-old, catch-up, weekly, report, doctor; command output and the log streamed; the dashboard underneath. |
 
 **Housekeeping**
 

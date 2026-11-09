@@ -32,6 +32,8 @@ from .locks import graceful_sigterm, run_lock, time_limit
 log = logging.getLogger(__name__)
 
 SCHEMA = 1  # the version field of every JSON object a command prints (docs/json.md)
+# `bodh keys set` names beyond the model providers: the heartbeat's ping URL (healthchecks.io)
+EXTRA_SECRETS = {"healthchecks": "HEALTHCHECK_URL"}
 MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "rescue")
 LIST_BAND = 60.0
 LIST_LIMIT = 50
@@ -287,9 +289,10 @@ class App:
         from .config import keychain_set, write_env_value
         from .providers.base import PROVIDERS
 
-        if provider not in PROVIDERS:
-            raise BodhError(f"unknown provider {provider!r}; one of {', '.join(PROVIDERS)}")
-        env_name = PROVIDERS[provider]
+        names = {**PROVIDERS, **EXTRA_SECRETS}
+        if provider not in names:
+            raise BodhError(f"unknown provider {provider!r}; one of {', '.join(names)}")
+        env_name = names[provider]
         if keychain:
             keychain_set(env_name, value)
             return f"{env_name}: stored in the keychain ({len(value)} characters)"

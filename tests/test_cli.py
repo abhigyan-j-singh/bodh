@@ -187,6 +187,39 @@ def test_version_and_console_help_need_no_project(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_console_open_finds_the_running_console_and_carries_the_token(tmp_path, monkeypatch):
+    """`console --open` opens the console `bodh serve --app` wrote about, with the app's token in
+    the URL; with no console answering it says so (exit 2) and opens nothing."""
+    import json
+    import socket
+    import webbrowser
+
+    root = _project(tmp_path, monkeypatch)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
+    result = invoke(["console", "--open"])
+    assert result.exit_code == 2 and "no console is running" in result.output and opened == []
+    listening = socket.socket()
+    listening.bind(("127.0.0.1", 0))
+    listening.listen(1)
+    port = listening.getsockname()[1]
+    data = root / "data"
+    data.mkdir(exist_ok=True)
+    (data / "console.json").write_text(
+        json.dumps({"pid": 1, "host": "127.0.0.1", "port": port, "url": f"http://127.0.0.1:{port}"})
+    )
+    token_file = tmp_path / "token"
+    token_file.write_text("sekrit-token-value\n")
+    (data / "serve.json").write_text(json.dumps({"port": port, "token_file": str(token_file)}))
+    try:
+        result = invoke(["console", "--open"])
+    finally:
+        listening.close()
+    assert result.exit_code == 0, result.output
+    assert opened == [f"http://127.0.0.1:{port}/?token=sekrit-token-value"]
+    assert "with the app's token" in result.output and "sekrit" not in result.output
+
+
 # -- the run lock -----------------------------------------------------------------
 
 

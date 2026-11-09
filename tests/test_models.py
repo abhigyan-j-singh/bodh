@@ -123,6 +123,10 @@ def test_keys_set_writes_env_owner_only_and_keeps_the_other_lines(tmp_path, monk
     result = invoke(["keys", "set", "openai"], input="\n")
     assert result.exit_code == 1 and "unchanged" in result.output
     assert (root / ".env").read_text(encoding="utf-8") == before
+    # the heartbeat's ping URL is set the same way
+    result = invoke(["keys", "set", "healthchecks"], input="https://hc-ping.com/abc-123\n")
+    assert result.exit_code == 0 and "HEALTHCHECK_URL: written to" in result.output, result.output
+    assert load_secrets(root).value("healthcheck_url") == "https://hc-ping.com/abc-123"
     # a local service takes its base URL in the same breath
     result = invoke(["keys", "set", "openai-compatible"], input="\nhttp://localhost:11434/v1\n")
     assert result.exit_code == 1 and "unchanged" in result.output  # an empty key stops before the URL
