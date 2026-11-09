@@ -58,7 +58,9 @@ Three or four times a day, in this order; two minutes each time.
    move. What an undo brought back is left alone by autocut from then on (a prune may still
    take it).
 4. Teach, in passing (section 5): star or tag `great` what was best, `good`, `meh` or `bad` the
-   rest; `rescue` on a cut article you wanted; `more` or `less` to steer by an article's concept.
+   rest; `rescue` on a cut article you wanted; `more` or `less` to steer by an article's concept;
+   `detour` or `wasted` on an outlier the judge chose far from your usual reading, to say whether
+   the stretch was worth it (the judge and the Sunday rewrite stretch that way, or stop).
 
 Judgments arrive within an hour or two of an article (the next run submits it, the Batches API
 finishes most batches within the hour, the run after that collects them; half price). When you
@@ -342,7 +344,7 @@ warning that lists the moves (`bodh doctor` lists them too); the mapping goes aw
 **folders**: per folder, `cutoff: N` (its own cut-off), `protected: true` (never cut), `judge: false`
 (never judged). Folder names must match BazQux exactly; `bodh doctor --live` warns about ones that do not.
 
-**tags** [score-90 … score-0, cut, rescue, prune, great, good, meh, bad, basic, heavy, more, less]:
+**tags** [score-90 … score-0, cut, rescue, prune, great, good, meh, bad, basic, heavy, more, less, detour, wasted]:
 the tag names written to and read from BazQux; change them only before the first run. `bands` maps
 the score bands to their tags.
 

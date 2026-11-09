@@ -208,7 +208,7 @@ pydantic model by `scripts/gen_schema.py` (the suite fails when it is stale). Co
                         "folder": "Essays", "age_text": "2 h", "arrived_at": "2026-10-11T13:40:00+00:00",
                         "judged_at": "2026-10-11T14:02:11+00:00"}],
           "empty_text": "Nothing at 60 or above right now. 34 articles are waiting for the judge; the next run is in 22 min.",
-          "verdicts": ["great", "good", "meh", "bad", "basic", "heavy", "more", "less"]},
+          "verdicts": ["great", "good", "meh", "bad", "basic", "heavy", "more", "less", "detour", "wasted"]},
  "verdicts": {"lead": "...", "grid": [{"band": 90, "label": "90 and up", "counts": {"great": 4, "good": 2, "meh": 0, "bad": 0}}],
               "grid_sentence": "...", "disagreements": [{"id": "...", "title": "...", "url": "...", "grade": "bad", "score": 85.0, "band": 70, "concept": "..."}],
               "disagreements_empty": "...", "calibration": [{"band": 90, "label": "90 and up", "n": 120, "read_share": 0.41, "star_share": 0.05}],
@@ -309,7 +309,7 @@ settings models refused, with `errors: [{key, message}]`).
 | `POST /api/run` | `{mode: normal, shadow or sync, limit?}` starts `bodh run` as the console's command; 409 while one runs |
 | `POST /api/stop` | interrupts the console's command, else the run holding the lock |
 | `POST /api/pause` | `{minutes: 60}`, `{until: ISO 8601}`, `{until: "tomorrow"}` (07:00 in the configured zone) or `{until: null}` (resume); `bodh serve` runs nothing until then; `{paused_until}` |
-| `POST /api/mark` | `{id or url, kind}`: a verdict (`great` … `less`) or `rescue`; `{ok, message}` |
+| `POST /api/mark` | `{id or url, kind}`: a verdict (`great` … `less`, `detour`, `wasted`) or `rescue`; `{ok, message}` |
 | `POST /api/steer` | `{direction: more or less, phrase}` |
 | `POST /api/prune` | `{keep or fraction or below, dry_run: true}` answers the plan (`{plan: {cut, unread_scored, boundary, by_band, by_folder, best, next_run_id}, sentence, button}`); `{..., confirm: true}` starts `bodh prune --yes` with the same arguments |
 | `POST /api/undo` | `{run_id?}`: `bodh undo`, waited for; `{ok, message, output}` |

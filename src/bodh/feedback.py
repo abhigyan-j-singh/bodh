@@ -213,7 +213,7 @@ def collect_verdicts(
     if not present:
         return stats
     steers: list[tuple[str, str]] = []
-    for group in (store.GRADES, store.LEVELS, store.STEERS):
+    for group in (store.GRADES, store.LEVELS, store.STEERS, store.DETOURS):
         recorded = store.verdicts(conn, group)
         for aid, kinds in present.items():
             here = [k for k in group if k in kinds]

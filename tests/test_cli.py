@@ -721,9 +721,14 @@ def test_mark_takes_every_kind_and_refuses_an_unknown_article(tmp_path, monkeypa
     assert (
         result.exit_code == 1 and "unknown article; it must have been fetched by a run first" in result.output
     )
-    for kind in ("bad", "good", "meh", "heavy", "basic"):
+    for kind in ("bad", "good", "meh", "heavy", "basic", "wasted", "detour"):
         result = invoke(["mark", "1", kind])
         assert result.exit_code == 0 and f"recorded {kind} for: Coin news" in result.output, result.output
+    conn = store.connect(cfg.db_path)
+    assert store.verdicts(conn, store.DETOURS) == {
+        ids[0]: "detour"
+    }  # the later detour verdict replaced wasted
+    conn.close()
     result = invoke(["mark", "1", "less"])
     assert (
         result.exit_code == 0
@@ -738,7 +743,7 @@ def test_mark_takes_every_kind_and_refuses_an_unknown_article(tmp_path, monkeypa
     assert store.verdicts(conn, store.GRADES) == {ids[0]: "meh"}
     assert store.verdicts(conn, store.LEVELS) == {ids[0]: "basic"}
     assert store.verdicts(conn, store.STEERS) == {ids[0]: "less"}
-    assert {k for k, _ in store.feedback_for(conn, ids[0])} == {"meh", "basic", "less", "wrong"}
+    assert {k for k, _ in store.feedback_for(conn, ids[0])} == {"meh", "basic", "less", "detour", "wrong"}
     assert store.article(conn, ids[0])["rescued_at"] is None
     conn.close()
     assert "wants less of crypto" in (root / "profile" / "learned.md").read_text(encoding="utf-8")

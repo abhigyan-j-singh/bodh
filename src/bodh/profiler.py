@@ -147,7 +147,9 @@ def weekly_rewrite(
     positives = store.feedback_since(conn, store.POSITIVE_KINDS, since)
     negatives = store.feedback_since(conn, store.NEGATIVE_KINDS, since)
     levels = store.feedback_since(conn, store.LEVELS, since)
-    steers = store.feedback_since(conn, store.STEERS, since)
+    steers = store.feedback_since(conn, store.STEERS, since) + store.feedback_since(
+        conn, store.DETOURS, since
+    )
     if len(positives) < 5:
         result["reason"] = f"only {len(positives)} positives this week; learned profile kept as is"
         return result
@@ -228,7 +230,11 @@ def _evidence(
         lines += ["", "# Level missed (basic: too elementary; heavy: too dense)"]
         lines += [_evidence_line(r) for r in levels[:40]]
     if steers:
-        lines += ["", "# Steers (more: the student asked for more of this; less: for less)"]
+        lines += [
+            "",
+            "# Steers and detours (more/less: the student asked for more or less of this; detour: an outlier "
+            "far from the usual reading that was worth it, stretch this way; wasted: one that was not)",
+        ]
         lines += [_evidence_line(r) for r in steers[:40]]
     return "\n".join(lines)
 

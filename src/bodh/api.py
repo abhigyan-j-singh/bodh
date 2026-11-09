@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 SCHEMA = 1  # the version field of every JSON object a command prints (docs/json.md)
 # `bodh keys set` names beyond the model providers: the heartbeat's ping URL (healthchecks.io)
 EXTRA_SECRETS = {"healthchecks": "HEALTHCHECK_URL"}
-MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "rescue")
+MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "detour", "wasted", "rescue")
 LIST_BAND = 60.0
 LIST_LIMIT = 50
 FIND_LIMIT = 50
@@ -193,6 +193,31 @@ def dumps(payload: Any) -> str:
 
 
 # -- the application ---------------------------------------------------------------
+
+
+VERDICT_MEANINGS = {
+    "great": "the best kind: more like this; the eval gate protects it",
+    "good": "worth the time",
+    "meh": "not worth it",
+    "bad": "junk; the judge was wrong to keep it",
+    "basic": "too elementary for you",
+    "heavy": "too dense or too specialist for you now",
+    "more": "more of this article's concept, from the next run",
+    "less": "less of it",
+    "detour": "an outlier worth the detour: stretch more this way",
+    "wasted": "an outlier not worth it: do not stretch this way",
+}
+
+
+def _verdict_group(kind: str) -> str:
+    """The exclusive group a verdict belongs to, as `bodh tags` names it."""
+    if kind in store.GRADES:
+        return "grade"
+    if kind in store.LEVELS:
+        return "level"
+    if kind in store.DETOURS:
+        return "detour"
+    return "steer"
 
 
 class App:
@@ -541,19 +566,8 @@ class App:
                 f"on any article: the next run with autocut prunes to prune.keep ({self.cfg.prune.keep})",
             )
         )
-        meanings = {
-            "great": "the best kind: more like this; the eval gate protects it",
-            "good": "worth the time",
-            "meh": "not worth it",
-            "bad": "junk; the judge was wrong to keep it",
-            "basic": "too elementary for you",
-            "heavy": "too dense or too specialist for you now",
-            "more": "more of this article's concept, from the next run",
-            "less": "less of it",
-        }
         for kind, name in t.verdict_tags().items():
-            group = "grade" if kind in store.GRADES else "level" if kind in store.LEVELS else "steer"
-            out.append(TagInfo(name, group, "you", meanings[kind]))
+            out.append(TagInfo(name, _verdict_group(kind), "you", VERDICT_MEANINGS[kind]))
         out.append(
             TagInfo(
                 self.cfg.protect.must_read_stream,
@@ -638,7 +652,13 @@ class App:
                 phrase = feedback.steer_phrase(self.conn, aid)
                 profiler.steers(self.cfg, self.conn, [("want" if verdict == "more" else "meh", phrase)])
                 return f"recorded {verdict} for: {row['title'][:70]} (steer: {phrase})"
-            group = store.GRADES if verdict in store.GRADES else store.LEVELS
+            group = (
+                store.GRADES
+                if verdict in store.GRADES
+                else store.LEVELS
+                if verdict in store.LEVELS
+                else store.DETOURS
+            )
             store.set_verdict(self.conn, aid, verdict, group)
             return f"recorded {verdict} for: {row['title'][:70]}"
 

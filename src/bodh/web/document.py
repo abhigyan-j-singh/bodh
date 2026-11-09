@@ -779,7 +779,9 @@ def _list(cfg: Config, conn: sqlite3.Connection, now: datetime, state: State, mo
         total=total,
         pending=pending,
         empty_text=empty_text,
-        verdicts=[*list(GRADES), "basic", "heavy", "more", "less"] if mode != "export" else [],
+        verdicts=[*list(GRADES), "basic", "heavy", "more", "less", "detour", "wasted"]
+        if mode != "export"
+        else [],
     )
 
 

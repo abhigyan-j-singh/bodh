@@ -811,13 +811,16 @@ FeedbackKind = Literal[
     "heavy",
     "more",
     "less",
+    "detour",
+    "wasted",
 ]
 GRADES = ("great", "good", "meh", "bad")  # one per article; the harsher wins when two are present
 LEVELS = ("basic", "heavy")  # the level missed: too elementary, too dense
 STEERS = ("more", "less")  # steer the judge by this article's concept, now
+DETOURS = ("detour", "wasted")  # an outlier the judge chose: a detour worth taking, or a wasted one
 LOVED_KINDS = ("star", "great", "wrong")  # the strongest positives: the eval gate checks against these
-POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong")
-NEGATIVE_KINDS = ("bad", "meh", "dismiss")
+POSITIVE_KINDS = ("star", "great", "good", "read", "rescue", "wrong", "detour")
+NEGATIVE_KINDS = ("bad", "meh", "dismiss", "wasted")
 
 
 def add_feedback(conn: sqlite3.Connection, article_id: str, kind: FeedbackKind) -> bool:

@@ -185,7 +185,7 @@ class Console:
         self._reload_config()
         with self.db_lock:
             rows, total = document.list_rows(self.cfg, self.conn, document.local_now(self.cfg), band, offset)
-        verdicts = (*document.GRADES, "basic", "heavy", "more", "less")
+        verdicts = (*document.GRADES, "basic", "heavy", "more", "less", "detour", "wasted")
         return {
             "rows": panels.list_rows_html(rows, verdicts),
             "total": total,

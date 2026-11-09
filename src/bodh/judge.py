@@ -804,6 +804,8 @@ def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
     dismissed = store.concept_counts(conn, ["dismiss"], since, limit=25)
     basic = store.concept_counts(conn, ["basic"], since, limit=20)
     heavy = store.concept_counts(conn, ["heavy"], since, limit=20)
+    detours = store.concept_counts(conn, ["detour"], since, limit=20)
+    wasted = store.concept_counts(conn, ["wasted"], since, limit=20)
 
     def fmt(pairs: list[tuple[str, int]]) -> str:
         return ", ".join(f"{c}: {n}" for c, n in pairs)
@@ -835,4 +837,10 @@ def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
         lines.append(f"Too basic for the student (score fit low for introductions to these): {fmt(basic)}")
     if heavy:
         lines.append(f"Too dense for the student (prefer gentler entries to these): {fmt(heavy)}")
+    if detours:
+        lines.append(
+            f"Detours that paid off (outliers the student was glad of; stretch this way): {fmt(detours)}"
+        )
+    if wasted:
+        lines.append(f"Detours that were not worth it (do not stretch this way): {fmt(wasted)}")
     return "\n".join(lines)

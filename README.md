@@ -96,7 +96,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 
 | Command | What it does |
 | --- | --- |
-| `bodh mark ID\|URL great\|good\|meh\|bad\|basic\|heavy\|more\|less\|rescue` | Your verdict on an article from the terminal, the same as the tags in BazQux; `rescue` brings a cut article back. |
+| `bodh mark ID\|URL great\|good\|meh\|bad\|basic\|heavy\|more\|less\|detour\|wasted\|rescue` | Your verdict on an article from the terminal, the same as the tags in BazQux; `rescue` brings a cut article back. |
 | `bodh steer more\|less "x"` | Steer the judge now instead of waiting for Sunday: a dated line in the learned profile (the `more` and `less` tags do the same from BazQux). |
 | `bodh profile [show\|revert\|edit]` | The student profile: show it, go back one version of the learned part, or open `about.md` in `$EDITOR`. |
 | `bodh tags [--json]` | The vocabulary: every tag bodh writes and every tag you can add, and what each does. |
@@ -257,8 +257,8 @@ the weekly rewrite, the feed report, doctor, the export). Then the six sections 
 (below). The buttons start the same commands you would type, as child processes whose output
 streams into the page; the ones that change BazQux show the numbers and ask first ("Cut 50 of 130
 judged unread articles, keeping the 40 best? They are marked read in BazQux; Undo reverses it").
-Every row of the reading list has a verdict menu (great, good, meh, bad, basic, heavy, more, less;
-the keys 1 to 8 on a focused row) and every near miss a Rescue. Stop interrupts whatever holds
+Every row of the reading list has a verdict menu (great, good, meh, bad, basic, heavy, more, less,
+detour, wasted; the keys 1 to 8, 9 and 0 on a focused row) and every near miss a Rescue. Stop interrupts whatever holds
 the run lock, started from the page or not. The page updates itself: progress every two seconds
 while a run is in progress, a refetch when a run ends or an action runs, polling every 30 s when
 events are unavailable (it says so in the footer); after two missed heartbeats the "updated 12 s

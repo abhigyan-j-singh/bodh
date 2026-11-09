@@ -13,7 +13,7 @@
   const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const TOKEN = ($('meta[name="bodh-token"]') || {}).content || '', AUTH = TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}; // the app's per-launch token
   const HEADERS = Object.assign({ 'Content-Type': 'application/json', 'X-Bodh': 'console' }, AUTH);
-  const KEYS = { 1: 'great', 2: 'good', 3: 'meh', 4: 'bad', 5: 'basic', 6: 'heavy', 7: 'more', 8: 'less', r: 'rescue' };
+  const KEYS = { 1: 'great', 2: 'good', 3: 'meh', 4: 'bad', 5: 'basic', 6: 'heavy', 7: 'more', 8: 'less', 9: 'detour', 0: 'wasted', r: 'rescue' };
   const warn = (code, detail) => console.warn('bodh:' + code, detail === undefined ? '' : detail);
 
   // -- words and small DOM helpers ----------------------------------------------------------

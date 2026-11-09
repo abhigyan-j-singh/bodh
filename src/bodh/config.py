@@ -476,6 +476,16 @@ class Tags(Strict):
     less: str = Field(
         default="less", description="Less of it.", json_schema_extra=ui("learning", control="tag")
     )
+    detour: str = Field(
+        default="detour",
+        description="An outlier the judge chose, far from your usual reading, that was worth the detour: stretch more this way.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    wasted: str = Field(
+        default="wasted",
+        description="An outlier that was not worth it: do not stretch this way.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
 
     @model_validator(mode="after")
     def _distinct(self) -> Tags:
@@ -492,7 +502,8 @@ class Tags(Strict):
     def verdict_tags(self) -> dict[str, str]:
         """feedback kind -> tag name, for the tags that carry an opinion."""
         return {
-            k: getattr(self, k) for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less")
+            k: getattr(self, k)
+            for k in ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "detour", "wasted")
         }
 
     def band_for(self, score: float) -> str:

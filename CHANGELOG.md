@@ -53,6 +53,13 @@ Every change a user could notice, newest first. The format follows
 
 ### Added
 
+- **A fourth verdict: the detour.** The judge is now asked to pick outliers, so you can say
+  whether a stretch was worth it: tag `detour` (worth it: stretch more this way) or `wasted` (not
+  worth it) on the article, or `bodh mark ID detour`, or keys 9 and 0 on a row of the reading
+  list. One per article, the later tag replacing the earlier; the judge's concept lists carry
+  "detours that paid off" and "detours that were not worth it", and the Sunday rewrite reads them
+  beside the steers when it chooses the expansion topics. The tag names are settings
+  (`tags.detour`, `tags.wasted`), like the others.
 - **`bodh console --open`** opens the console that is already running for the project (the Mac
   app's engine, or `bodh serve`) in the browser, with the app's per-launch token in the URL, so
   a bare `http://127.0.0.1:<port>` no longer answers "unauthorised" to a person.

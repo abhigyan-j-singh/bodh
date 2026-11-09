@@ -108,6 +108,8 @@ How far back your reading counts, and the tags bodh writes and reads.
 | `tags.heavy` | `"heavy"` |  | Too dense or too specialist for you now. |
 | `tags.more` | `"more"` |  | More of this article's concept, from the next run. |
 | `tags.less` | `"less"` |  | Less of it. |
+| `tags.detour` | `"detour"` |  | An outlier the judge chose, far from your usual reading, that was worth the detour: stretch more this way. |
+| `tags.wasted` | `"wasted"` |  | An outlier that was not worth it: do not stretch this way. |
 | `profile.concept_window_days` | `90` | 1 or more | How far back stars, reads and verdicts count as what you know. Unit: days. |
 
 ## Schedule

@@ -102,6 +102,8 @@ tags:                              # the tag names written to and read from BazQ
   heavy: "heavy"                   # too dense or too specialist for you now
   more: "more"                     # more of this article's concept, from the next run
   less: "less"                     # less of it
+  detour: "detour"                 # an outlier far from your usual reading that was worth the detour: stretch this way
+  wasted: "wasted"                 # an outlier that was not worth it: do not stretch this way
 
 safety:
   max_cut_share: 0.95              # a run that would cut more than this share of at least min_judged newly judged

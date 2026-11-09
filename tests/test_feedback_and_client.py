@@ -203,7 +203,7 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     )
     assert cfg.learned_path.name == "learner.md"
     monkeypatch.setattr("bodh.profiler.git_commit", lambda *a, **k: True)
-    ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 7)])
+    ids = seed_scored(conn, cfg, [dict(n=i, score=40 + 10 * i, concept=f"concept {i}") for i in range(1, 9)])
     labels = {
         cfg.tags.great: [ids[0]],
         cfg.tags.good: [ids[1], ids[2]],
@@ -212,14 +212,17 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
         cfg.tags.more: [ids[4]],
         cfg.tags.less: [ids[5]],
         cfg.tags.meh: [],
+        cfg.tags.detour: [ids[6]],
+        cfg.tags.wasted: [ids[7]],
     }
     client = FakeClient(labels=labels)
     stats = feedback.collect(client, conn, cfg, unread_now=set(ids), starred_now=set())
-    # one grade per article, the harsher present tag wins; levels and steers each recorded once
+    # one grade per article, the harsher present tag wins; levels, steers and detours each recorded once
     assert store.verdicts(conn, store.GRADES) == {ids[0]: "great", ids[1]: "good", ids[2]: "bad"}
     assert store.verdicts(conn, store.LEVELS) == {ids[3]: "basic"}
     assert store.verdicts(conn, store.STEERS) == {ids[4]: "more", ids[5]: "less"}
-    assert stats["verdicts"] == 6 and stats["steers"] == 2
+    assert store.verdicts(conn, store.DETOURS) == {ids[6]: "detour", ids[7]: "wasted"}
+    assert stats["verdicts"] == 8 and stats["steers"] == 2
     # the tags stay on the articles: nothing untagged but the commands
     assert all(name in (cfg.tags.cut, cfg.tags.rescue, cfg.tags.prune) for name, _ in client.untagged)
     # the steers reached the learned profile (under its old file name), with the article's concept, in one version
@@ -246,6 +249,8 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     ctx = concept_context(conn, cfg)
     assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
     assert "Marked bad or meh" in ctx and "concept 3: 1" in ctx
+    assert "Detours that paid off" in ctx and "concept 7: 1" in ctx
+    assert "Detours that were not worth it" in ctx and "concept 8: 1" in ctx
     assert "weak evidence" not in ctx  # nothing inferred yet: every line is the student's own word
     assert [k for k, _ in store.feedback_for(conn, ids[4])] == ["more"]
     # an inferred read and an explicit good: two lists, the inferred one marked weak
