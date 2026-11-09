@@ -246,7 +246,14 @@ def test_verdict_tags_record_once_and_steer(conn, cfg, tmp_path, monkeypatch):
     ctx = concept_context(conn, cfg)
     assert "Loved" in ctx and "concept 1: 1" in ctx and "Too basic" in ctx and "concept 4: 1" in ctx
     assert "Marked bad or meh" in ctx and "concept 3: 1" in ctx
+    assert "weak evidence" not in ctx  # nothing inferred yet: every line is the student's own word
     assert [k for k, _ in store.feedback_for(conn, ids[4])] == ["more"]
+    # an inferred read and an explicit good: two lists, the inferred one marked weak
+    store.add_feedback(conn, ids[4], "read")
+    store.add_feedback(conn, ids[5], "good")
+    ctx = concept_context(conn, cfg)
+    assert "Marked good or rescued" in ctx and "concept 6: 1" in ctx
+    assert "Read in the last" in ctx and "weak evidence" in ctx and "concept 5: 1" in ctx
 
 
 def test_login_and_heartbeat_logs_carry_no_secrets(caplog, monkeypatch):

@@ -798,25 +798,39 @@ def concept_context(conn: sqlite3.Connection, cfg: Config) -> str:
     days = cfg.profile.concept_window_days
     since = store.days_ago_iso(days)
     loved = store.concept_counts(conn, store.LOVED_KINDS, since)
-    read = store.concept_counts(conn, ["good", "read", "rescue"], since)
-    neg = store.concept_counts(conn, store.NEGATIVE_KINDS, since)
+    good = store.concept_counts(conn, ["good", "rescue"], since)
+    read = store.concept_counts(conn, ["read"], since, limit=25)
+    neg = store.concept_counts(conn, ["bad", "meh"], since)
+    dismissed = store.concept_counts(conn, ["dismiss"], since, limit=25)
     basic = store.concept_counts(conn, ["basic"], since, limit=20)
     heavy = store.concept_counts(conn, ["heavy"], since, limit=20)
 
     def fmt(pairs: list[tuple[str, int]]) -> str:
         return ", ".join(f"{c}: {n}" for c, n in pairs)
 
+    # the student's own word (tags, stars, rescues) is strong evidence; what was inferred from
+    # the unread list (an article gone read, a sweep) is weak and says so, so the judge does not
+    # learn that scrolled-past junk was liked
     lines = []
     if loved:
         lines.append(
             f"Loved (starred or marked great) in the last {days} days (concept: count): {fmt(loved)}"
         )
+    if good:
+        lines.append(f"Marked good or rescued in the last {days} days: {fmt(good)}")
     if read:
-        lines.append(f"Read, marked good or rescued in the last {days} days: {fmt(read)}")
-    if not loved and not read:
+        lines.append(
+            f"Read in the last {days} days (inferred from the unread list; weak evidence, a scroll past "
+            f"counts as a read): {fmt(read)}"
+        )
+    if not loved and not good and not read:
         lines.append(f"Read in the last {days} days: nothing recorded yet.")
     if neg:
-        lines.append(f"Marked bad or meh, or dismissed: {fmt(neg)}")
+        lines.append(f"Marked bad or meh: {fmt(neg)}")
+    if dismissed:
+        lines.append(
+            f"Dismissed in mark-all-read sweeps (inferred; weak evidence, mostly volume): {fmt(dismissed)}"
+        )
     if basic:
         lines.append(f"Too basic for the student (score fit low for introductions to these): {fmt(basic)}")
     if heavy:

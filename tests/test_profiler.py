@@ -7,7 +7,7 @@ import subprocess
 import anthropic
 from fakes import FakeLLM, api_error
 
-from bodh import profiler
+from bodh import profiler, store
 
 
 def _git(cwd, *args) -> str:
@@ -140,6 +140,36 @@ def test_weekly_rewrite_rejects_seed_repeat(cfg, conn):
     )
     result = profiler.weekly_rewrite(cfg, llm, conn, None)
     assert not result["applied"] and "repeated the student's own description" in result["reason"]
+
+
+def test_evidence_puts_the_students_word_first_and_caps_the_inferred_rest(conn, cfg):
+    """A week of a thousand inferred reads and six tags: the tags come first and whole under a
+    heading that calls them strong, the reads after, capped, called weak; the same for grades
+    against sweeps."""
+    from conftest import seed_scored
+
+    ids = seed_scored(conn, cfg, [dict(n=i, score=50, concept=f"c{i}") for i in range(1, 11)])
+    store.add_feedback(conn, ids[0], "great")
+    store.add_feedback(conn, ids[1], "good")
+    store.add_feedback(conn, ids[2], "bad")
+    for aid in ids[3:8]:
+        store.add_feedback(conn, aid, "read")
+    for aid in ids[8:]:
+        store.add_feedback(conn, aid, "dismiss")
+    since = store.days_ago_iso(7)
+    text = profiler._evidence(
+        store.feedback_since(conn, store.POSITIVE_KINDS, since),
+        store.feedback_since(conn, store.NEGATIVE_KINDS, since),
+        [],
+        [],
+    )
+    strong_at = text.index("the student's own word (starred, great, good, rescued): strong")
+    reads_at = text.index("# Read (inferred from the unread list, 5 this week")
+    graded_at = text.index("own word (bad, meh): strong")
+    swept_at = text.index("# Dismissed in mark-all-read sweeps (2 this week)")
+    assert strong_at < reads_at < graded_at < swept_at
+    assert max(text.index("[great]"), text.index("[good]")) < reads_at < text.index("[read]")
+    assert graded_at < text.index("[bad]") < swept_at < text.index("[dismiss]")
 
 
 def test_expansion_topics_parsing():

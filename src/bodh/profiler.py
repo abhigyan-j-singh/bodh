@@ -203,11 +203,27 @@ def _evidence(
     levels: list[sqlite3.Row],
     steers: list[sqlite3.Row],
 ) -> str:
-    """The week's feedback as the profiler reads it, grouped and capped."""
-    lines = ["# Positives (starred, great, good, read, rescued)"]
-    lines += [_evidence_line(r) for r in positives[:120]]
-    lines += ["", "# Negatives (bad, meh, dismissed)"]
-    lines += [_evidence_line(r) for r in negatives[:120]]
+    """The week's feedback as the profiler reads it: the student's own word (tags, stars,
+    rescues) first and in full, what was inferred from the unread list (reads, sweeps) after
+    it and capped, so a thousand reads cannot crowd out six tags."""
+    strong = [r for r in positives if r["kind"] != "read"]
+    reads = [r for r in positives if r["kind"] == "read"]
+    graded = [r for r in negatives if r["kind"] != "dismiss"]
+    swept = [r for r in negatives if r["kind"] == "dismiss"]
+    lines = ["# Positives, the student's own word (starred, great, good, rescued): strong evidence"]
+    lines += [_evidence_line(r) for r in strong[:120]] or ["(none this week)"]
+    lines += [
+        "",
+        f"# Read (inferred from the unread list, {len(reads)} this week; a scroll past counts): weak evidence",
+    ]
+    lines += [_evidence_line(r) for r in reads[:60]]
+    lines += ["", "# Negatives, the student's own word (bad, meh): strong evidence"]
+    lines += [_evidence_line(r) for r in graded[:120]] or ["(none this week)"]
+    lines += [
+        "",
+        f"# Dismissed in mark-all-read sweeps ({len(swept)} this week): weak evidence, mostly volume",
+    ]
+    lines += [_evidence_line(r) for r in swept[:40]]
     if levels:
         lines += ["", "# Level missed (basic: too elementary; heavy: too dense)"]
         lines += [_evidence_line(r) for r in levels[:40]]

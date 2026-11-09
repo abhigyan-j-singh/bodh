@@ -21,6 +21,13 @@ Every change a user could notice, newest first. The format follows
 
 ### Changed
 
+- **The judge and the profiler now know which feedback is your word and which was inferred.**
+  Four weeks produced 17 tags against 7,000 inferred reads and 15,000 sweep dismissals, and both
+  models saw them in one list. The judge's concept lists now separate "loved" and "marked good or
+  rescued" (strong) from "read" and "dismissed in sweeps" (inferred, marked weak, capped at 25
+  concepts); the Sunday evidence puts the student's own word first and in full, the inferred
+  lines after it and capped, so a thousand reads cannot crowd out six tags; both prompts say
+  what each list is worth.
 - **Relevance means your work and your interests, not "a decision this quarter".** Four weeks of
   judgments showed relevance averaging 14 of 100 and holding 2,800 well-made articles under 70:
   the old wording almost nothing could satisfy, so it taxed every article. The judge now scores
