@@ -90,6 +90,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | --- | --- |
 | `bodh prune` | Your cut: keep the 40 best (`--keep N`), or cut a share (`--fraction 0.3`), or everything under a score (`--below 65`). It shows the boundary, the counts by band and folder and the ten best that would go with their lessons, then asks, naming the run it will create (`--yes` skips the question; `--dry-run` only shows). Run it again to cut deeper. |
 | `bodh undo [--run ID]` | Reverse the last cut, or one run's. What comes back is left alone by autocut from then on. |
+| `bodh rescore [--all]` | Recompose the stored scores with the current `judge.weights` and bonuses, no model calls: the judge keeps five sub-scores per article, and a weight change otherwise reaches only new judgments. Unread articles by default; their bands and band tags move, and what now falls under the cut-off goes in the next autocut. `--all` recomposes the cut articles too so the record matches. `--dry-run` shows the moves. |
 | `bodh clear-old --days 14` | Day 0: mark everything older than two weeks read, stars and protected articles exempt. Reversible. |
 
 **Teach**

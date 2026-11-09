@@ -1034,6 +1034,7 @@ def test_label_bad_id_and_verbose_everywhere(tmp_path, monkeypatch):
         ["catch-up", "-v"],
         ["blast", "-v"],
         ["prune", "--dry-run", "-v"],
+        ["rescore", "--dry-run", "-v"],
         ["undo", "-v"],
         ["backup", "-v"],
         ["rebuild", "--dry-run", "-v"],

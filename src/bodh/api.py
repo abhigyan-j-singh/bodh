@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import cutting as cutmod
-from . import dashboard, feedback, logs, profiler, recovery, report, store
+from . import dashboard, feedback, logs, profiler, recovery, report, rescoring, store
 from . import run as runmod
 from .config import Config, Secrets, load_config, load_secrets
 from .errors import BodhError
@@ -634,6 +634,18 @@ class App:
         """The cut itself, bounded to `confirmed` (the ids shown and agreed to) when given."""
         with self.lock("prune"):
             return runmod.prune(self.ctx, keep=keep, fraction=fraction, below=below, confirmed=confirmed)
+
+    def rescore_plan(self, include_cut: bool = False) -> rescoring.Plan:
+        """What the current weights and bonuses would change in the stored scores; nothing written.
+        Unread articles by default; `include_cut` recomposes the record as well."""
+        expansion = profiler.expansion_topics(self.cfg.read_learned())
+        return rescoring.plan(self.conn, self.cfg, expansion, include_cut)
+
+    def rescore(self, include_cut: bool = False) -> int:
+        """Recompose the stored scores and move the band tags; returns the articles changed."""
+        with self.lock("rescore"):
+            plan = self.rescore_plan(include_cut)
+            return rescoring.apply(self.conn, self.ctx.client, plan.changes)
 
     def undo(self, run_id: int | None = None) -> tuple[int | None, int]:
         """Reverse the last cut, or the cut of one run: (run id, articles restored); (None, 0)

@@ -14,7 +14,7 @@ from typing import Any
 
 import typer
 
-from . import __version__, api, store
+from . import __version__, api, rescoring, store
 from .config import Config, load_config
 from .errors import BodhError, ConfigError, LockedError
 from .locks import AlreadyRunning
@@ -26,7 +26,7 @@ EPILOG = """\
 Set up        init, doctor, keys, models, settings, version
 Every run     run, catch-up, serve
 Look          status, progress, why, find, list
-Cut           prune, undo, clear-old
+Cut           prune, undo, clear-old, rescore
 Teach         mark, steer, profile, tags, eval
 Control       stop, schedule, autocut, safety, console
 Housekeeping  backup, rebuild, weekly, report, dashboard, upgrade, migrate-home
@@ -921,6 +921,58 @@ def prune(
         return
     if n:
         typer.echo(f"cut {n}; `bodh undo` reverses it (run {store.last_runs(found.conn, 1)[0]['id']})")
+
+
+@app.command()
+def rescore(
+    all_: bool = typer.Option(
+        False, "--all", help="The cut articles too, so the record matches the weights."
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the changes without making them."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+    verbose: bool = VERBOSE,
+) -> None:
+    """Recompose stored scores with the current judge.weights and bonuses, no model calls.
+    The judge keeps five sub-scores per article; a weight change only reaches new judgments
+    until this is run. Unread articles by default: their scores, bands and band tags move;
+    what now falls under the cut-off goes in the next autocut.
+
+    \b
+    Examples:
+      bodh rescore --dry-run         what would move, and nothing moves
+      bodh rescore                   the unread queue, ranked the way the judge ranks today
+      bodh rescore --all --yes       the whole record, no question
+    """
+    found = _app(verbose)
+    plan = found.rescore_plan(include_cut=all_)
+    _show_rescore(plan, dry_run=dry_run)
+    if dry_run or not plan.changes:
+        return
+    n = len(plan.changes)
+    if (
+        not yes
+        and _interactive()
+        and not typer.confirm(f"Rescore these {n}? Band tags in BazQux move with them")
+    ):
+        raise typer.Exit(0)
+    typer.echo(f"rescored {found.rescore(include_cut=all_)}")
+
+
+def _show_rescore(plan: rescoring.Plan, dry_run: bool) -> None:
+    verb = "would change" if dry_run else "changing"
+    typer.echo(f"{verb} {len(plan.changes)} of {plan.examined} scores")
+    if not plan.changes:
+        return
+    up = sum(1 for c in plan.changes if c.new > c.old)
+    typer.echo(f"  up {up} · down {len(plan.changes) - up}")
+    for move, n in sorted(plan.moves.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {move}: {n}")
+    if plan.now_below or plan.now_above:
+        typer.echo(f"  next autocut: {plan.now_below} now fall under the cut-off, {plan.now_above} now stay")
+    biggest = sorted(plan.changes, key=lambda c: -abs(c.new - c.old))[:10]
+    typer.echo("  largest moves:")
+    for c in biggest:
+        typer.echo(f"    {c.old:5.1f} → {c.new:5.1f}  {c.title[:70]}")
 
 
 def _show_prune(plan: api.PrunePlan, dry_run: bool) -> None:

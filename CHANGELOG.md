@@ -8,6 +8,12 @@ Every change a user could notice, newest first. The format follows
 
 ### Added
 
+- **`bodh rescore`.** Recomposes every stored judgment with the current `judge.weights`, bonuses
+  and caps, without a model call: the sub-scores are kept per article, so a weight change can
+  now reach what was judged before, not only what comes next. Unread articles by default (their
+  bands and band tags move; what now falls under the cut-off goes in the next autocut), `--all`
+  for the cut ones too. A review's second look stays the score where it was the higher.
+  `--dry-run` shows the moves, by band and the ten largest.
 - **Facet tags in BazQux.** Besides the score band, every unread judged article now carries what
   the judge saw in it: its topic, from a list you keep in `tags.topics` (29 to start with, from
   `ai infra` and `power` to `math` and `life`; the judge files each article under one or none);
