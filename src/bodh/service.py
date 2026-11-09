@@ -699,7 +699,7 @@ class Service:
     def check_reader(self, payload: dict[str, Any]) -> tuple[int, Any]:
         """Sign in to BazQux once with the given email and password (or the stored ones) and
         say what was found; a failure is an answer, not an error."""
-        from .readers.bazqux import BazQuxClient
+        from .readers.bazqux import BazQuxClient, has_label
 
         secrets = load_secrets(self.cfg.root)
         email = str(payload.get("email") or secrets.value("bazqux_email"))
@@ -725,7 +725,7 @@ class Service:
                 "folders": folders,
                 "unread": unread,
                 "must_read_stream": stream,
-                "must_read_stream_present": f"user/-/label/{stream}" in tags,
+                "must_read_stream_present": has_label(tags, stream),
             }
         )
 

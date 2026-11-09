@@ -13,6 +13,7 @@ from . import recovery, store
 from . import run as runmod
 from .config import Config, Secrets
 from .providers.base import REQUIRED_SECRET, ModelRef, model_name
+from .readers.bazqux import has_label
 
 PROBE = {
     "id": "probe",
@@ -235,7 +236,7 @@ def live_bazqux(ctx: runmod.Context, out: Callable[[str], None], problem: Callab
     out(f"bazqux feeds: {len(subs)} in folders {folders}")
     tags = ctx.client.tags()
     out(f"bazqux labels (folders, tags, smart streams): {len(tags)}")
-    if f"user/-/label/{cfg.protect.must_read_stream}" in tags:
+    if has_label(tags, cfg.protect.must_read_stream):
         out(f"must-read stream '{cfg.protect.must_read_stream}': present")
     else:
         problem(

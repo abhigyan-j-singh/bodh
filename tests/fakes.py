@@ -359,9 +359,9 @@ class FakeBazQuxServer:
 
     def _tag_list(self, _request: httpx.Request) -> httpx.Response:
         names = set(self.folders.values()) | set(self.labels)
-        return httpx.Response(
-            200, json={"tags": [{"id": label(n)} for n in sorted(names)] + [{"id": STARRED}]}
-        )
+        # BazQux lists labels under the account's number, not the `-` shorthand requests use
+        ids = [label(n).replace("user/-/", "user/12345/") for n in sorted(names)]
+        return httpx.Response(200, json={"tags": [{"id": i} for i in ids] + [{"id": STARRED}]})
 
     def _login(self, request: httpx.Request) -> httpx.Response:
         form = parse_qs(request.content.decode())

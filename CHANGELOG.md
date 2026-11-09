@@ -8,6 +8,11 @@ Every change a user could notice, newest first. The format follows
 
 ### Fixed
 
+- **Doctor said the Must read stream was missing when it was there.** BazQux lists labels under
+  the account's number (`user/12345/label/Must read`) while requests use `user/-/`; the check
+  compared against the shorthand and could never pass. `bodh doctor --live` and the console's
+  sign-in check now match the stream by name. The run was never affected: it reads the stream
+  directly and has been protecting its members all along.
 - **The Sunday rewrite was cut off every week.** The profiler's call allowed 1,500 output tokens; a
   model that thinks before it writes spent most of them on the thinking, so the visible answer came
   back with 0 to 85 words and was rejected as incomplete, four Sundays in a row (the learned profile

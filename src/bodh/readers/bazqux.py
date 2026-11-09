@@ -46,6 +46,12 @@ def label(name: str) -> str:
     return f"user/-/label/{name}"
 
 
+def has_label(tags: Iterable[str], name: str) -> bool:
+    """Whether a tag list names a folder, tag or smart stream. BazQux lists them under the
+    account's number (``user/12345/label/Must read``), while requests use ``user/-/``."""
+    return any(t.endswith(f"/label/{name}") for t in tags)
+
+
 class BazQuxError(ReaderError):
     """BazQux could not be reached, refused, or answered badly."""
 

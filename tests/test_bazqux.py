@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from bodh.ids import short_to_long
-from bodh.readers.bazqux import READ, BazQuxAuthError, BazQuxClient, _int_or_none, _parse_item
+from bodh.readers.bazqux import READ, BazQuxAuthError, BazQuxClient, _int_or_none, _parse_item, has_label
 
 
 @pytest.fixture(autouse=True)
@@ -270,11 +270,13 @@ def test_subscriptions_folders_tags_and_user_info():
     subs = {s.title: s for s in client.subscriptions()}
     assert subs["Feed A"].folders == ["Essays"] and subs["Feed B"].folders == []
     assert subs["Feed A"].stream_id.startswith("feed/") and subs["Feed A"].html_url.endswith("/FeedA/")
-    assert client.tags() == [
-        "user/-/label/Essays",
-        "user/-/label/Must read",
+    tags = client.tags()
+    assert tags == [
+        "user/12345/label/Essays",
+        "user/12345/label/Must read",
         "user/-/state/com.google/starred",
     ]
+    assert has_label(tags, "Must read") and not has_label(tags, "Must")
     assert client.label_ids("Must read") == [short_to_long(1)]
     assert client.label_ids("Essays", unread_only=True) == [short_to_long(1)]  # the folder as a stream
     assert client.user_info()["userEmail"] == "reader@example.com"
