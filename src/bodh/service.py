@@ -185,7 +185,7 @@ class Service:
             "/api/keys": lambda: _ok(self.keys()),
             "/api/profile": lambda: _ok(self.profile()),
             "/api/profile/diff": lambda: _ok(self.profile_diff()),
-            "/api/attention": lambda: _ok({"attention": self.attention_list()}),
+            "/api/attention": lambda: _ok({"attention": self._attention_locked()}),
             "/api/tags": lambda: _ok({"tags": [t.to_dict() for t in self._with_app(lambda a: a.tags())]}),
         }
         handler = routes.get(path)
@@ -204,10 +204,16 @@ class Service:
 
     def health(self) -> dict[str, Any]:
         cfg = self.cfg
-        runs = [dict(r) for r in store.last_runs(self.conn, 1)]
-        last = runs[0] if runs else None
         secrets = load_secrets(cfg.root)
         missing = [k for k in self.keys()["keys"] if k["required"] and not k["set"]]
+        # the reads share the console's connection with the tick and the page: one statement at a
+        # time, or sqlite3 answers "bad parameter or other API misuse" to whichever thread loses
+        with self.console.db_lock:
+            return self._health(cfg, secrets, missing)
+
+    def _health(self, cfg: Any, secrets: Secrets, missing: list[dict[str, Any]]) -> dict[str, Any]:
+        runs = [dict(r) for r in store.last_runs(self.conn, 1)]
+        last = runs[0] if runs else None
         return {
             "engine": "bodh",
             "version": __version__,
@@ -387,6 +393,12 @@ class Service:
 
         now = document.local_now(self.cfg)
         return [a.model_dump() for a in document.attentions(self.cfg, self.conn, now)]
+
+    def _attention_locked(self) -> list[dict[str, Any]]:
+        """`attention_list` for a request handler: the tick calls it holding the console's lock
+        already, a handler does not (and the lock is not re-entrant)."""
+        with self.console.db_lock:
+            return self.attention_list()
 
     # -- POST, PUT, DELETE ---------------------------------------------------------------
 
@@ -750,13 +762,15 @@ class Service:
 
     def dismiss(self, payload: dict[str, Any]) -> tuple[int, Any]:
         key = str(payload.get("key", ""))
-        items = self.attention_list()
-        found = next((a for a in items if a["key"] == key), None)
-        if found is None:
-            return _refused(f"no banner {key!r} to dismiss", 404)
-        dismiss_attention(self.conn, key, str(found.get("fingerprint") or ""))
-        self.emit("attention", {"attention": self.attention_list()})
-        return _ok({"ok": True, "attention": self.attention_list()})
+        with self.console.db_lock:
+            items = self.attention_list()
+            found = next((a for a in items if a["key"] == key), None)
+            if found is None:
+                return _refused(f"no banner {key!r} to dismiss", 404)
+            dismiss_attention(self.conn, key, str(found.get("fingerprint") or ""))
+            left = self.attention_list()
+        self.emit("attention", {"attention": left})
+        return _ok({"ok": True, "attention": left})
 
 
 # -- shared helpers (the scheduler, the status and the dashboard read these too) -----------

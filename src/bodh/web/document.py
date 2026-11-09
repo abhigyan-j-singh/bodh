@@ -533,6 +533,9 @@ def _conditions(cfg: Config, conn: sqlite3.Connection, now: datetime) -> list[At
         )
     if last and not last["ok"] and last.get("error") and last["kind"] in ("run", "weekly", "catch-up"):
         out.append(_failed_run(last))
+    stale = _stale_run(conn, now)
+    if stale is not None:
+        out.append(stale)
     spent = store.spent_since(conn, store.local_midnight_iso(cfg.timezone))
     if spent >= cfg.models.daily_budget_usd:
         out.append(
@@ -568,6 +571,31 @@ def _conditions(cfg: Config, conn: sqlite3.Connection, now: datetime) -> list[At
                 )
             )
     return out
+
+
+STALE_HOURS = 3  # no run finished for this long while nothing is paused: the app, the Mac or the key is down
+
+
+def _stale_run(conn: sqlite3.Connection, now: datetime) -> Attention | None:
+    """No successful run for STALE_HOURS: the condition FeedBrain died of. Quiet while the
+    schedule is paused, and before the first successful run."""
+    from ..service import paused_until
+
+    row = conn.execute(
+        "SELECT id, finished_at FROM runs WHERE kind = 'run' AND ok = 1 ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    finished = _parse(row["finished_at"]) if row else None
+    if finished is None or paused_until(conn) or now - finished < timedelta(hours=STALE_HOURS):
+        return None
+    hours = int((now - finished).total_seconds() // 3600)
+    return Attention(
+        key="stale",
+        level="critical",
+        word="No run has finished",
+        text=f"The last successful run finished {hours} hours ago. Is the app running, the Mac awake, the key valid?",
+        dismissable=True,
+        fingerprint=str(row["id"]),
+    )
 
 
 def _failed_run(last: dict[str, Any]) -> Attention:

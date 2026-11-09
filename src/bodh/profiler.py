@@ -22,6 +22,9 @@ from .llm import LLM
 log = logging.getLogger(__name__)
 
 MAX_WORDS = 450
+# the answer is 400 words at most, but a model that thinks before it writes spends output tokens
+# on the thinking too: 1,500 cut every rewrite of October and November 2026 short
+REWRITE_MAX_TOKENS = 6000
 GATE_SAMPLE = 30
 
 
@@ -161,13 +164,18 @@ def weekly_rewrite(
         user_text,
         run_id,
         "learner_rewrite",
-        max_tokens=1500,
+        max_tokens=REWRITE_MAX_TOKENS,
     )
     new_text = _strip_fences(new_text)
     words = len(new_text.split())
     result["words"] = words
     if words > MAX_WORDS or "## Expansion topics" not in new_text:
-        result["reason"] = f"rewrite rejected: {words} words or missing sections"
+        why = (
+            f"{words} words, over {MAX_WORDS}"
+            if words > MAX_WORDS
+            else f"{words} words and no '## Expansion topics' section (cut off or incomplete)"
+        )
+        result["reason"] = f"rewrite rejected: {why}"
         return result
     if repeats_about(new_text, about):
         result["reason"] = "rewrite rejected: it repeated the student's own description"

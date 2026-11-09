@@ -6,7 +6,27 @@ Every change a user could notice, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Sunday rewrite was cut off every week.** The profiler's call allowed 1,500 output tokens; a
+  model that thinks before it writes spent most of them on the thinking, so the visible answer came
+  back with 0 to 85 words and was rejected as incomplete, four Sundays in a row (the learned profile
+  had not changed since 2 October). The limit is 6,000, the rejection says whether the answer was
+  too long or missing its `## Expansion topics` section, and the Anthropic provider logs a warning
+  when any completion stops at `max_tokens`.
+- **A race in the app's health probe.** `GET /api/health` and `/api/attention` read the console's
+  database connection without its lock; a probe that landed during a tick answered
+  `sqlite3.InterfaceError: bad parameter or other API misuse` and a 500 (eight times in four
+  weeks). The reads are under the lock now.
+
 ### Added
+
+- **An attention for silence.** When no run has finished successfully for three hours and the
+  schedule is not paused, the page, `bodh status` and the Mac app show a critical banner (`stale`,
+  dismissable) and the app sends a notification: the condition FeedBrain died of, and the one
+  Bodh had no word for.
+- **The Mac app notifies when the engine gives up** (ten failed starts in an hour) instead of
+  sitting quietly in the menu bar.
 
 - **The service for the Mac app.** `bodh serve --app --port 0 --token-file PATH --home DIR` is the
   engine the app runs: a free port on 127.0.0.1, a per-launch token every request must carry

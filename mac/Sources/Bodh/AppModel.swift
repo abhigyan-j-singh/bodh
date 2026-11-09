@@ -149,9 +149,14 @@ final class AppModel: ObservableObject {
                 connect()
                 Task { await self.finishMigrationIfPending() }
             }
-        case .down(let reason, _), .gaveUp(let reason):
+        case .down(let reason, _):
             AppLog.warning("engine down: \(reason)")
             disconnect()
+        case .gaveUp(let reason):
+            AppLog.warning("engine gave up: \(reason)")
+            disconnect()
+            // the one state nothing else reports: without this, a dead engine is a quiet menu bar icon
+            notifications.send(id: "engine-\(Int(Date().timeIntervalSince1970))", title: "Bodh has stopped", body: reason, kind: .attention("engine"))
         case .stopped:
             disconnect()
         case .launching:

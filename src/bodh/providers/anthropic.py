@@ -215,6 +215,13 @@ class AnthropicProvider(Provider):
             )
         except Exception as exc:
             raise self._classify(exc) from exc
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            log.warning(
+                "anthropic: %s stopped at max_tokens=%d; the answer is cut off (raise the limit, or the "
+                "model is spending the tokens on thinking)",
+                model,
+                max_tokens,
+            )
         return Answer(message_text(response).strip(), usage_from(response.usage))
 
     # -- batches ----------------------------------------------------------------

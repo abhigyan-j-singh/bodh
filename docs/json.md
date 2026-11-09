@@ -285,7 +285,7 @@ settings models refused, with `errors: [{key, message}]`).
 | Route | What it answers |
 | --- | --- |
 | `GET /api/health` | `engine`, `version`, `pid`, `port`, `app_mode`, `uptime_s`, `schema_version`, `root`, `data_dir`, `config_ok`, `about_is_example`, `reader_configured`, `keys_missing`, `mode`, `running`, `last_run`, `next_run_in_s`, `paused_until`, `setup_needed` (`reader`, `key`, `profile`: what onboarding still has to do, in order) |
-| `GET /api/status` | the `status` object of `bodh status --json`, plus `child` (the console's own command), `serve` (`{pid, every_seconds, started}` while `bodh serve` runs here), `paused_until` and `attention` (every banner, the most severe first, each `{key, level, word, text, link_text, link_url, dismissable, fingerprint}`; keys `safety`, `signin` (the reader refused the login), `provider` (the model provider refused the key or the model id), `failed`, `budget`, `weekly`) |
+| `GET /api/status` | the `status` object of `bodh status --json`, plus `child` (the console's own command), `serve` (`{pid, every_seconds, started}` while `bodh serve` runs here), `paused_until` and `attention` (every banner, the most severe first, each `{key, level, word, text, link_text, link_url, dismissable, fingerprint}`; keys `safety`, `signin` (the reader refused the login), `provider` (the model provider refused the key or the model id), `failed`, `stale` (no successful run for three hours while not paused), `budget`, `weekly`) |
 | `GET /api/dashboard` | the dashboard document (above) |
 | `GET /api/list?band=70&folder=&limit=50` | `{band, folder, articles}` as `bodh list --json` |
 | `GET /api/why/{id}` or `?ref=` | `{article}` as `bodh why --json`; the id percent-encoded, or the URL |

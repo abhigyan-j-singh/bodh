@@ -304,6 +304,31 @@ def test_attention_the_most_severe_wins(conn, cfg):
     assert page.count('class="banner') == 1 and 'data-key="safety"' in page
 
 
+def test_attention_stale_run(conn, cfg):
+    """No successful run for three hours is the condition that needs a person; a pause or a
+    fresh run clears it, and it never shows before the first successful run."""
+    from bodh import service
+
+    now = datetime.now(timezone.utc)
+    assert document._attention(cfg, conn, now) is None  # no run yet: nothing to be stale
+    run_id = store.begin_run(conn, "run")
+    store.finish_run(conn, run_id, True, summary="judged 1")
+    conn.execute(
+        "UPDATE runs SET finished_at = ? WHERE id = ?", ((now - timedelta(hours=4)).isoformat(), run_id)
+    )
+    for _ in range(3):  # failed runs since do not count as fresh
+        failed = store.begin_run(conn, "run")
+        store.finish_run(conn, failed, False, error="BazQuxError: offline")
+    stale = next(a for a in document.attentions(cfg, conn, now) if a.key == "stale")
+    assert stale.level == "critical" and "4 hours" in stale.text and stale.fingerprint == str(run_id)
+    service.set_paused_until(conn, now + timedelta(hours=1))
+    assert all(a.key != "stale" for a in document.attentions(cfg, conn, now))
+    service.set_paused_until(conn, None)
+    fresh = store.begin_run(conn, "run")
+    store.finish_run(conn, fresh, True, summary="judged 1")
+    assert all(a.key != "stale" for a in document.attentions(cfg, conn, now))
+
+
 def test_export_writes_the_page_and_the_document(conn, cfg):
     seeded(conn, cfg)
     path = dashboard.render(cfg, conn)

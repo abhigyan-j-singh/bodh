@@ -20,7 +20,8 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
 
     static let defaults: [String: Bool] = [
         "notify.run_failed": true, "notify.budget": true, "notify.weekly": true, "notify.safety": true,
-        "notify.signin": true, "notify.provider": true, "notify.failed": true,
+        "notify.signin": true, "notify.provider": true, "notify.failed": true, "notify.stale": true,
+        "notify.engine": true,
     ]
 
     private var sent: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "notifications.sent") ?? [])
