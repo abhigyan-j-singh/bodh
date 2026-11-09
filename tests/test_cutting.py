@@ -379,6 +379,44 @@ def test_new_ground_quota_is_a_share_of_what_was_newly_scored_and_kept(conn, cfg
     assert sel.cut_ids == [ids[4]] and sel.reserved_for_new_ground == 0
 
 
+def test_new_ground_is_kept_only_within_the_age_window(conn, cfg):
+    """A reserved article nobody read within `limits.max_age_days` is cut like any other; one
+    reserved yesterday still survives."""
+    cfg.autocut.new_ground_share = 0.0
+    now_ms = int(store.utcnow().timestamp() * 1000)
+    ids = seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=30, quality=70, concept="old ground", crawled_msec=now_ms - 20 * 86_400_000),
+            dict(n=2, score=30, quality=70, concept="fresh ground", crawled_msec=now_ms - 86_400_000),
+        ],
+    )
+    store.set_flags(conn, ids, exploration=1)
+    sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None, newly_scored=set())
+    assert sel.cut_ids == [ids[0]]
+    cfg.limits.max_age_days = None  # no window: new ground is kept for good, as before
+    sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None, newly_scored=set())
+    assert sel.cut_ids == []
+
+
+def test_new_ground_base_ignores_candidates_left_over_from_earlier_runs(conn, cfg):
+    """Two newly judged keepers and a candidate from an earlier run: the quota is a share of
+    the two, not of two minus one (which went to zero for every run with leftovers)."""
+    cfg.autocut.new_ground_share = 0.5
+    ids = seed_scored(
+        conn,
+        cfg,
+        [
+            dict(n=1, score=80, concept="gpus"),
+            dict(n=2, score=80, concept="gpus"),
+            dict(n=3, score=30, quality=70, concept="left over"),  # judged last run, capped out then
+        ],
+    )
+    sel = cutting.select_autocut(conn, cfg, judge=None, run_id=None, newly_scored={ids[0], ids[1]})
+    assert sel.reserved_for_new_ground == 1 and sel.cut_ids == []
+
+
 def test_new_ground_takes_the_best_decent_article_on_an_unknown_concept(conn, cfg):
     """Quality 60 is decent, 59 is not; among the novel candidates the highest score is kept."""
     cfg.autocut.new_ground_share = 0.5

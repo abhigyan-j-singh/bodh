@@ -93,11 +93,11 @@ class Scheduler:
         if now - last_run >= self.every:
             jobs.append("run")
         week = f"{local.isocalendar()[0]}-W{local.isocalendar()[1]:02d}"
-        if (
-            local.weekday() == 6
-            and local.hour >= WEEKLY_HOUR
-            and store.kv_get(self.conn, LAST_WEEKLY_KEY) != week
-        ):
+        last_week = store.kv_get(self.conn, LAST_WEEKLY_KEY)
+        # Sunday morning as a rule; any morning once the last rewrite is two weeks back (a Mac
+        # shut all Sunday would otherwise skip the week)
+        overdue = local.weekday() == 6 or _weeks_since(last_week, local) >= 2
+        if local.hour >= WEEKLY_HOUR and last_week != week and overdue:
             jobs.append("weekly")
         month = local.strftime("%Y-%m")
         if (
@@ -138,6 +138,20 @@ class Scheduler:
             except Exception:  # the loop outlives any one failure
                 log.exception("serve: a tick failed")
             stop.wait(tick_seconds)
+
+
+def _weeks_since(mark: str | None, local: datetime) -> int:
+    """Whole ISO weeks between the stored `YYYY-Www` mark and `local`'s week; 0 when there is no
+    mark (nothing ran yet: the Sunday rule alone decides) or it does not parse."""
+    if not mark:
+        return 0
+    try:
+        year, week = mark.split("-W")
+        monday = datetime.fromisocalendar(int(year), int(week), 1).date()
+    except (ValueError, TypeError):
+        return 0
+    this_monday = datetime.fromisocalendar(local.isocalendar()[0], local.isocalendar()[1], 1).date()
+    return max(0, (this_monday - monday).days // 7)
 
 
 def announce(cfg: Config, port: int, token_file: Path | None) -> dict[str, Any]:

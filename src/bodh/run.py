@@ -164,7 +164,8 @@ def ingest(ctx: Context, unread_now: set[str], folders: dict[str, str | None]) -
 def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[str]) -> None:
     """Mark the unread articles BazQux says are protected (and those in protected folders),
     and clear the rest. With no answer from BazQux (``protected`` is None) a protection is
-    never withdrawn: the flags from the last good answer stand."""
+    never withdrawn: the flags from the last good answer stand. Stars follow BazQux both
+    ways: a star removed is a protection removed."""
     rows = ctx.conn.execute(
         "SELECT a.id, a.folder FROM articles a JOIN state st ON st.article_id = a.id "
         "WHERE st.status = 'unread' "
@@ -179,6 +180,7 @@ def refresh_protection(ctx: Context, protected: set[str] | None, starred: set[st
     if protected is not None:
         store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in prot], protected=0)
     store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] in starred], starred=1)
+    store.set_flags(ctx.conn, [r["id"] for r in rows if r["id"] not in starred], starred=0)  # a star removed
 
 
 @dataclass

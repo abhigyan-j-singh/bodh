@@ -25,7 +25,7 @@ from . import tokens
 log = logging.getLogger(__name__)
 
 SCHEMA = 1
-LIST_BAND = 70
+LIST_BAND = 60
 LIST_CAP = 50
 FEEDS_CAP = 40
 RUNS_CAP = 20

@@ -19,6 +19,28 @@ Every change a user could notice, newest first. The format follows
   `sqlite3.InterfaceError: bad parameter or other API misuse` and a 500 (eight times in four
   weeks). The reads are under the lock now.
 
+### Changed
+
+- **Relevance means your work and your interests, not "a decision this quarter".** Four weeks of
+  judgments showed relevance averaging 14 of 100 and holding 2,800 well-made articles under 70:
+  the old wording almost nothing could satisfy, so it taxed every article. The judge now scores
+  relevance against the student's work, the decisions they describe and the interests they name,
+  and news from the student's own industry that carries a fact (a deal, a capacity, a price, a
+  design) is exempt from the perishable rule. The prompt version stays `teacher.v2`: articles
+  already judged keep their scores, new arrivals are judged by the new wording (the snapshot in
+  `tests/snapshots/` records the change).
+- **The reading list starts at 60**, not 70 (`bodh list`, the console, the app and `/api/list`):
+  where the well-made articles the old relevance rule held down sit. `--band` still chooses.
+- **New ground is kept for the age window, not for ever.** An article reserved for new ground
+  (`exploration`) that nobody read within `limits.max_age_days` is cut like any other; with no
+  window set, it is kept as before. The quota's base counts only this run's judgments: candidates
+  left over from earlier runs no longer shrink it to nothing.
+- **A star removed is a protection removed.** The `starred` flag was only ever set; an article
+  un-starred in BazQux stayed uncuttable for good. Stars now follow BazQux both ways.
+- **The Sunday rewrite is due by age too.** `bodh serve` runs it on a Sunday morning as before,
+  and on any morning once the last rewrite is two weeks back, so a Mac shut all Sunday no longer
+  skips the week.
+
 ### Added
 
 - **An attention for silence.** When no run has finished successfully for three hours and the

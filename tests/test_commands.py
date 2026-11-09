@@ -554,6 +554,10 @@ def test_serve_scheduler_runs_what_is_due(cfg, conn):
     november = datetime(2026, 11, 1, 7, 45, tzinfo=timezone.utc).timestamp()
     assert [j for j, _ in sched.tick(november)] == ["run", "weekly", "report"]  # a Sunday and the first
     assert spawned.count("report") == 2 and spawned.count("weekly") == 2
+    tuesday = datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc).timestamp()  # W46; the last weekly was W44
+    assert [j for j, _ in sched.tick(tuesday)] == ["run", "weekly"]  # the Sunday in between was missed
+    thursday = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc).timestamp()
+    assert [j for j, _ in sched.tick(thursday)] == ["run"]  # this week's is done; the next waits for Sunday
 
 
 def test_serve_runs_the_schedule_until_stopped(cfg, conn):

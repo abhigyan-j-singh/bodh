@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 SCHEMA = 1  # the version field of every JSON object a command prints (docs/json.md)
 MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "rescue")
-LIST_BAND = 70.0
+LIST_BAND = 60.0
 LIST_LIMIT = 50
 FIND_LIMIT = 50
 

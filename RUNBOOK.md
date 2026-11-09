@@ -69,7 +69,7 @@ want the unread list judged right now:
 
 The reading list in the terminal, and one article's story:
 
-    bodh list                      # unread at 70 and above, best first, each with its lesson and feed
+    bodh list                      # unread at 60 and above, best first, each with its lesson and feed
     bodh list --band 50 --folder Essays
     bodh find "liquid cooling"     # by words in the title or the lesson: id, score, band, state, feed
     bodh why https://example.org/post   # the score, the sub-scores, the lesson, the state, your record

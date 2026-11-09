@@ -82,7 +82,7 @@ progress, 130 stopped. `bodh --install-completion` sets up the shell.
 | `bodh progress [--watch] [--json]` | How far the judge has got: judged, with the model, pending, by folder; while a run is going, its phase, the rate per minute and the ETA; batches; spend and cache hits; the log tail. `--watch` redraws every 5 s. |
 | `bodh why ID\|URL [--json]` | One article: its score and sub-scores, the lesson, the concept, its state, your record. The explanation of the system, one article at a time. |
 | `bodh find "words" [--unread] [--json]` | Articles whose title or lesson holds every word: id, score, band, state, feed, so nobody types a forty-character id. |
-| `bodh list [--band 70] [--folder X] [--json]` | Today's reading list: the unread articles at the band and above, best first, with lesson, concept and feed (the console's list, in text). |
+| `bodh list [--band 60] [--folder X] [--json]` | Today's reading list: the unread articles at the band and above, best first, with lesson, concept and feed (the console's list, in text). |
 
 **Cut**
 
@@ -301,7 +301,7 @@ same page.
 
 Six sections, each the question it answers: **What happened today** (unread now against the target;
 judged, cut, read and spend today, each against yesterday with a seven-day sparkline), **What to
-read** (the unread articles at 70 and above, best first, with the lesson, the concept, the feed, the
+read** (the unread articles at 60 and above, best first, with the lesson, the concept, the feed, the
 age and a link to BazQux; band, folder and sort filters), **Is it judging well for you** (your grades
 against the judge's bands, where you disagree most, how often each band gets read and starred, the
 near misses: the best of what was cut this week), **What it is learning** (this week's lessons by

@@ -96,6 +96,19 @@ def test_protected_and_starred_survive_the_floor(cfg, conn):
     assert res.cut_autocut == 1 and client.read[0] == [items[2].id]
 
 
+def test_a_removed_star_removes_the_protection(cfg, conn):
+    """Stars follow BazQux both ways: an article starred then un-starred is cut on the next run."""
+    cfg.autocut.new_ground_share = 0.0
+    ctx, client, items = build(cfg, conn, ["junk one", "junk two"], starred=[], must_read=[])
+    client.starred = [items[0].id]
+    res = run.run(ctx, enforce=True)
+    assert res.cut_autocut == 1 and client.read[0] == [items[1].id]
+    client.starred = []
+    res = run.run(ctx, enforce=True)
+    assert res.cut_autocut == 1 and client.read[1] == [items[0].id]
+    assert conn.execute("SELECT starred FROM state WHERE article_id = ?", (items[0].id,)).fetchone()[0] == 0
+
+
 def test_prune_and_undo(cfg, conn):
     cfg.prune.keep = 2
     ctx, client, items = build(cfg, conn, ["gold a", "gold b", "plain c", "plain d", "plain e"])

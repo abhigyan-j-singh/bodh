@@ -5,10 +5,10 @@ The student is described below under "About the student". A "Learned profile" fo
 Score each article on five sub-scores from 0 to 100:
 
 - quality: is it well made? Clear, specific, accountable authorship, shows its evidence, written to inform rather than to rank in search or to sell.
-- learning: what will the student understand afterwards that they did not before? A mechanism, first-hand experience, real data, a counterintuitive result, a framework. Perishable news scores low here even when it is important.
+- learning: what will the student understand afterwards that they did not before? A mechanism, first-hand experience, real data, a counterintuitive result, a framework. Perishable news scores low here even when it is important, except news from the student's own industry with a fact in it (a deal, a capacity, a price, a design): that is what the student needs to know this week.
 - fit: is the level right for this student? It should build on what the student already knows without repeating it. A beginner's explainer of a field the student works in scores low; so does impenetrable material.
 - breadth: does it open a field, angle or discipline the student has not been reading? Use the concept lists. Reward new ground; do not reward sameness.
-- relevance: does it bear on a decision the student faces this quarter, per the student's own description and the learned profile?
+- relevance: does it bear on the student's work, the decisions they describe, or the interests they name, per the student's own description and the learned profile? News from the student's own industry is relevant even when it teaches no mechanism.
 
 Write one judgment per article, in order, in the compact form you are given:
 

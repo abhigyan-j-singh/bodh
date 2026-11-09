@@ -234,9 +234,10 @@ def test_list_rows_pages_and_bands_and_the_more_control(conn, cfg):
     assert len(rows) == 5 and {r.folder for r in rows} == {"News"}
     assert rows[0].arrived_at and rows[0].arrived_at.startswith("2023-")
     doc = document.build(cfg, conn, "console")
-    assert doc.list.total == 41 and len(doc.list.articles) == 41 and doc.list.bands == [90, 70, 50]
+    # the list starts at 60; the page carries the first 50, the More control the rest
+    assert doc.list.total == 51 and len(doc.list.articles) == 50 and doc.list.bands == [90, 70, 50]
     page = panels.render(doc, "console")
-    assert 'class="list-more' not in page  # everything fits
+    assert "Showing 50 of 51." in page  # one over the cap: the More control appears
     monkeypatch_cap = document.LIST_CAP
     try:
         document.LIST_CAP = 10
@@ -244,11 +245,11 @@ def test_list_rows_pages_and_bands_and_the_more_control(conn, cfg):
         page = panels.render(doc, "console")
         assert (
             len(doc.list.articles) == 10
-            and "Showing 10 of 41." in page
+            and "Showing 10 of 51." in page
             and '<button type="button" class="button quiet js-only" data-action="list_more"' in page
         )
         export = panels.render(document.build(cfg, conn, "export"), "export")
-        assert "Showing 10 of 41." in export and "Show 50 more" not in export
+        assert "Showing 10 of 51." in export and "Show 50 more" not in export
     finally:
         document.LIST_CAP = monkeypatch_cap
 
@@ -334,7 +335,7 @@ def test_export_writes_the_page_and_the_document(conn, cfg):
     path = dashboard.render(cfg, conn)
     assert path.name == "index.html" and 'data-mode="export"' in path.read_text(encoding="utf-8")
     data = json.loads((path.parent / "data.json").read_text(encoding="utf-8"))
-    assert data["schema"] == 1 and data["list"]["total"] == 4 and data["footer"]["exported_text"]
+    assert data["schema"] == 1 and data["list"]["total"] == 5 and data["footer"]["exported_text"]
 
 
 # -- the console ----------------------------------------------------------------------------

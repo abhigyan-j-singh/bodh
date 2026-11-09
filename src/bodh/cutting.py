@@ -15,6 +15,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from . import store
 from .config import Config
@@ -114,7 +115,7 @@ def _candidates(pool: list[sqlite3.Row], cfg: Config, sel: Selection) -> list[sq
         if (
             cutoff is None
             or not eligible(row)
-            or row["exploration"]
+            or (row["exploration"] and within_age_window(row, cfg))
             or row["exempt"]
             or row["confidence"] == "low"
         ):
@@ -124,6 +125,18 @@ def _candidates(pool: list[sqlite3.Row], cfg: Config, sel: Selection) -> list[sq
         else:
             sel.survivors.append(row)
     return candidates
+
+
+def within_age_window(row: sqlite3.Row, cfg: Config) -> bool:
+    """Is the article younger than `limits.max_age_days`? New ground is kept only that long: a
+    reserved article nobody read in two weeks is cut like any other, instead of for ever."""
+    days = cfg.limits.max_age_days
+    if days is None:
+        return True
+    crawled = row["crawled_msec"]
+    if not crawled:
+        return True  # an article of unknown age counts as new, as the judge's pending query does
+    return int(crawled) >= int((store.utcnow() - timedelta(days=days)).timestamp() * 1000)
 
 
 def _check_safety(
@@ -209,7 +222,13 @@ def _reserve_new_ground(
 ) -> list[sqlite3.Row]:
     """The new-ground quota: a share of what autocut leaves is kept for decent articles on a
     concept the student has not read. Returns the candidates still to be cut."""
-    base = len(newly_scored) - len(candidates) if newly_scored is not None else len(sel.survivors)
+    # the quota is a share of what this run judged and keeps; candidates left over from earlier
+    # runs (capped out, or close calls whose review landed now) are not this run's judgments
+    base = (
+        len(newly_scored) - sum(1 for r in candidates if r["id"] in newly_scored)
+        if newly_scored is not None
+        else len(sel.survivors)
+    )
     quota = math.ceil(cfg.autocut.new_ground_share * max(0, base))
     if quota <= 0 or not candidates:
         return candidates
