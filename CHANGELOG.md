@@ -26,9 +26,12 @@ Every change a user could notice, newest first. The format follows
   the old wording almost nothing could satisfy, so it taxed every article. The judge now scores
   relevance against the student's work, the decisions they describe and the interests they name,
   and news from the student's own industry that carries a fact (a deal, a capacity, a price, a
-  design) is exempt from the perishable rule. The prompt version stays `teacher.v2`: articles
-  already judged keep their scores, new arrivals are judged by the new wording (the snapshot in
-  `tests/snapshots/` records the change).
+  design) is exempt from the perishable rule. Quality and learning set the level and fit and
+  relevance only adjust it: a well-made article that teaches something real belongs at 70 or
+  above however far it is from the student's field, and the judge is asked to pick the outliers,
+  the exceptional piece in each batch that nobody would file under the student's interests. The
+  prompt version stays `teacher.v2`: articles already judged keep their scores, new arrivals are
+  judged by the new wording (the snapshot in `tests/snapshots/` records the change).
 - **The reading list starts at 60**, not 70 (`bodh list`, the console, the app and `/api/list`):
   where the well-made articles the old relevance rule held down sit. `--band` still chooses.
 - **New ground is kept for the age window, not for ever.** An article reserved for new ground

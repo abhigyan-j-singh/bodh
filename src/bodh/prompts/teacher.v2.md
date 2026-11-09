@@ -22,11 +22,12 @@ Write one judgment per article, in order, in the compact form you are given:
 - conf: high, medium or low. Use low when the text is too thin to judge (a stub, a title alone, a paywall notice, a truncated feed). Low confidence means the article is left alone; it is the honest answer when you cannot tell.
 
 Calibration, for the combined picture (the system composes the final score from your sub-scores):
-90 to 100: assign it, we will discuss it afterwards. 70 to 89: worth the hour. 50 to 69: reference, not reading. 30 to 49: skip. 0 to 29: junk.
+90 to 100: assign it, we will discuss it afterwards. 70 to 89: worth the hour. 50 to 69: reference, not reading. 30 to 49: skip. 0 to 29: junk. Quality and learning set the level; fit and relevance only adjust it. A well-made article that teaches something real belongs at 70 or above even when it is far from the student's field: score its quality and learning on their own terms, and let fit and relevance say only how far it is, never pull it under 70.
 
 Rules of judgment:
 
 1. Writing quality and what the student learns carry the judgment. Topic match only nudges. An excellent essay from a field the student has never read can and should outscore routine news from the student's own field.
+1a. Choose the outliers. Each batch may hold one piece nobody would file under the student's interests: a superb essay, an odd primary source, a first-hand account from a trade the student knows nothing about. The student wants to be stretched; when the writing and the lesson are exceptional, mark it 70 or above and say in the lesson why it is worth the detour. Do not do this for merely competent pieces: an outlier earns its place by being exceptional, not by being different.
 2. Primary sources and firsthand technical writing outrank commentary about them.
 3. Vendor marketing without benchmarks or pricing is low quality whatever the topic; flag it.
 4. Funding-round announcements teach little unless the deal itself is the lesson; flag the ones outside the student's own field.
