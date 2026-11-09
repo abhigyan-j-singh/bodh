@@ -209,6 +209,41 @@ VERDICT_MEANINGS = {
 }
 
 
+def _facet_tag_infos(cfg: Config) -> list[TagInfo]:
+    """The facet tags bodh writes on unread judged articles: topics, kinds, flags, outlier, unsure."""
+    t = cfg.tags
+    kinds = {
+        "src": "a primary source (paper, filing, transcript)",
+        "analysis": "original analysis",
+        "news": "reporting",
+        "opinion": "commentary",
+        "roundup": "aggregation, links",
+        "promo": "promotion",
+    }
+    flags = {
+        "home": f"an angle on your home ground ({cfg.judge.home_angle or 'judge.home_angle not set'})",
+        "funding": "a funding round or deal",
+        "vendor": "a company's own announcement without data",
+        "primary": "a primary source",
+    }
+    out = [
+        TagInfo(n, "topic", "bodh", "the judge filed the article under this topic") for n in t.topic_list()
+    ]
+    out += [
+        TagInfo(n, "kind", "bodh", f"the judge's kind: {kinds[k]}") for k, n in t.kind_tags().items() if n
+    ]
+    out += [
+        TagInfo(n, "flag", "bodh", f"the judge's flag: {flags[f]}") for f, n in t.flag_tags().items() if n
+    ]
+    if t.outlier.strip():
+        meaning = f"a new-ground pick kept to stretch you; grade it {t.detour} or {t.wasted}"
+        out.append(TagInfo(t.outlier.strip(), "facet", "bodh", meaning))
+    if t.unsure.strip():
+        meaning = "a low-confidence judgment (text too thin); autocut leaves it alone, so skim and grade it"
+        out.append(TagInfo(t.unsure.strip(), "facet", "bodh", meaning))
+    return out
+
+
 def _verdict_group(kind: str) -> str:
     """The exclusive group a verdict belongs to, as `bodh tags` names it."""
     if kind in store.GRADES:
@@ -550,6 +585,7 @@ class App:
                 "bodh marked it read (autocut, a prune or clear-old); `bodh undo` reverses the last cut",
             )
         )
+        out += _facet_tag_infos(self.cfg)
         out.append(
             TagInfo(
                 t.rescue,

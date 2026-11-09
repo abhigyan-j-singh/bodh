@@ -110,6 +110,19 @@ How far back your reading counts, and the tags bodh writes and reads.
 | `tags.less` | `"less"` |  | Less of it. |
 | `tags.detour` | `"detour"` |  | An outlier the judge chose, far from your usual reading, that was worth the detour: stretch more this way. |
 | `tags.wasted` | `"wasted"` |  | An outlier that was not worth it: do not stretch this way. |
+| `tags.outlier` | `"outlier"` |  | On the judge's new-ground picks: outliers kept to stretch you. Grade them detour or wasted. Empty turns it off. |
+| `tags.unsure` | `"unsure"` |  | On low-confidence judgments (text too thin to judge); autocut leaves these alone, so skim and grade them. Empty turns it off. |
+| `tags.source` | `"source"` |  | The judge's kind: a primary source (paper, filing, transcript). Empty turns it off. |
+| `tags.analysis` | `"analysis"` |  | The judge's kind: original analysis. Empty turns it off. |
+| `tags.news` | `"news"` |  | The judge's kind: reporting. Empty turns it off. |
+| `tags.opinion` | `"opinion"` |  | The judge's kind: commentary. Empty turns it off. |
+| `tags.roundup` | `"roundup"` |  | The judge's kind: aggregation and link lists. Empty turns it off. |
+| `tags.promo` | `"promo"` |  | The judge's kind: promotion. Empty turns it off. |
+| `tags.home` | `"home"` |  | The judge's flag: an angle on your home ground (judge.home_angle). Empty turns it off. |
+| `tags.funding` | `"funding"` |  | The judge's flag: a funding round or deal. Empty turns it off. |
+| `tags.vendor` | `"vendor"` |  | The judge's flag: a company's own announcement without data. Empty turns it off. |
+| `tags.primary` | `"primary"` |  | The judge's flag: a primary source. Empty turns it off. |
+| `tags.topics` | `"ai infra, gpu economics, chips, power, india policy, export controls, security, frontier labs, ai research, ai engineering, fundraising, company building, math, physics, cs theory, biology, climate, space, economics, history, philosophy, writing, arts, psychology, health, india culture, life, making, language"` |  | Comma-separated topics; the judge files every article under one of them and bodh writes it as a tag. Empty turns topic tags off. |
 | `profile.concept_window_days` | `90` | 1 or more | How far back stars, reads and verdicts count as what you know. Unit: days. |
 
 ## Schedule

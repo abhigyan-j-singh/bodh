@@ -413,6 +413,14 @@ class Protect(Strict):
     )
 
 
+DEFAULT_TOPICS = (
+    "ai infra, gpu economics, chips, power, india policy, export controls, security, frontier labs, "
+    "ai research, ai engineering, fundraising, company building, "
+    "math, physics, cs theory, biology, climate, space, economics, history, philosophy, writing, arts, "
+    "psychology, health, india culture, life, making, language"
+)
+
+
 class Tags(Strict):
     bands: dict[int, str] = Field(
         default_factory=lambda: {
@@ -486,6 +494,72 @@ class Tags(Strict):
         description="An outlier that was not worth it: do not stretch this way.",
         json_schema_extra=ui("learning", control="tag"),
     )
+    # facets: what the judge saw in the article, written on the unread ones; empty turns one off
+    outlier: str = Field(
+        default="outlier",
+        description="On the judge's new-ground picks: outliers kept to stretch you. Grade them detour or wasted. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    unsure: str = Field(
+        default="unsure",
+        description="On low-confidence judgments (text too thin to judge); autocut leaves these alone, so skim and grade them. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    source: str = Field(
+        default="source",
+        description="The judge's kind: a primary source (paper, filing, transcript). Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    analysis: str = Field(
+        default="analysis",
+        description="The judge's kind: original analysis. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    news: str = Field(
+        default="news",
+        description="The judge's kind: reporting. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    opinion: str = Field(
+        default="opinion",
+        description="The judge's kind: commentary. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    roundup: str = Field(
+        default="roundup",
+        description="The judge's kind: aggregation and link lists. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    promo: str = Field(
+        default="promo",
+        description="The judge's kind: promotion. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    home: str = Field(
+        default="home",
+        description="The judge's flag: an angle on your home ground (judge.home_angle). Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    funding: str = Field(
+        default="funding",
+        description="The judge's flag: a funding round or deal. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    vendor: str = Field(
+        default="vendor",
+        description="The judge's flag: a company's own announcement without data. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    primary: str = Field(
+        default="primary",
+        description="The judge's flag: a primary source. Empty turns it off.",
+        json_schema_extra=ui("learning", control="tag"),
+    )
+    topics: str = Field(
+        default=DEFAULT_TOPICS,
+        description="Comma-separated topics; the judge files every article under one of them and bodh writes it as a tag. Empty turns topic tags off.",
+        json_schema_extra=ui("learning"),
+    )
 
     @model_validator(mode="after")
     def _distinct(self) -> Tags:
@@ -494,10 +568,38 @@ class Tags(Strict):
         names = [*self.bands.values(), self.cut, self.rescue, self.prune, *self.verdict_tags().values()]
         if any(not n or not n.strip() for n in names):
             raise ValueError("every tag name must be non-empty")
+        names += [
+            n for n in (*self.kind_tags().values(), *self.flag_tags().values(), *self.topic_list()) if n
+        ]
+        if self.outlier.strip():
+            names.append(self.outlier)
+        if self.unsure.strip():
+            names.append(self.unsure)
         if len(set(names)) != len(names):
             dupes = sorted({n for n in names if names.count(n) > 1})
             raise ValueError(f"tag names must be distinct; used more than once: {dupes}")
         return self
+
+    def kind_tags(self) -> dict[str, str]:
+        """judge kind -> tag name; a kind whose tag is empty is not written."""
+        return {
+            k: getattr(self, f).strip()
+            for k, f in (
+                ("src", "source"),
+                ("analysis", "analysis"),
+                ("news", "news"),
+                ("opinion", "opinion"),
+                ("roundup", "roundup"),
+                ("promo", "promo"),
+            )
+        }
+
+    def flag_tags(self) -> dict[str, str]:
+        """judge flag -> tag name; a flag whose tag is empty is not written."""
+        return {k: getattr(self, k).strip() for k in ("home", "funding", "vendor", "primary")}
+
+    def topic_list(self) -> list[str]:
+        return [t.strip() for t in self.topics.split(",") if t.strip()]
 
     def verdict_tags(self) -> dict[str, str]:
         """feedback kind -> tag name, for the tags that carry an opinion."""

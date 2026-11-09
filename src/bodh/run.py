@@ -264,6 +264,7 @@ def run(
         _judge(st)
         _tag(st)
         _autocut(st)
+        _tag_facets(st)
         _finish(st)
         return res
     except KeyboardInterrupt:
@@ -393,6 +394,18 @@ def _tag(st: _Run) -> None:
     st.phase("tagging in BazQux")
     cutmod.untag_stale(st.ctx.client, st.judge.stale_tags)
     cutmod.tag_bands(st.ctx.client, st.conn)
+
+
+def _tag_facets(st: _Run) -> None:
+    """After the cut, so only what stays unread gets them: the topic, kind, flag, outlier and
+    unsure tags. Cosmetic: a failure here never fails the run; the next run finishes it."""
+    try:
+        done = cutmod.tag_facets(st.ctx.client, st.conn, st.cfg)
+    except Exception:
+        log.exception("run: facet tagging failed; the next run finishes it")
+        return
+    if done:
+        log.info("run: facet tags written on %d articles", done)
 
 
 def _autocut(st: _Run) -> None:
@@ -636,6 +649,7 @@ def _catch_up_close(ctx: Context, judge: Judge, run_id: int, total: dict[str, An
     try:
         cutmod.untag_stale(ctx.client, judge.stale_tags)
         cutmod.tag_bands(ctx.client, conn)
+        cutmod.tag_facets(ctx.client, conn, cfg)
     except Exception:  # the judgments are stored; the next run tags what this one could not
         log.exception("catch-up: tagging failed; the next run finishes it")
     total["elapsed"] = time.monotonic() - total["started"]

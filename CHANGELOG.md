@@ -6,6 +6,21 @@ Every change a user could notice, newest first. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Facet tags in BazQux.** Besides the score band, every unread judged article now carries what
+  the judge saw in it: its topic, from a list you keep in `tags.topics` (29 to start with, from
+  `ai infra` and `power` to `math` and `life`; the judge files each article under one or none);
+  its kind (`source`, `analysis`, `news`, `opinion`, `roundup`, `promo`); its flags (`home`,
+  `funding`, `vendor`, `primary`); `outlier` on the new-ground picks autocut kept to stretch you,
+  so you can grade them `detour` or `wasted`; and `unsure` on low-confidence judgments, the ones
+  autocut leaves alone. Every name is in config; an empty name turns that tag off. Tags are written
+  after the cut, on unread articles only, so a read article never collects them. The judge's output
+  gains one field (`topic`); the free-text `concept` is not written as a tag because the record
+  shows it is nearly one concept per article (2,196 distinct among the 2,613 articles that scored
+  60 or more last month). Schema 7 adds `scores.topic` and `scores.facets_tagged`; articles judged
+  before carry no topic and get their other facets on the first run.
+
 ### Fixed
 
 - **Doctor said the Must read stream was missing when it was there.** BazQux lists labels under

@@ -45,7 +45,7 @@ def test_judgment_schema_has_no_unsupported_constraints():
     fmt = output_format(JudgmentBatchOut.model_json_schema())
     assert fmt["type"] == "json_schema"
     props = fmt["schema"]["$defs"]["JudgmentOut"]["properties"]
-    assert set(props) == {"n", "s", "lesson", "concept", "kind", "flags", "dupe", "conf"}
+    assert set(props) == {"n", "s", "lesson", "concept", "topic", "kind", "flags", "dupe", "conf"}
     assert "minimum" not in str(fmt["schema"])
     # the codes travel as an enum (the SDK since 0.80) or in the description (0.77 to 0.79)
     kind = props["kind"]

@@ -673,3 +673,44 @@ def test_clear_old_cuts_strictly_older_than_the_cutoff_with_each_exemption(conn,
     assert set(client.read[0]) == expected
     row = store.article(conn, unknown)
     assert row["cut_mode"] == "clear-old" and row["fetched_at"] and row["title"] == "(clear-old: not fetched)"
+
+
+def test_facet_tags_follow_the_judgment_and_the_config(cfg):
+    """Topic (only a configured one), kind, flags, outlier, unsure; an empty name is skipped."""
+    row = dict(
+        topic="Power", kind="src", flags='["home", "stub", "primary"]', confidence="low", exploration=1
+    )
+    assert cutting.facet_tags(row, cfg.tags) == ["power", "source", "home", "primary", "outlier", "unsure"]
+    row = dict(topic="quantum knitting", kind="other", flags="not json", confidence="high", exploration=0)
+    assert cutting.facet_tags(row, cfg.tags) == []
+    off = cfg.model_copy(
+        update={"tags": cfg.tags.model_copy(update={"source": "", "outlier": "", "topics": ""})}
+    )
+    row = dict(topic="power", kind="src", flags="[]", confidence="medium", exploration=1)
+    assert cutting.facet_tags(row, off.tags) == []
+
+
+def test_tag_facets_writes_one_request_per_tag_on_unread_articles_only(conn, cfg):
+    """Cut articles get no facet tags; a new-ground pick is re-tagged with `outlier`; the second
+    pass finds nothing to do."""
+    ids = seed_scored(
+        conn, cfg, [dict(n=1, score=70), dict(n=2, score=72, confidence="low"), dict(n=3, score=20)]
+    )
+    conn.execute(
+        "UPDATE scores SET kind = 'news', topic = 'power' WHERE article_id IN (?, ?)", (ids[0], ids[1])
+    )
+    conn.execute("UPDATE scores SET kind = 'news' WHERE article_id = ?", (ids[2],))
+    store.mark_cut(conn, [ids[2]], store.begin_run(conn, "run"), "autocut")
+    client = FakeClient()
+    assert cutting.tag_facets(client, conn, cfg) == 2
+    assert sorted(client.tagged) == [
+        ("news", [ids[0], ids[1]]),
+        ("power", [ids[0], ids[1]]),
+        ("unsure", [ids[1]]),
+    ]
+    assert cutting.tag_facets(client, conn, cfg) == 0
+    store.set_flags(conn, [ids[0]], exploration=1)
+    store.mark_facets_tagged(conn, [ids[0]], tagged=0)
+    client.tagged.clear()
+    assert cutting.tag_facets(client, conn, cfg) == 1
+    assert sorted(client.tagged) == [("news", [ids[0]]), ("outlier", [ids[0]]), ("power", [ids[0]])]

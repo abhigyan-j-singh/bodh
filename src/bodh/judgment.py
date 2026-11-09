@@ -62,6 +62,7 @@ class Verdict(BaseModel):
     relevance: int = Field(ge=0, le=100)
     lesson: str = ""
     concept: str = ""
+    topic: str = ""  # one of the configured topics, or empty: written as a tag in BazQux
     kind: str = "other"
     flags: list[str] = Field(default_factory=list)
     dupe_of: int | str | None = None  # an ordinal from the model, or the resolved article id
@@ -84,6 +85,7 @@ class JudgmentOut(BaseModel):
         description="at most 12 words: what the student takes from it, or what the piece is instead"
     )
     concept: str = Field(description="one to three lowercase words: the concept or field taught")
+    topic: str = Field(description="one of the topics listed in the instructions, or other")
     kind: KindCode = Field(description="src, analysis, news, opinion, roundup, promo or other")
     flags: list[FlagCode] = Field(
         description="any of primary, home, vendor, funding, perishable, stub, dupe; usually empty"
@@ -106,6 +108,7 @@ class JudgmentIn(BaseModel):
     s: list[int]
     lesson: str | None = ""  # None in any of these is read as "not given", never as a dropped judgment
     concept: str | None = ""
+    topic: str | None = ""
     kind: str | None = "other"
     flags: list[str | None] | None = None
     dupe: int | str | None = None
@@ -132,6 +135,7 @@ class JudgmentIn(BaseModel):
             **scores,
             lesson=(self.lesson or "").strip(),
             concept=(self.concept or "").strip().lower(),
+            topic=(self.topic or "").strip().lower(),
             kind=KIND_CODES.get((self.kind or "").strip().lower(), "other"),
             flags=flags,
             dupe_of=dupe,

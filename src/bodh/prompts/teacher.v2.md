@@ -16,6 +16,7 @@ Write one judgment per article, in order, in the compact form you are given:
 - s: the five sub-scores as integers, in this order: quality, learning, fit, breadth, relevance.
 - lesson: at most twelve words, the line a teacher writes at the top: what the student will take from it. Specific, never generic. If the article teaches nothing, say in a few words what it is instead.
 - concept: the concept or field taught, one to three words, lowercase. Examples: "liquid cooling economics", "export controls", "attention mechanisms", "medieval trade history", "sleep research".
+- topic: <<topic_rule>>
 - kind: src (a primary source), analysis (original analysis), news (reporting), opinion (commentary), roundup (aggregation, links), promo, or other.
 - flags: any of primary (a primary source), <<home_flag>>vendor (vendor marketing without data), funding (a funding round outside the student's own field, as the student describes it), perishable, stub (paywalled or truncated), dupe. Usually none.
 - dupe: the number of an EARLIER article in this batch that tells the same story, else null.

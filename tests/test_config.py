@@ -73,6 +73,8 @@ def test_config_rejects_typos_bounds_and_timezone():
         {"tags": {"bands": {}}},
         {"tags": {"cut": "rescue"}},  # two tags with one name
         {"tags": {"great": ""}},
+        {"tags": {"topics": "news, math"}},  # a topic named like the kind tag
+        {"tags": {"outlier": "score-90"}},
         {"models": {"batch_discount": 2}},
         {"models": {"prices_per_mtok": {"m": [1.0]}}},
         {"judge": {"articles_per_call": 0}},
@@ -336,3 +338,12 @@ def test_empty_timezone_means_this_computer_and_doctor_knows_the_source(tmp_path
     (tmp_path / "config.yaml").write_text('timezone: ""\n', encoding="utf-8")
     cfg = load_config(tmp_path)
     assert cfg.timezone_source == "this computer" and cfg.timezone == "Europe/Lisbon"
+
+
+def test_facet_tags_can_be_switched_off_one_by_one():
+    """An empty facet tag means "do not write it"; the verdict tags stay mandatory."""
+    t = Config(tags={"news": "", "primary": "", "outlier": " ", "topics": ""}).tags
+    assert t.kind_tags()["news"] == "" and t.kind_tags()["src"] == "source"
+    assert t.flag_tags() == {"home": "home", "funding": "funding", "vendor": "vendor", "primary": ""}
+    assert t.topic_list() == [] and not t.outlier.strip()
+    assert Config().tags.topic_list()[:3] == ["ai infra", "gpu economics", "chips"]

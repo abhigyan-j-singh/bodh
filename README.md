@@ -317,11 +317,17 @@ The same progress numbers in the terminal: `bodh progress`.
 | --- | --- | --- |
 | `score-90`, `score-70`, `score-50`, `score-30`, `score-0` | bodh | The article's score band. Open a tag with the unread filter on and you have a ranked view. |
 | `cut` | bodh | Marked read by bodh (autocut, prune or clear-old). Mark it unread anywhere to rescue it. |
+| `ai infra`, `power`, `math`, … | bodh | The topic the judge filed the article under, one of the list in `tags.topics` (edit the list to your own names; empty turns topic tags off). Written on unread articles only. |
+| `source`, `analysis`, `news`, `opinion`, `roundup`, `promo` | bodh | The judge's kind of article. Each renameable; empty turns it off. |
+| `home`, `funding`, `vendor`, `primary` | bodh | The judge's flags: an angle on your home ground (`judge.home_angle`), a funding round or deal, a company's own announcement without data, a primary source. |
+| `outlier` | bodh | A new-ground pick: an article far from your usual reading that autocut kept to stretch you. Grade it `detour` or `wasted` and the judge learns which directions pay. |
+| `unsure` | bodh | A low-confidence judgment (the text was too thin to judge). Autocut leaves these alone, so skim and grade them yourself. |
 | `rescue` | you | A command, on a cut article you wanted: it is marked unread again, counts as a rescue and as the strongest positive, and is never cut again by any path. The run removes the tag when done (`wrong`, the old name, still works). |
 | `prune` | you | A command, on any article: the next run with autocut on prunes to what the prune keeps. Removed when done. |
 | `great`, `good`, `meh`, `bad` | you | Your grade, one per article: the best kind (more like this; the Sunday rewrite may not lose it), worth the time, not worth it, junk the judge should not have kept. |
 | `basic`, `heavy` | you | The level missed: too elementary for you, too dense or specialist for you now. |
 | `more`, `less` | you | A steer: more or less of this article's concept, written into the learned profile as a dated line that the judge reads from the next run. |
+| `detour`, `wasted` | you | Your word on an outlier: worth the detour (stretch more this way) or not (do not). |
 
 Stars are yours: a starred article is never cut and counts like `great`. Verdict tags stay on the
 article as your own record (open the `great` tag in BazQux and you have your best-of list) and are

@@ -769,7 +769,7 @@ def test_the_api_mirrors_the_commands(cfg, conn):
     assert found.why("https://example.com/FeedA/1").title == "Liquid cooling retrofits"
     assert found.why("nope") is None and found.resolve("1") == ids[0]
     assert {t.group for t in found.tags()} == {
-        "band", "cut", "command", "grade", "level", "steer", "detour", "stream"
+        "band", "cut", "topic", "kind", "flag", "facet", "command", "grade", "level", "steer", "detour", "stream"
     }  # fmt: skip
     plan = found.prune_plan(keep=1)
     assert (

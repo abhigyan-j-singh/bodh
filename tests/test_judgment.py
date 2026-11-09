@@ -530,7 +530,18 @@ def test_prompt_snapshot(cfg, conn, monkeypatch):
 
 def test_verdict_keeps_the_lesson_and_reads_a_null_concept_as_blank():
     v = JudgmentIn(n=1, s=[1, 2, 3, 4, 5], lesson="  Learn this  ", concept=None).to_verdict()
-    assert v.lesson == "Learn this" and v.concept == ""
+    assert v.lesson == "Learn this" and v.concept == "" and v.topic == ""
+    assert JudgmentIn(n=1, s=[1, 2, 3, 4, 5], topic=" AI Infra ").to_verdict().topic == "ai infra"
+
+
+def test_prompt_lists_the_topics_or_says_other(cfg):
+    from bodh.config import Config
+    from bodh.judge import fill_prompt, load_prompt
+
+    raw = load_prompt(cfg.judge.prompt_version)
+    assert "<<topic_rule>>" in raw
+    assert "ai infra, gpu economics" in fill_prompt(raw, cfg)
+    assert "- topic: write other." in fill_prompt(raw, Config(tags={"topics": ""}))
 
 
 def test_parser_takes_exactly_up_to_the_last_brace():

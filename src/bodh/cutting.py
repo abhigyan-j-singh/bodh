@@ -9,6 +9,7 @@ before read state, and can be undone.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
@@ -16,9 +17,10 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any
 
 from . import store
-from .config import Config
+from .config import Config, Tags
 from .errors import BodhError
 from .judge import Judge, has_more_to_read
 from .readers.bazqux import BazQuxClient
@@ -245,6 +247,7 @@ def _reserve_new_ground(
     if not reserved:
         return candidates
     store.set_flags(conn, [r["id"] for r in reserved], exploration=1)
+    store.mark_facets_tagged(conn, [r["id"] for r in reserved], tagged=0)  # the outlier tag is due
     reserved_ids = {r["id"] for r in reserved}
     sel.survivors.extend(reserved)
     sel.reserved_for_new_ground = len(reserved)
@@ -367,6 +370,45 @@ def tag_bands(client: BazQuxClient, conn: sqlite3.Connection) -> int:
         store.mark_band_tagged(conn, ids)
         done += len(ids)
     return done
+
+
+def facet_tags(row: sqlite3.Row | dict[str, Any], tags: Tags) -> list[str]:
+    """The facet tags one judged article carries: its topic (when it is one of the configured
+    topics), its kind, its flags, `outlier` for a new-ground pick, `unsure` for a low-confidence
+    judgment. A facet whose tag name is empty is not written."""
+    out: list[str] = []
+    topic = (row["topic"] or "").strip().lower()
+    if topic and topic in {t.lower() for t in tags.topic_list()}:
+        out.append(next(t for t in tags.topic_list() if t.lower() == topic))
+    kind = tags.kind_tags().get(row["kind"] or "", "")
+    if kind:
+        out.append(kind)
+    flags = tags.flag_tags()
+    try:
+        raised = json.loads(row["flags"] or "[]")
+    except ValueError:
+        raised = []
+    out += [flags[f] for f in raised if flags.get(f)]
+    if row["exploration"] and tags.outlier.strip():
+        out.append(tags.outlier.strip())
+    if row["confidence"] == "low" and tags.unsure.strip():
+        out.append(tags.unsure.strip())
+    return out
+
+
+def tag_facets(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config) -> int:
+    """Every unread judged article carries its facet tags in BazQux: one request per tag, so a
+    run costs as many requests as there are distinct tags among its new articles. Returns the
+    number of articles tagged."""
+    rows = store.untagged_facets(conn)
+    by_tag: dict[str, list[str]] = {}
+    for row in rows:
+        for tag in facet_tags(row, cfg.tags):
+            by_tag.setdefault(tag, []).append(row["article_id"])
+    for tag, ids in by_tag.items():
+        client.tag(ids, tag)
+    store.mark_facets_tagged(conn, [r["article_id"] for r in rows])
+    return len(rows)
 
 
 def undo(client: BazQuxClient, conn: sqlite3.Connection, cfg: Config, run_id: int) -> int:

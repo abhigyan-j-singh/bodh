@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS scores (
   lesson TEXT, concept TEXT, kind TEXT, flags TEXT, dupe_of TEXT, confidence TEXT,
   second_look_score REAL, second_look_model TEXT,
   bucket TEXT, bucket_tagged INTEGER DEFAULT 0,
+  topic TEXT, facets_tagged INTEGER DEFAULT 0,
   scored_at TEXT
 );
 CREATE TABLE IF NOT EXISTS state (
@@ -134,7 +135,7 @@ def connect(path: Path) -> sqlite3.Connection:
 # existed); each numbered step below brings it one version on, inside one transaction, and
 # is written so that running it on a database that already has the change is harmless.
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SCHEMA_VERSION_KEY = "schema_version"
 
 # The kv keys, named by the glossary. The names before October 2026 are moved by _migrate_4.
@@ -223,7 +224,18 @@ def _migrate_6(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE learner_versions")
 
 
-MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4, 5: _migrate_5, 6: _migrate_6}
+def _migrate_7(conn: sqlite3.Connection) -> None:
+    """The judge's topic, and whether an article's facet tags (topic, kind, flags, outlier,
+    unsure) have been written in BazQux. Articles judged before carry no topic and are
+    tagged with what they have on the next run."""
+    columns = _columns(conn, "scores")
+    if "topic" not in columns:
+        conn.execute("ALTER TABLE scores ADD COLUMN topic TEXT")
+    if "facets_tagged" not in columns:
+        conn.execute("ALTER TABLE scores ADD COLUMN facets_tagged INTEGER DEFAULT 0")
+
+
+MIGRATIONS = {2: _migrate_2, 3: _migrate_3, 4: _migrate_4, 5: _migrate_5, 6: _migrate_6, 7: _migrate_7}
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -542,8 +554,8 @@ def record_score(
     conn.execute(
         """INSERT INTO scores (article_id, prompt_version, model, quality, learning, fit, breadth, relevance,
                                base_score, score, lesson, concept, kind, flags, dupe_of, confidence,
-                               bucket, bucket_tagged, scored_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                               bucket, bucket_tagged, topic, facets_tagged, scored_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?)
            ON CONFLICT(article_id) DO UPDATE SET
              prompt_version=excluded.prompt_version, model=excluded.model,
              quality=excluded.quality, learning=excluded.learning, fit=excluded.fit,
@@ -552,6 +564,7 @@ def record_score(
              concept=excluded.concept, kind=excluded.kind, flags=excluded.flags, dupe_of=excluded.dupe_of,
              confidence=excluded.confidence, bucket=excluded.bucket,
              bucket_tagged=CASE WHEN scores.bucket = excluded.bucket THEN scores.bucket_tagged ELSE 0 END,
+             topic=excluded.topic, facets_tagged=0,
              second_look_score=NULL, second_look_model=NULL, scored_at=excluded.scored_at""",
         (
             article_id,
@@ -571,6 +584,7 @@ def record_score(
             verdict.get("dupe_of"),
             verdict.get("confidence", "medium"),
             bucket,
+            verdict.get("topic", ""),
             utcnow_iso(),
         ),
     )
@@ -611,6 +625,20 @@ def untagged_bands(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
 def mark_band_tagged(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
     conn.executemany("UPDATE scores SET bucket_tagged = 1 WHERE article_id = ?", [(i,) for i in ids])
+
+
+def untagged_facets(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Unread judged articles whose facet tags are not yet in BazQux. Cut articles are left
+    out: a tag on a read article is noise, and a rescue brings it back here."""
+    return conn.execute(
+        """SELECT s.article_id, s.topic, s.kind, s.flags, s.confidence, st.exploration
+           FROM scores s JOIN state st ON st.article_id = s.article_id
+           WHERE s.facets_tagged = 0 AND st.status = 'unread'"""
+    ).fetchall()
+
+
+def mark_facets_tagged(conn: sqlite3.Connection, ids: Iterable[str], tagged: int = 1) -> None:
+    conn.executemany("UPDATE scores SET facets_tagged = ? WHERE article_id = ?", [(tagged, i) for i in ids])
 
 
 # -- state --------------------------------------------------------------------

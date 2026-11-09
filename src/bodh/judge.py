@@ -76,10 +76,19 @@ def load_prompt(name: str, root: Path | None = None) -> str:
 
 def fill_prompt(text: str, cfg: Config) -> str:
     """The prompt's placeholders: `<<home_flag>>` names the student's home ground when one is
-    configured (the model then writes the `home` flag) and disappears when none is."""
+    configured (the model then writes the `home` flag) and disappears when none is;
+    `<<topic_rule>>` lists the student's topics, which bodh writes as tags."""
     home = cfg.judge.home_angle.strip()
     home_flag = f"home (an angle on the student's home ground, {home}), " if home else ""
-    return text.replace("<<home_flag>>", home_flag)
+    topics = cfg.tags.topic_list()
+    topic_rule = (
+        "the one of these the article belongs to, exactly as written, or other when none fits: "
+        + ", ".join(topics)
+        + "."
+        if topics
+        else "write other."
+    )
+    return text.replace("<<home_flag>>", home_flag).replace("<<topic_rule>>", topic_rule)
 
 
 def _fmt_date(published: int | None) -> str:
