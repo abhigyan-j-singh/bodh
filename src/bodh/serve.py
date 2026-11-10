@@ -38,6 +38,8 @@ TICK_SECONDS = 30
 LAST_RUN_KEY = "serve.last_run_at"
 LAST_WEEKLY_KEY = "serve.last_weekly"  # the ISO week it ran in
 LAST_REPORT_KEY = "serve.last_report"  # the month it ran in
+RETRY_KEY = "serve.retry_after."  # + job: epoch seconds before which a failed job is not retried
+RETRY_HOURS = 6
 
 Spawn = Callable[[list[str]], int]
 
@@ -97,16 +99,20 @@ class Scheduler:
         # Sunday morning as a rule; any morning once the last rewrite is two weeks back (a Mac
         # shut all Sunday would otherwise skip the week)
         overdue = local.weekday() == 6 or _weeks_since(last_week, local) >= 2
-        if local.hour >= WEEKLY_HOUR and last_week != week and overdue:
+        if local.hour >= WEEKLY_HOUR and last_week != week and overdue and self._retry_ok("weekly", now):
             jobs.append("weekly")
         month = local.strftime("%Y-%m")
         if (
             local.day >= REPORT_DAY
             and local.hour >= REPORT_HOUR
             and store.kv_get(self.conn, LAST_REPORT_KEY) != month
+            and self._retry_ok("report", now)
         ):
             jobs.append("report")
         return jobs
+
+    def _retry_ok(self, job: str, now: float) -> bool:
+        return now >= float(store.kv_get(self.conn, RETRY_KEY + job) or 0)
 
     def tick(self, now: float | None = None) -> list[tuple[str, int]]:
         """Run what is due; returns (job, exit code) per job started."""
@@ -119,15 +125,20 @@ class Scheduler:
                     self.conn, LAST_RUN_KEY, str(now)
                 )  # before, so a hung run is not retried every tick
             elif job == "weekly":
-                store.kv_set(
-                    self.conn, LAST_WEEKLY_KEY, f"{local.isocalendar()[0]}-W{local.isocalendar()[1]:02d}"
-                )
+                mark_key, previous = LAST_WEEKLY_KEY, store.kv_get(self.conn, LAST_WEEKLY_KEY)
+                store.kv_set(self.conn, mark_key, f"{local.isocalendar()[0]}-W{local.isocalendar()[1]:02d}")
             else:
-                store.kv_set(self.conn, LAST_REPORT_KEY, local.strftime("%Y-%m"))
+                mark_key, previous = LAST_REPORT_KEY, store.kv_get(self.conn, LAST_REPORT_KEY)
+                store.kv_set(self.conn, mark_key, local.strftime("%Y-%m"))
             self.conn.commit()
             log.info("serve: starting bodh %s", job)
             code = self.spawn([job])
             log.info("serve: bodh %s exited %d", job, code)
+            if code != 0 and job != "run":
+                # a failed rewrite or report is due again in a few hours, not next week or month
+                store.kv_set(self.conn, mark_key, previous or "")
+                store.kv_set(self.conn, RETRY_KEY + job, str(now + RETRY_HOURS * 3600))
+                self.conn.commit()
             done.append((job, code))
         return done
 

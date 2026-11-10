@@ -29,6 +29,11 @@ Every change a user could notice, newest first. The format follows
 
 ### Fixed
 
+- **A failed Sunday rewrite was written off for the week.** The scheduler marked the week before
+  starting the weekly (so a hung job is not retried every tick); when the job failed, the mark
+  stayed and the next try was the following Sunday. On 8 November the rewrite failed on the
+  revoked key and the learned profile went stale for a week. A failed weekly or monthly report
+  now gives its mark back and is due again six hours later.
 - **Doctor said the Must read stream was missing when it was there.** BazQux lists labels under
   the account's number (`user/12345/label/Must read`) while requests use `user/-/`; the check
   compared against the shorthand and could never pass. `bodh doctor --live` and the console's

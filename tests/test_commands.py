@@ -560,6 +560,23 @@ def test_serve_scheduler_runs_what_is_due(cfg, conn):
     assert [j for j, _ in sched.tick(thursday)] == ["run"]  # this week's is done; the next waits for Sunday
 
 
+def test_serve_retries_a_failed_weekly_after_six_hours(cfg, conn):
+    """A weekly that fails (a revoked key, say) is not written off until next Sunday: it is due
+    again six hours on, and the Sunday mark is only kept once it succeeds."""
+    codes = {"weekly": 4}
+    spawned = []
+    sched = serve.Scheduler(
+        cfg, conn, every_minutes=30, spawn=lambda a: spawned.append(a[0]) or codes.get(a[0], 0)
+    )
+    sunday = datetime(2026, 11, 8, 7, 5, tzinfo=timezone.utc).timestamp()
+    assert sched.tick(sunday) == [("run", 0), ("weekly", 4), ("report", 0)]
+    assert sched.tick(sunday + 3600) == [("run", 0)]  # an hour on: not yet
+    codes["weekly"] = 0
+    assert sched.tick(sunday + 7 * 3600) == [("run", 0), ("weekly", 0)]  # seven hours on: tried again
+    assert sched.tick(sunday + 8 * 3600) == [("run", 0)]  # done for the week
+    assert spawned.count("weekly") == 2
+
+
 def test_serve_runs_the_schedule_until_stopped(cfg, conn):
     import threading
 
