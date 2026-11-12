@@ -140,6 +140,7 @@ Where else the weekly note goes.
 | Key | Default | Range | What it does |
 | --- | --- | --- | --- |
 | `obsidian_note` | empty |  | Also write the weekly note here (a Markdown file in an Obsidian vault, say: "~/Obsidian/Main/Bodh/Weekly.md"); empty writes it to the dashboard folder only. |
+| `telegram_band` | `80` | 0 to 100 | Articles scored this or more go to Telegram, one message each, at the end of every run (needs `bodh keys set telegram`, then `bodh telegram` once). Unit: points. |
 
 ## Privacy and data
 

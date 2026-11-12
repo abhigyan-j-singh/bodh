@@ -8,6 +8,12 @@ Every change a user could notice, newest first. The format follows
 
 ### Added
 
+- **Telegram.** The best new articles on your phone: `bodh keys set telegram` with a bot token
+  from @BotFather, press Start in the bot, `bodh telegram` once to find and remember the chat.
+  Every run then sends each unread article scored `telegram_band` (80, a setting) or more, one
+  message each with the title, feed, score, the judge's lesson and the link; the watermark moves
+  per message, so a failed send is retried by the next run and never fails a run. `bodh doctor`
+  says whether the token is set.
 - **`bodh rescore`.** Recomposes every stored judgment with the current `judge.weights`, bonuses
   and caps, without a model call: the sub-scores are kept per article, so a weight change can
   now reach what was judged before, not only what comes next. Unread articles by default (their

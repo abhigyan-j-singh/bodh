@@ -13,6 +13,8 @@ dashboard_dir: "./dashboard"       # index.html, the weekly note and the feed re
                                    # tailscale serve --bg --set-path / $(pwd)/dashboard
 obsidian_note: ""                  # also write the weekly note here, e.g. "~/Obsidian/Main/Bodh/Weekly.md";
                                    # empty writes it to dashboard_dir only
+telegram_band: 80                  # articles scored this or more go to Telegram after every run, one message
+                                   # each; needs `bodh keys set telegram` and `bodh telegram` once
 
 models:                            # every model is provider/model-id: anthropic, openai, gemini, openrouter or
                                    # openai-compatible (Ollama and friends); a bare id means anthropic. The provider's

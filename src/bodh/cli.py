@@ -296,7 +296,8 @@ def doctor(
 def keys(
     action: str = typer.Argument("list", help="list, or set <provider>"),
     provider: str | None = typer.Argument(
-        None, help="anthropic, openai, gemini, openrouter, openai-compatible, or healthchecks (the ping URL)"
+        None,
+        help="anthropic, openai, gemini, openrouter, openai-compatible, healthchecks (the ping URL) or telegram (the bot token)",
     ),
     keychain: bool = typer.Option(
         False, "--keychain", help="Store in the system keychain instead of .env (pip install bodh[keychain])."
@@ -314,6 +315,7 @@ def keys(
       bodh keys set openai          asks for the key, writes .env
       bodh keys set gemini --keychain
       bodh keys set healthchecks --keychain   # the healthchecks.io ping URL, the dead-man's switch
+      bodh keys set telegram --keychain       # the bot token from @BotFather; then `bodh telegram`
     """
     found = _app(verbose)
     if action == "list":
@@ -1583,6 +1585,25 @@ def dashboard_command(verbose: bool = VERBOSE) -> None:
     """
     found = _app(verbose)
     typer.echo(str(found.dashboard()))
+
+
+@app.command("telegram")
+@_handled
+def telegram_command(verbose: bool = VERBOSE) -> None:
+    """Connect the Telegram bot and send what is pending. Once: make a bot with @BotFather,
+    `bodh keys set telegram` with its token, open the bot in Telegram and press Start, then
+    run this; it remembers the chat. From then on every run sends each new unread article
+    scored `telegram_band` (80) or more, one message each. Run it again any time to send
+    what is pending now.
+
+    \b
+    Examples:
+      bodh keys set telegram --keychain
+      bodh telegram
+      bodh settings set telegram_band 70
+    """
+    found = _app(verbose)
+    typer.echo(found.telegram())
 
 
 @app.command()

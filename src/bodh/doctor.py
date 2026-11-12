@@ -180,6 +180,8 @@ def secrets_check(
             problem(f"{provider} key: MISSING ({name} in .env; used by the {', '.join(used_by)})")
     hb = "set" if secrets.is_set("healthcheck_url") else "not set (no dead-man's switch)"
     out(f"heartbeat url: {hb}")
+    tg = "set" if secrets.is_set("telegram_bot_token") else "not set (no Telegram messages)"
+    out(f"telegram bot token: {tg}")
     unpriced = [m for _r, m in roles(cfg) if cfg is not None and not cfg.models.has_price(m)]
     if unpriced:
         out(

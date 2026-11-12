@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import cutting as cutmod
-from . import dashboard, feedback, progress, recovery, store
+from . import dashboard, feedback, progress, recovery, store, telegram
 from .config import Config, Secrets
 from .heartbeat import Heartbeat
 from .judge import Judge, concept_context
@@ -489,6 +489,7 @@ def _finish(st: _Run) -> None:
         "run %d: %s", st.run_id, res.summary()
     )  # the same line the heartbeat, the run row and the dashboard carry
     ctx.heartbeat.ok(res.summary())
+    telegram.send_new(cfg, conn, ctx.secrets)
 
 
 def render_dashboard(cfg: Config, conn: sqlite3.Connection, res: RunResult | None = None) -> None:

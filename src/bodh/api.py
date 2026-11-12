@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from . import cutting as cutmod
 from . import dashboard, feedback, logs, profiler, recovery, report, rescoring, store
 from . import run as runmod
@@ -33,7 +35,8 @@ log = logging.getLogger(__name__)
 
 SCHEMA = 1  # the version field of every JSON object a command prints (docs/json.md)
 # `bodh keys set` names beyond the model providers: the heartbeat's ping URL (healthchecks.io)
-EXTRA_SECRETS = {"healthchecks": "HEALTHCHECK_URL"}
+# and the Telegram bot's token (@BotFather)
+EXTRA_SECRETS = {"healthchecks": "HEALTHCHECK_URL", "telegram": "TELEGRAM_BOT_TOKEN"}
 MARKS = ("great", "good", "meh", "bad", "basic", "heavy", "more", "less", "detour", "wasted", "rescue")
 LIST_BAND = 60.0
 LIST_LIMIT = 50
@@ -775,6 +778,15 @@ class App:
 
     def dashboard(self) -> Path:
         return dashboard.render(self.cfg, self.conn)
+
+    def telegram(self) -> str:
+        """Connect the Telegram bot to the chat that messaged it, then send what is pending."""
+        from . import telegram
+
+        try:
+            return telegram.connect(self.cfg, self.conn, self.secrets)
+        except (RuntimeError, httpx.HTTPError) as exc:  # one line, the token scrubbed, not a traceback
+            raise BodhError(f"telegram: {exc}") from exc
 
 
 # -- the shapes ------------------------------------------------------------------------

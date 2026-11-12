@@ -742,6 +742,13 @@ class Config(Strict):
         description='Also write the weekly note here (a Markdown file in an Obsidian vault, say: "~/Obsidian/Main/Bodh/Weekly.md"); empty writes it to the dashboard folder only.',
         json_schema_extra=ui("connections", control="path"),
     )
+    telegram_band: float = Field(
+        default=80,
+        ge=0,
+        le=100,
+        description="Articles scored this or more go to Telegram, one message each, at the end of every run (needs `bodh keys set telegram`, then `bodh telegram` once).",
+        json_schema_extra=ui("connections", unit="points"),
+    )
     models: Models = Field(default_factory=Models)
     judge: Judge = Field(default_factory=Judge)
     review: Review = Field(default_factory=Review)
@@ -895,6 +902,7 @@ class Secrets(BaseModel):
     openai_compatible_api_key: SecretStr = SecretStr("")
     openai_compatible_base_url: SecretStr = SecretStr("")  # where a local or self-hosted service is
     healthcheck_url: SecretStr = SecretStr("")
+    telegram_bot_token: SecretStr = SecretStr("")
 
     def value(self, name: str) -> str:
         return str(getattr(self, name).get_secret_value())
@@ -917,6 +925,7 @@ SECRET_FIELDS = (
     "openrouter_api_key",
     "openai_compatible_api_key",
     "healthcheck_url",
+    "telegram_bot_token",
 )
 
 

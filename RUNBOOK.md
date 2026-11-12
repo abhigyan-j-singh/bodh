@@ -255,6 +255,7 @@ disagreements shrink week by week, it is learning you.
 | `data/console.log` | why the console could not start, if ever |
 | healthchecks.io | a check with period 30 minutes and grace 30 minutes, its ping URL in `.env` as `HEALTHCHECK_URL`: an hour of silence (laptop off, network down, launchd not firing) raises an alert; a failed run pings `/fail` with the error |
 | phone | `tailscale serve --bg 8766`, then https://<your-mac>.<tailnet>.ts.net is the console |
+| Telegram | `bodh keys set telegram` (the bot token), press Start in the bot, `bodh telegram` once; every run then sends each new unread article scored `telegram_band` (80) or more, one message each; `bodh telegram` again sends what is pending now |
 
 
 ## 9. The knobs (config.yaml)

@@ -282,6 +282,16 @@ launchd not firing) raises an alert. Choose email there, or add its ntfy or Push
 a phone push. The weekly note is written to the dashboard folder and, if `obsidian_note` is set in
 `config.yaml`, into your vault.
 
+## Telegram
+
+The best new articles on your phone, one message each (title, feed, score, the judge's lesson,
+the link), sent at the end of every run. Once: make a bot with [@BotFather](https://t.me/BotFather)
+in Telegram, `bodh keys set telegram` with the token it gives you, open your bot in Telegram and
+press Start, then `bodh telegram`: it finds your chat from that message, remembers it, and sends
+what is waiting. From then on every run sends each unread article scored `telegram_band` (80) or
+more; `bodh settings set telegram_band 70` lowers the bar. A message that could not be sent is
+retried by the next run; Telegram being down never fails a run.
+
 ## Dashboard
 
 `bodh run` regenerates `dashboard/index.html` after every run. Publish it on your tailnet:
