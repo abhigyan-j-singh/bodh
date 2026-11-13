@@ -59,7 +59,15 @@ SECTIONS = (
     "safety",
     "profile",
 )
-SCALAR_TOP = ("timezone", "data_dir", "profile_dir", "dashboard_dir", "obsidian_note", "telegram_band")
+SCALAR_TOP = (
+    "timezone",
+    "run_every_minutes",
+    "data_dir",
+    "profile_dir",
+    "dashboard_dir",
+    "obsidian_note",
+    "telegram_band",
+)
 WHOLE_VALUE_KEYS = ("judge.weights", "tags.bands", "models.prices_per_mtok", "folders")  # set as one value
 
 
@@ -133,6 +141,7 @@ TITLES = {  # where the key's words are not the title's
     "mark_all_read_threshold": "Mark-all-read threshold",
     "concept_window_days": "Concept window",
     "obsidian_note": "Weekly note path",
+    "run_every_minutes": "Run every",
     "telegram_band": "Telegram from score",
     "data_dir": "Data folder",
     "profile_dir": "Profile folder",

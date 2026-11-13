@@ -132,6 +132,7 @@ The clock the day runs by.
 | Key | Default | Range | What it does |
 | --- | --- | --- | --- |
 | `timezone` | empty |  | IANA name (Europe/Lisbon, say): the day boundary for the budget and the daily counts. Empty: this computer's zone. |
+| `run_every_minutes` | `30` | 1 to 1440 | Minutes between runs under `bodh serve` and the Mac app (`--every` on the command line overrides it). A change applies from the next tick, no restart. Shorter means articles are fetched, judged and sent sooner; batches stay half price. Unit: minutes. |
 
 ## Connections
 

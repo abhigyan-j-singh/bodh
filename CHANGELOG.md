@@ -8,6 +8,10 @@ Every change a user could notice, newest first. The format follows
 
 ### Added
 
+- **`run_every_minutes`.** The pace of `bodh serve` and the Mac app is a setting (Schedule pane;
+  30 by default), applied from the next tick when `config.yaml` changes, no restart; `bodh serve
+  --every` still pins it. Ten minutes brings an article from BazQux to its judgment, its tags and
+  its Telegram message in about 15–25 minutes instead of 45; batches stay half price.
 - **Telegram.** The best new articles on your phone: `bodh keys set telegram` with a bot token
   from @BotFather, press Start in the bot, `bodh telegram` once to find and remember the chat.
   Every run then sends each unread article scored `telegram_band` (80, a setting) or more, one

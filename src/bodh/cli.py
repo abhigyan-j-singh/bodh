@@ -616,7 +616,12 @@ def blast(
 @app.command()
 @_handled
 def serve(
-    every: int = typer.Option(30, "--every", min=1, help="Minutes between runs."),
+    every: int | None = typer.Option(
+        None,
+        "--every",
+        min=1,
+        help="Minutes between runs; without it, run_every_minutes in config.yaml (30).",
+    ),
     port: int = typer.Option(8766, "--port", help="The console's port; 0 takes a free one."),
     host: str = typer.Option("127.0.0.1", "--host", help="127.0.0.1 keeps the console local."),
     no_console: bool = typer.Option(False, "--no-console", help="The schedule only."),
@@ -629,15 +634,17 @@ def serve(
     home: Path | None = typer.Option(None, "--home", help="The project folder (the same as BODH_HOME)."),
     verbose: bool = VERBOSE,
 ) -> None:
-    """The schedule and the console in one process: a run every --every minutes, the weekly
-    rewrite on Sunday mornings, the report on the first of the month, the console on its port.
+    """The schedule and the console in one process: a run every run_every_minutes (or --every)
+    minutes, the weekly rewrite on Sunday mornings, the report on the first of the month, the
+    console on its port. `bodh settings set run_every_minutes 10` changes the pace while it runs.
     For Docker, Windows, and any machine without launchd or systemd. Ctrl-C stops it.
     With --app it is the Mac app's engine: a free port, a token, and the end when the app goes.
 
     \b
     Examples:
-      bodh serve                     every 30 minutes, console on http://127.0.0.1:8766
+      bodh serve                     every run_every_minutes (30), console on http://127.0.0.1:8766
       bodh serve --every 15 --no-console
+      bodh settings set run_every_minutes 10
       bodh serve --app --port 0 --token-file "$HOME/Library/Application Support/bodh/token" --home "$HOME/Library/Application Support/bodh"
     """
     import os
@@ -658,7 +665,7 @@ def serve(
         _serve_app(found, every, host, port, token, token_file)
         return
     typer.echo(
-        f"serving: a run every {every} min"
+        f"serving: a run every {every or found.cfg.run_every_minutes} min"
         + ("" if no_console else f", console on http://{host}:{port}")
         + " (Ctrl-C stops it)"
     )
@@ -668,7 +675,7 @@ def serve(
 
 
 def _serve_app(
-    found: api.App, every: int, host: str, port: int, token: str | None, token_file: Path | None
+    found: api.App, every: int | None, host: str, port: int, token: str | None, token_file: Path | None
 ) -> None:
     """`serve --app`: the port line first on stdout, then the engine until stdin closes."""
     from . import serve as servemod

@@ -7,6 +7,8 @@
 # timezone: "Europe/Lisbon"        # IANA name; the day boundary for the budget and the daily counts.
                                    # Default: the machine's own zone ($TZ, else /etc/localtime, else UTC).
                                    # Windows has no /etc/localtime: set it here.
+run_every_minutes: 30              # minutes between runs under `bodh serve` and the Mac app; a change
+                                   # applies from the next tick (`bodh serve --every` overrides it)
 data_dir: "./data"                 # the database (bodh.db), run logs, progress.json, the lock
 profile_dir: "./profile"           # about.md (yours), learned.md (rewritten weekly); its own git repo
 dashboard_dir: "./dashboard"       # index.html, the weekly note and the feed report; publish with

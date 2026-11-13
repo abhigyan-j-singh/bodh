@@ -722,6 +722,13 @@ class Config(Strict):
         description="IANA name (Europe/Lisbon, say): the day boundary for the budget and the daily counts. Empty: this computer's zone.",
         json_schema_extra=ui("schedule", control="timezone"),
     )
+    run_every_minutes: int = Field(
+        default=30,
+        ge=1,
+        le=1440,
+        description="Minutes between runs under `bodh serve` and the Mac app (`--every` on the command line overrides it). A change applies from the next tick, no restart. Shorter means articles are fetched, judged and sent sooner; batches stay half price.",
+        json_schema_extra=ui("schedule", unit="minutes"),
+    )
     data_dir: Path = Field(
         default=Path("./data"),
         description="The database, the run logs, progress.json and the lock; relative to config.yaml.",

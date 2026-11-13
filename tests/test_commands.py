@@ -577,6 +577,40 @@ def test_serve_retries_a_failed_weekly_after_six_hours(cfg, conn):
     assert spawned.count("weekly") == 2
 
 
+def test_serve_follows_run_every_minutes_in_config_until_pinned(cfg, conn):
+    """Without --every the scheduler runs every `run_every_minutes` and re-reads the file when
+    it changes, from the next tick; --every pins the interval whatever the file says."""
+    from bodh.config import load_config
+
+    def runs(ticked):  # the monthly report is due on these dates too; only the runs matter here
+        return [j for j, _ in ticked if j == "run"]
+
+    def write(text: str, stamp: int) -> None:
+        path.write_text(text, encoding="utf-8")
+        os.utime(path, (stamp, stamp))
+
+    path = cfg.root / "config.yaml"
+    write("timezone: UTC\nrun_every_minutes: 30\n", 1_000_000)
+    sched = serve.Scheduler(load_config(cfg.root), conn, spawn=lambda a: 0)
+    t0 = datetime(2026, 11, 13, 9, 0, tzinfo=timezone.utc).timestamp()
+    assert runs(sched.tick(t0)) == ["run"] and sched.every == 1800
+    assert runs(sched.tick(t0 + 600)) == []  # ten minutes: not yet, at 30
+    write("timezone: UTC\nrun_every_minutes: 10\n", 2_000_000)
+    assert runs(sched.tick(t0 + 601)) == ["run"]  # the file changed: ten minutes is now enough
+    assert sched.every == 600
+    assert runs(sched.tick(t0 + 1100)) == [] and runs(sched.tick(t0 + 1201)) == ["run"]
+    # a file that does not load keeps the schedule as it was
+    write("run_every_minutes: nope\n", 3_000_000)
+    assert runs(sched.tick(t0 + 1300)) == [] and sched.every == 600
+    # pinned by --every: the file is ignored
+    write("timezone: UTC\nrun_every_minutes: 1\n", 4_000_000)
+    pinned = serve.Scheduler(load_config(cfg.root), conn, every_minutes=30, spawn=lambda a: 0)
+    assert pinned.every == 1800
+    pinned.tick(t0 + 10_000)
+    write("timezone: UTC\nrun_every_minutes: 2\n", 5_000_000)
+    assert runs(pinned.tick(t0 + 10_000 + 600)) == [] and pinned.every == 1800
+
+
 def test_serve_runs_the_schedule_until_stopped(cfg, conn):
     import threading
 
@@ -603,6 +637,12 @@ def test_serve_command_prints_where_and_calls_serve(tmp_path, monkeypatch):
         and "console" not in result.output.split("(")[0]
     )
     assert seen["every_minutes"] == 15 and seen["console"] is False
+    # without --every: the setting's value is printed, and the scheduler is told to follow the file
+    result = invoke(["settings", "set", "run_every_minutes", "10"])
+    assert result.exit_code == 0, result.output
+    result = invoke(["serve", "--no-console"])
+    assert result.exit_code == 0 and "a run every 10 min" in result.output, result.output
+    assert seen["every_minutes"] is None
 
 
 @pytest.mark.parametrize("kind", ["launchd", "systemd", "taskschd"])

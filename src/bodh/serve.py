@@ -73,12 +73,46 @@ class Scheduler:
     """What is due, decided from the clock and three kv marks; `tick` is the whole logic, so a
     test drives it with a clock of its own. A pause (`serve.paused_until`) holds everything."""
 
-    def __init__(self, cfg: Config, conn: Any, every_minutes: int, spawn: Spawn = run_child) -> None:
+    def __init__(
+        self, cfg: Config, conn: Any, every_minutes: int | None = None, spawn: Spawn = run_child
+    ) -> None:
+        """`every_minutes` pins the interval (`--every`); None follows `run_every_minutes` in
+        config.yaml, re-read whenever the file changes, so a new value applies from the next tick."""
         self.cfg = cfg
         self.conn = conn
-        self.every = max(1, every_minutes) * 60
+        self.pinned = every_minutes is not None
+        self.every = max(1, every_minutes or cfg.run_every_minutes) * 60
         self.spawn = spawn
         self.tz = ZoneInfo(cfg.timezone)
+        self._config_mtime = self._mtime()
+
+    def _mtime(self) -> float | None:
+        try:
+            return (self.cfg.root / "config.yaml").stat().st_mtime
+        except OSError:
+            return None
+
+    def refresh(self) -> None:
+        """Re-read config.yaml when it changed: the interval (unless pinned) and the time zone.
+        A file that does not load keeps the values in hand; the next run reports the error."""
+        mtime = self._mtime()
+        if mtime == self._config_mtime:
+            return
+        self._config_mtime = mtime
+        from .config import load_config
+
+        try:
+            self.cfg = load_config(self.cfg.root)
+        except Exception as exc:
+            log.warning(
+                "serve: config.yaml changed but does not load (%s); keeping the schedule as it was", exc
+            )
+            return
+        self.tz = ZoneInfo(self.cfg.timezone)
+        if not self.pinned and self.every != self.cfg.run_every_minutes * 60:
+            self.every = max(1, self.cfg.run_every_minutes) * 60
+            _update_state(self.conn, self.every)
+            log.info("serve: a run every %d min from now on", self.every // 60)
 
     def paused(self) -> bool:
         from .service import paused_until
@@ -89,6 +123,7 @@ class Scheduler:
         """The jobs due at `now` (epoch seconds), in the order they run; none while paused."""
         if self.paused():
             return []
+        self.refresh()
         jobs: list[str] = []
         local = datetime.fromtimestamp(now, self.tz)
         last_run = float(store.kv_get(self.conn, LAST_RUN_KEY) or 0)
@@ -204,7 +239,7 @@ def watch_stdin(stop: threading.Event) -> threading.Thread:
 def serve(
     cfg: Config,
     conn: Any,
-    every_minutes: int = 30,
+    every_minutes: int | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
     console: bool = True,
@@ -225,7 +260,9 @@ def serve(
     stop = stop or threading.Event()
     server = None
     scheduler = Scheduler(cfg, store.connect(cfg.db_path), every_minutes, spawn=spawn)
-    _record_state(scheduler.conn, every_minutes)  # before the port is announced: the status sees it at once
+    _record_state(
+        scheduler.conn, scheduler.every // 60
+    )  # before the port is announced: the status sees it at once
     if console:
         from .console import Console
 
@@ -268,6 +305,15 @@ def _record_state(conn: Any, every_minutes: int) -> None:
         SERVE_KEY,
         json.dumps({"pid": os.getpid(), "every_seconds": every_minutes * 60, "started": time.time()}),
     )
+    conn.commit()
+
+
+def _update_state(conn: Any, every_seconds: int) -> None:
+    """The interval in serve.state, the pid and the start kept (the status shows them)."""
+    from .service import SERVE_KEY, serve_state
+
+    st = serve_state(conn) or {"pid": os.getpid(), "started": time.time()}
+    store.kv_set(conn, SERVE_KEY, json.dumps({**st, "every_seconds": every_seconds}))
     conn.commit()
 
 
