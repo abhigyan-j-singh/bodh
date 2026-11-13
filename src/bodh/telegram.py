@@ -27,9 +27,22 @@ SENT_THROUGH_KEY = "telegram.sent_through"  # kv: scored_at of the last article 
 TIMEOUT = 10.0
 
 
+class Refused(RuntimeError):
+    """The API said no. `code` is its error_code: a 4xx other than 429 means the request itself
+    (this message) is wrong and will be wrong next time too; anything else may pass later."""
+
+    def __init__(self, method: str, code: int, description: str) -> None:
+        super().__init__(f"telegram {method}: {description} ({code})")
+        self.code = code
+
+    @property
+    def permanent(self) -> bool:
+        return 400 <= self.code < 500 and self.code != 429
+
+
 class Telegram:
-    """The Bot API, two calls of it. Raises httpx errors and `RuntimeError` on a refusal; the
-    run hook (`send_new`) catches, the command lets the user see."""
+    """The Bot API, two calls of it. Raises httpx errors and `Refused`; the run hook
+    (`send_new`) catches, the command lets the user see."""
 
     def __init__(self, token: str) -> None:
         self.token = token.strip()
@@ -38,7 +51,9 @@ class Telegram:
         r = httpx.post(f"{API}{self.token}/{method}", json=params, timeout=TIMEOUT)
         body = r.json()
         if not body.get("ok"):
-            raise RuntimeError(f"telegram {method}: {body.get('description', r.status_code)}")
+            raise Refused(
+                method, int(body.get("error_code") or r.status_code), str(body.get("description", ""))
+            )
         return body["result"]
 
     def find_chat_id(self) -> str | None:
@@ -54,15 +69,21 @@ class Telegram:
         self._call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML")
 
 
+def _text(s: str) -> str:
+    """Telegram's HTML: every <, > and & outside a tag must be an entity, in a URL too (the
+    entities are decoded before the message is shown, so the link stays a link)."""
+    return html.escape(s, quote=False)
+
+
 def message(row: sqlite3.Row | dict[str, Any]) -> str:
     """One article as Telegram HTML: title, where it is from and the score, the lesson, the link."""
     where = " · ".join(p for p in (row["feed_title"], row["folder"]) if p)
-    lines = [f"<b>{html.escape(row['title'] or '(untitled)')}</b>"]
-    lines.append(html.escape(f"{where} · {row['score']:.0f}" if where else f"{row['score']:.0f}"))
+    lines = [f"<b>{_text(row['title'] or '(untitled)')}</b>"]
+    lines.append(_text(f"{where} · {row['score']:.0f}" if where else f"{row['score']:.0f}"))
     if row["lesson"]:
-        lines.append(html.escape(row["lesson"]))
+        lines.append(_text(row["lesson"]))
     if row["url"]:
-        lines.append(row["url"])
+        lines.append(_text(row["url"]))
     return "\n".join(lines)
 
 
@@ -92,10 +113,16 @@ def send_pending(cfg: Config, conn: sqlite3.Connection, secrets: Secrets) -> tup
     for row in pending(conn, cfg.telegram_band):
         try:
             bot.send(chat_id, message(row))
+        except Refused as exc:
+            if not exc.permanent:
+                return sent, exc
+            # this message will never go: skip it rather than hold every later one behind it
+            log.warning("telegram: skipped %s (%s)", row["id"], exc)
         except Exception as exc:
             return sent, exc
+        else:
+            sent += 1
         store.kv_set(conn, SENT_THROUGH_KEY, row["scored_at"])
-        sent += 1
     return sent, None
 
 

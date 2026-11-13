@@ -46,6 +46,7 @@ PROVIDER_SECRET = {  # provider -> the variable(s) its key lives under, in the o
     "openai-compatible": ["OPENAI_COMPATIBLE_BASE_URL", "OPENAI_COMPATIBLE_API_KEY"],
     "bazqux": ["BAZQUX_EMAIL", "BAZQUX_PASSWORD"],
     "healthchecks": ["HEALTHCHECK_URL"],
+    "telegram": ["TELEGRAM_BOT_TOKEN"],
 }
 RUN_MODES = {"normal": [], "shadow": ["--shadow"], "sync": ["--sync"]}
 

@@ -29,7 +29,7 @@ Look          status, progress, why, find, list
 Cut           prune, undo, clear-old, rescore
 Teach         mark, steer, profile, tags, eval
 Control       stop, schedule, autocut, safety, console
-Housekeeping  backup, rebuild, weekly, report, dashboard, upgrade, migrate-home
+Housekeeping  backup, rebuild, weekly, report, dashboard, telegram, upgrade, migrate-home
 
 \b
 Every command takes -v for debug lines; --json prints one object (docs/json.md); --dry-run

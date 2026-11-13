@@ -35,7 +35,7 @@ VISIBLE = (
     "version", "init", "doctor", "keys", "models", "run", "catch-up", "serve", "status", "progress",
     "why", "find", "list", "prune", "undo", "clear-old", "mark", "steer", "profile", "tags", "eval",
     "stop", "schedule", "autocut", "console", "safety", "backup", "rebuild", "weekly", "report",
-    "dashboard", "upgrade",
+    "dashboard", "telegram", "upgrade",
 )  # fmt: skip
 HIDDEN = ("score", "blast", "bankruptcy", "halt", "enforce", "panel", "label", "want", "meh")
 
